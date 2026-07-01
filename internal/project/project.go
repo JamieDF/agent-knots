@@ -12,7 +12,7 @@
 //   - Vault credential scope (allowed/denied per project)
 //   - Mode persona + extras
 //
-// Projects are the unit of switching: `harness project switch <name>` makes
+// Projects are the unit of switching: `agentjam project switch <name>` makes
 // that project the active context for all subsequent commands.
 package project
 
@@ -21,7 +21,7 @@ import (
 )
 
 // ID is a project identifier (e.g. "my-cool-app"). IDs are unique within a
-// harness workspace.
+// agentjam workspace.
 type ID string
 
 // Repo is a single git repository that belongs to a project.
@@ -173,7 +173,7 @@ type Store interface {
 	// Delete removes the project. Errors with ErrNotFound if absent.
 	Delete(id ID) error
 
-	// Touch updates LastOpenedAt to now. Called by `harness project switch`.
+	// Touch updates LastOpenedAt to now. Called by `agentjam project switch`.
 	Touch(id ID) error
 
 	// Active returns the currently active project ID, or empty if none.

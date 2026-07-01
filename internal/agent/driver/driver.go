@@ -2,7 +2,7 @@
 // agent backend (OpenCode today, custom drivers tomorrow) implements so the
 // orchestrator can talk to any agent uniformly.
 //
-// The driver is the only piece of harness that knows how to talk to an actual
+// The driver is the only piece of agentjam that knows how to talk to an actual
 // LLM agent. Everything else (cockpit, task system, vault) talks to drivers
 // through this interface.
 //

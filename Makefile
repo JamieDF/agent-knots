@@ -1,4 +1,4 @@
-# harness Makefile
+# agentjam Makefile
 #
 # Common development tasks. See CONTRIBUTING.md for the full development
 # workflow.
@@ -9,8 +9,8 @@
 all: build test
 
 help:
-	@echo "harness — common targets:"
-	@echo "  make build      - compile the harness binary"
+	@echo "agentjam — common targets:"
+	@echo "  make build      - compile the agentjam binary"
 	@echo "  make test       - run tests"
 	@echo "  make test-race  - run tests with race detector"
 	@echo "  make cover      - run tests with coverage"
@@ -54,10 +54,10 @@ lint:
 	golangci-lint run
 
 install:
-	go install ./cmd/harness
+	go install ./cmd/agentjam
 
 run: build
-	./harness $(ARGS)
+	./agentjam $(ARGS)
 
 clean:
-	rm -f harness coverage.out coverage.html
+	rm -f agentjam coverage.out coverage.html

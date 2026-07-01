@@ -1,5 +1,5 @@
 // Package container — isolation.go defines the security profile applied
-// automatically to every harness-managed container session.
+// automatically to every agentjam-managed container session.
 //
 // The profile takes a ContainerConfig and returns a hardened version
 // suitable for running AI coding agents. Every default is set "safe": the
@@ -95,7 +95,7 @@ type IsolationProfile struct {
 }
 
 // DefaultIsolationProfile returns the safe-by-default security profile for
-// harness-managed containers.
+// agentjam-managed containers.
 //
 // The returned profile is a defensive copy; callers may safely mutate it.
 func DefaultIsolationProfile() IsolationProfile {
@@ -248,7 +248,7 @@ func ApplyIsolation(p IsolationProfile, base ContainerConfig, hostUID string) (C
 		cfg.Workdir = p.Workdir
 	}
 
-	// Labels so the cockpit and `podman ps` can identify harness containers.
+	// Labels so the cockpit and `podman ps` can identify agentjam containers.
 	if cfg.Labels == nil {
 		cfg.Labels = map[string]string{}
 	}
@@ -268,7 +268,7 @@ func resolveUser(profileUser, hostUID string) string {
 	return profileUser
 }
 
-// mandatoryMounts returns the mounts every harness container gets:
+// mandatoryMounts returns the mounts every agentjam container gets:
 //   - /tmp tmpfs
 //   - /run tmpfs (for vault socket)
 //

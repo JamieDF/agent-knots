@@ -1,6 +1,6 @@
-// Command harness is the entry point for the harness CLI.
+// Command agentjam is the entry point for the agentjam CLI.
 //
-// harness is a local-first orchestrator for AI coding agents. It manages
+// agentjam is a local-first orchestrator for AI coding agents. It manages
 // projects, tasks, a credential vault, and runs agents (via OpenCode) in
 // interactive or autonomous modes.
 //
@@ -35,20 +35,20 @@ func main() {
 
 func rootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "harness",
+		Use:   "agentjam",
 		Short: "Local-first orchestrator for AI coding agents",
-		Long: `harness is a platform for orchestrating multiple AI coding agents in parallel
+		Long: `agentjam is a platform for orchestrating multiple AI coding agents in parallel
 across multi-repo projects. You stay in control: chat with one agent, watch
 many others work autonomously, take over any of them, hand control back.
 
 Free. Model-agnostic. Local-first.
 
-Run 'harness <command> --help' for details on any subcommand.`,
+Run 'agentjam <command> --help' for details on any subcommand.`,
 		Version:      Version,
 		SilenceUsage: true,
 	}
 
-	root.SetVersionTemplate("harness version {{.Version}} (commit {{.Commit}})\n")
+	root.SetVersionTemplate("agentjam version {{.Version}} (commit {{.Commit}})\n")
 
 	root.AddCommand(
 		projectCmd(),
@@ -68,7 +68,7 @@ func versionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print version information",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			fmt.Printf("harness %s (commit %s)\n", Version, Commit)
+			fmt.Printf("agentjam %s (commit %s)\n", Version, Commit)
 			return nil
 		},
 	}

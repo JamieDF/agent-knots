@@ -23,7 +23,7 @@ type ImageID string
 
 // ImageSpec describes how to build or pull an image.
 type ImageSpec struct {
-	// Name is a logical name for the image (e.g. "harness-node:latest").
+	// Name is a logical name for the image (e.g. "agentjam-node:latest").
 	Name string
 
 	// Dockerfile is the inline Dockerfile content. If empty, the runtime

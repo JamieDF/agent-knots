@@ -1,4 +1,4 @@
-// Package errs defines sentinel errors and helpers used across harness.
+// Package errs defines sentinel errors and helpers used across agentjam.
 //
 // Sentinel errors are returned by interfaces so callers can use errors.Is to
 // branch on specific failure modes without coupling to concrete error types
@@ -10,7 +10,7 @@ import (
 	"fmt"
 )
 
-// Sentinel errors returned by harness interfaces. Callers should compare
+// Sentinel errors returned by agentjam interfaces. Callers should compare
 // with errors.Is.
 var (
 	// ErrNotFound indicates a resource does not exist.

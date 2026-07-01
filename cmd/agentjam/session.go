@@ -1,4 +1,4 @@
-// Command harness — session.go implements `harness session`.
+// Command agentjam — session.go implements `agentjam session`.
 //
 // Subcommands:
 //   - start   — start a new agent session
@@ -31,7 +31,7 @@ func sessionCmd() *cobra.Command {
 		Short: "Manage agent sessions",
 		Long: `An agent session is one running AI coding agent plus its bookkeeping.
 Sessions are the runtime counterpart to tasks: a task is the work, a
-session is the agent doing it. Use 'harness session start' to spawn one,
+session is the agent doing it. Use 'agentjam session start' to spawn one,
 'list' to see what's running, 'stop' to shut it down.`,
 	}
 
@@ -66,7 +66,7 @@ project is auto-resolved; otherwise --project is required for container
 sessions.
 
 By default, the session is attached: events stream to stdout until the
-agent exits. Pass --detach to return immediately; use 'harness session logs
+agent exits. Pass --detach to return immediately; use 'agentjam session logs
 <id>' to follow.
 
 The agent in a container session runs with the hardened isolation profile
@@ -75,9 +75,9 @@ private network namespace, cgroup limits, deny-by-default egress. Use
 --privileged-debug to opt out (for diagnosing container issues only).
 
 Example:
-  harness session start --task T-001 --mode agent
-  harness session start --project my-app --container --detach
-  harness session start --task T-001 --privileged-debug`,
+  agentjam session start --task T-001 --mode agent
+  agentjam session start --project my-app --container --detach
+  agentjam session start --task T-001 --privileged-debug`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 
@@ -136,7 +136,7 @@ Example:
 
 			if detach {
 				fmt.Fprintln(cmd.OutOrStdout(),
-					"Detached. Use 'harness session logs <id>' to follow.")
+					"Detached. Use 'agentjam session logs <id>' to follow.")
 				return nil
 			}
 
@@ -273,7 +273,7 @@ N events from disk (not yet implemented).`,
 			// tell the user where to look.
 			fmt.Fprintf(cmd.OutOrStdout(),
 				"Live event streaming requires the session record to be tied to the running driver.\n"+
-					"For now, run 'harness session start' in the foreground (no --detach) to follow events.\n"+
+					"For now, run 'agentjam session start' in the foreground (no --detach) to follow events.\n"+
 					"Session: %s  mode=%s  status=%s  dir=%s\n",
 				s.ID, s.Mode, s.Status, s.WorkingDir)
 			return nil
@@ -285,7 +285,7 @@ N events from disk (not yet implemented).`,
 // streamEvents tails a session's events from the driver until it exits.
 // For the v1 implementation, we just print a status line each second and
 // detach; the real event forwarding lives in the runtime adapters (and is
-// wired into the foreground `harness agent spawn` path).
+// wired into the foreground `agentjam agent spawn` path).
 func streamEvents(ctx context.Context, s *session.Session) error {
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()

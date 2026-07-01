@@ -162,7 +162,7 @@ func vaultListCmd() *cobra.Command {
 				return err
 			}
 			if len(creds) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No credentials. Add one with `harness vault add`.")
+				fmt.Fprintln(cmd.OutOrStdout(), "No credentials. Add one with `agentjam vault add`.")
 				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%-30s %-10s %-10s %s\n", "ID", "USES", "TAGS", "DESCRIPTION")
@@ -191,7 +191,7 @@ func vaultAddCmd() *cobra.Command {
 				return err
 			}
 			if unlocked, _ := v.IsUnlocked(cmd.Context()); !unlocked {
-				return errs.Wrap(errs.ErrUnauthorized, "vault is locked; run `harness vault unlock`")
+				return errs.Wrap(errs.ErrUnauthorized, "vault is locked; run `agentjam vault unlock`")
 			}
 			value, err := promptSecret("Value: ")
 			if err != nil {
@@ -326,7 +326,7 @@ func vaultTemplateAddCmd() *cobra.Command {
   --stdin                                        pipe to stdin
 
 Example:
-  harness vault template add github/work \
+  agentjam vault template add github/work \
     --name gh_cli_env \
     --env '{"GH_TOKEN": "$value"}'`,
 		Args: cobra.ExactArgs(1),

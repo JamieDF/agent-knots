@@ -18,7 +18,7 @@
 // queries, vault interactions) are wired up via interfaces so the TUI
 // can be tested and extended independently.
 //
-// To run: `harness cockpit` (the CLI command launches this).
+// To run: `agentjam cockpit` (the CLI command launches this).
 package tui
 
 import (
@@ -245,11 +245,11 @@ func (m Model) View() string {
 // viewList renders the agent list.
 func (m Model) viewList() string {
 	var s string
-	s += titleStyle.Render("harness cockpit — agents") + "\n\n"
+	s += titleStyle.Render("agentjam cockpit — agents") + "\n\n"
 
 	if len(m.agents) == 0 {
 		s += dimStyle.Render("  No active agents.") + "\n"
-		s += dimStyle.Render("  Run `harness agent spawn` to start one.") + "\n\n"
+		s += dimStyle.Render("  Run `agentjam agent spawn` to start one.") + "\n\n"
 	} else {
 		// Header.
 		s += headerStyle.Render(fmt.Sprintf("  %-30s %-12s %-10s %s", "ID", "STATUS", "TOKENS", "TASK")) + "\n"
@@ -278,7 +278,7 @@ func (m Model) viewList() string {
 // viewFocus renders the focused agent's event stream.
 func (m Model) viewFocus() string {
 	var s string
-	s += titleStyle.Render(fmt.Sprintf("harness cockpit — %s", truncate(m.focused, 30))) + "\n\n"
+	s += titleStyle.Render(fmt.Sprintf("agentjam cockpit — %s", truncate(m.focused, 30))) + "\n\n"
 
 	if len(m.events) == 0 {
 		s += dimStyle.Render("  No events yet.") + "\n\n"

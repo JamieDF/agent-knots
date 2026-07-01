@@ -59,7 +59,7 @@ func projectListCmd() *cobra.Command {
 			active, _ := s.Active()
 
 			if len(projects) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No projects. Run `harness project create` to make one.")
+				fmt.Fprintln(cmd.OutOrStdout(), "No projects. Run `agentjam project create` to make one.")
 				return nil
 			}
 
@@ -92,7 +92,7 @@ func projectCreateCmd() *cobra.Command {
 		Long: `Create a new project workspace.
 
 Example:
-  harness project create my-app \
+  agentjam project create my-app \
     --name "My Cool App" \
     --repo [email protected]:org/app.git \
     --branch main \

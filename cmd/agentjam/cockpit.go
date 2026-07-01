@@ -20,7 +20,7 @@ func cockpitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cockpit",
 		Short: "Launch the concurrent agent cockpit",
-		Long: `Launch the cockpit — the canonical management surface for harness.
+		Long: `Launch the cockpit — the canonical management surface for agentjam.
 
 By default, launches the keyboard-driven TUI cockpit. Use --web to launch
 the web GUI (when implemented).

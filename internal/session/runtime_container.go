@@ -75,7 +75,7 @@ func (c *ContainerRuntime) Kind() RuntimeKind { return RuntimeKindContainer }
 //
 // v1 implementation is "create empty directory"; a future git-worktree
 // integration will branch off the repo and create a real worktree. The
-// goal here is to lock down the API — subsequent phases of harness can
+// goal here is to lock down the API — subsequent phases of agentjam can
 // swap in the git implementation without changing Init().
 func (c *ContainerRuntime) PrepareWorkspace(_ context.Context, r *Resolved) (string, error) {
 	if r.Project == nil {
@@ -83,7 +83,7 @@ func (c *ContainerRuntime) PrepareWorkspace(_ context.Context, r *Resolved) (str
 	}
 	base := c.opts.WorktreeBase
 	if base == "" {
-		base = filepath.Join(os.Getenv("HOME"), ".harness", "worktrees")
+		base = filepath.Join(os.Getenv("HOME"), ".agentjam", "worktrees")
 	}
 	wt := filepath.Join(base, string(r.Project.ID), c.opts.ID)
 	if err := os.MkdirAll(wt, 0o755); err != nil {

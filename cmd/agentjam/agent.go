@@ -49,7 +49,7 @@ func agentSpawnCmd() *cobra.Command {
 agent) and operates on the task's project directory.
 
 Example:
-  harness agent spawn --task T-2026-01-01-001 --mode agent`,
+  agentjam agent spawn --task T-2026-01-01-001 --mode agent`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 
@@ -144,7 +144,7 @@ func agentListCmd() *cobra.Command {
 		Short: "List active agents",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			fmt.Fprintln(cmd.OutOrStdout(), "Active agent tracking: not yet implemented in v1.")
-			fmt.Fprintln(cmd.OutOrStdout(), "Use `harness agent spawn` to start an agent in the foreground.")
+			fmt.Fprintln(cmd.OutOrStdout(), "Use `agentjam agent spawn` to start an agent in the foreground.")
 			return nil
 		},
 	}

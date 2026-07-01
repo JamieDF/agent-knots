@@ -41,11 +41,11 @@ func Home() string {
 	if _, err := os.Stat(newDir); err == nil {
 		return newDir
 	}
-	oldDir := filepath.Join(home, ".harness")
+	oldDir := filepath.Join(home, ".agentjam")
 	if _, err := os.Stat(oldDir); err == nil {
 		if err := os.Rename(oldDir, newDir); err == nil {
 			fmt.Fprintf(os.Stderr,
-				"agentjam: migrated %s → %s (one-time, from prior 'harness' install)\n",
+				"agentjam: migrated %s → %s (one-time, from prior 'agentjam' install)\n",
 				oldDir, newDir)
 		} else {
 			fmt.Fprintf(os.Stderr,

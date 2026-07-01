@@ -107,7 +107,7 @@ func taskNewCmd() *cobra.Command {
 		Long: `Create a new task with title, acceptance criteria, and optional metadata.
 
 Example:
-  harness task new \
+  agentjam task new \
     --title "Add dark mode toggle" \
     --project my-app \
     --priority medium \
