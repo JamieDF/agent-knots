@@ -53,12 +53,13 @@ type Model struct {
 	registry DriverRegistry
 
 	// View state.
-	view        viewKind
-	agents      []agentRow
-	cursor      int
-	focused     string // driver ID currently focused
-	events      []driver.Event
-	eventsLimit int
+	view           viewKind
+	agents         []agentRow
+	cursor         int
+	focused        string // driver ID currently focused
+	focusedDriver  Driver // cached for event watching (avoids re-dialing socket)
+	events         []driver.Event
+	eventsLimit    int
 
 	// Dimensions.
 	width  int
@@ -121,27 +122,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Auto-focus first agent if nothing focused yet.
 		if m.focused == "" && len(m.agents) > 0 {
 			m.focused = m.agents[0].driver.ID()
+			m.focusedDriver = m.agents[0].driver
 		}
 		// Start watching events for the focused agent (if any).
-		if m.focused != "" {
-			if d, ok := m.registry.Get(m.focused); ok {
-				return m, watchEvents(d)
-			}
+		if m.focusedDriver != nil {
+			return m, watchEvents(m.focusedDriver)
 		}
 		return m, nil
 
 	case eventMsg:
-		// Only collect events for the focused agent.
-		if msg.event.SessionID == m.focused {
-			m.events = append(m.events, msg.event)
-			if len(m.events) > m.eventsLimit {
-				// Drop oldest.
-				m.events = m.events[len(m.events)-m.eventsLimit:]
-			}
+		// Collect events from the focused driver. No SessionID filter
+		// needed — watchEvents is only called for the focused driver.
+		m.events = append(m.events, msg.event)
+		if len(m.events) > m.eventsLimit {
+			m.events = m.events[len(m.events)-m.eventsLimit:]
 		}
 		// Re-issue watch to keep the event stream going.
-		if d, ok := m.registry.Get(m.focused); ok {
-			return m, watchEvents(d)
+		if m.focusedDriver != nil {
+			return m, watchEvents(m.focusedDriver)
 		}
 		return m, nil
 
@@ -191,10 +189,11 @@ func (m Model) handleKeyList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Focus the agent at the cursor.
 		if m.cursor < len(m.agents) {
 			m.focused = m.agents[m.cursor].driver.ID()
+			m.focusedDriver = m.agents[m.cursor].driver
 			m.view = viewAgentFocus
 			m.events = nil
 			// Start watching events for this agent.
-			return m, watchEvents(m.agents[m.cursor].driver)
+			return m, watchEvents(m.focusedDriver)
 		}
 	case "p":
 		// Pause the highlighted agent.
@@ -219,18 +218,18 @@ func (m Model) handleKeyFocus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.view = viewAgentList
 		m.events = nil
 	case "p":
-		if d, ok := m.registry.Get(m.focused); ok {
-			return m, pauseCmd(d)
+		if m.focusedDriver != nil {
+			return m, pauseCmd(m.focusedDriver)
 		}
 	case "r":
-		if d, ok := m.registry.Get(m.focused); ok {
-			return m, resumeCmd(d)
+		if m.focusedDriver != nil {
+			return m, resumeCmd(m.focusedDriver)
 		}
 	case "a":
 		// Assume control — placeholder for full implementation.
 		// Full version: pause the agent, open a shell in its workspace.
-		if d, ok := m.registry.Get(m.focused); ok {
-			return m, sendCmd(d, driver.Message{
+		if m.focusedDriver != nil {
+			return m, sendCmd(m.focusedDriver, driver.Message{
 				Role:    "user",
 				Content: "[assume control requested by user]",
 			})

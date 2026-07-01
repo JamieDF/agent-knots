@@ -224,24 +224,26 @@ func TestHandleEvent(t *testing.T) {
 	}
 }
 
-func TestHandleEvent_FilterByFocus(t *testing.T) {
+func TestHandleEvent_CollectsAllFromFocused(t *testing.T) {
 	d1 := &mockDriver{id: "agent-1", eventsCh: make(chan driver.Event)}
 	d2 := &mockDriver{id: "agent-2", eventsCh: make(chan driver.Event)}
 	m := NewModel(&mockRegistry{drivers: []Driver{d1, d2}})
 	m.focused = "agent-1"
+	m.focusedDriver = d1
 
-	// Event from focused agent.
+	// Events are not filtered by SessionID — the TUI collects all events
+	// from the focused driver's watchEvents stream.
 	updated, _ := m.Update(eventMsg{event: driver.Event{SessionID: "agent-1", Type: driver.EventMessage, Message: "yes"}})
 	model := updated.(Model)
 	if len(model.events) != 1 {
-		t.Errorf("focused event: len = %d", len(model.events))
+		t.Errorf("first event: len = %d, want 1", len(model.events))
 	}
 
-	// Event from non-focused agent.
-	updated, _ = model.Update(eventMsg{event: driver.Event{SessionID: "agent-2", Type: driver.EventMessage, Message: "no"}})
+	// A second event is also collected.
+	updated, _ = model.Update(eventMsg{event: driver.Event{SessionID: "agent-1", Type: driver.EventMessage, Message: "more"}})
 	model = updated.(Model)
-	if len(model.events) != 1 {
-		t.Errorf("non-focused event: len = %d, want 1 (unchanged)", len(model.events))
+	if len(model.events) != 2 {
+		t.Errorf("second event: len = %d, want 2", len(model.events))
 	}
 }
 
