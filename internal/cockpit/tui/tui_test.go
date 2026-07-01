@@ -176,17 +176,27 @@ func TestHandleKey_PauseResume(t *testing.T) {
 	updated, _ := m.Update(agentsMsg{agents: []agentRow{{driver: d1, state: d1.state}}})
 	model := updated.(Model)
 
-	// Press p to pause.
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	// Press p to pause. Bubble Tea's Update returns a Cmd that the
+	// runtime executes asynchronously; in unit tests we drive it
+	// synchronously by invoking cmd() so the driver's Pause() actually
+	// fires against the mock.
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if cmd != nil {
+		_ = cmd()
+	}
 	if d1.state.Status != driver.StatusPaused {
 		t.Errorf("expected paused, got %s", d1.state.Status)
 	}
 
 	// Press r to resume.
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd != nil {
+		_ = cmd()
+	}
 	if d1.state.Status != driver.StatusRunning {
 		t.Errorf("expected running, got %s", d1.state.Status)
 	}
+	_ = updated
 }
 
 func TestHandleEvent(t *testing.T) {

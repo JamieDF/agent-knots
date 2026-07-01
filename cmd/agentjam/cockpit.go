@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/JamieDF/agentjam/internal/agent/driver"
 	cockpit "github.com/JamieDF/agentjam/internal/cockpit/tui"
 )
 
@@ -75,10 +74,15 @@ Keybindings (TUI):
 }
 
 // emptyRegistry is a stub DriverRegistry that returns no agents. Used
-// until the active-agent tracking is implemented.
+// until the live agent tracking from internal/cockpit is implemented.
+//
+// Implements cockpit.DriverRegistry (the tui.DriverRegistry interface)
+// by yielding no drivers — the cockpit renders an empty agent list in
+// that case. When the live registry ships, this will be replaced by an
+// adapter that wraps driver.Driver instances in the tui.Driver subset.
 type emptyRegistry struct{}
 
-func (e *emptyRegistry) List() []driver.Driver { return nil }
-func (e *emptyRegistry) Get(_ string) (driver.Driver, bool) {
+func (e *emptyRegistry) List() []cockpit.Driver { return nil }
+func (e *emptyRegistry) Get(_ string) (cockpit.Driver, bool) {
 	return nil, false
 }
