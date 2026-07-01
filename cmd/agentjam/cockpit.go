@@ -13,6 +13,7 @@ import (
 	"github.com/JamieDF/agentjam/internal/agent/driver"
 	"github.com/JamieDF/agentjam/internal/config"
 	cockpit "github.com/JamieDF/agentjam/internal/cockpit/tui"
+	webcockpit "github.com/JamieDF/agentjam/internal/cockpit/web"
 	"github.com/JamieDF/agentjam/internal/errs"
 	"github.com/JamieDF/agentjam/internal/session/live"
 )
@@ -28,7 +29,7 @@ func cockpitCmd() *cobra.Command {
 		Long: `Launch the cockpit — the canonical management surface for agentjam.
 
 By default, launches the keyboard-driven TUI cockpit. Use --web to launch
-the web GUI (when implemented).
+the web GUI (browser-accessible, binds to 127.0.0.1).
 
 The cockpit discovers running sessions (started with --detach) and displays
 them in real time. Use 'agentjam session start --driver mock --detach' to
@@ -44,9 +45,19 @@ Keybindings (TUI):
   q            quit`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if web {
-				fmt.Fprintln(cmd.OutOrStdout(),
-					"Web GUI is planned but not yet implemented. Run without --web for the TUI cockpit.")
-				return nil
+				srv := webcockpit.New(config.SessionsPath(), config.Home())
+				url, err := srv.ListenAndServe()
+				if err != nil {
+					return fmt.Errorf("start web cockpit: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "agentjam cockpit (web): %s\n", url)
+				fmt.Fprintln(cmd.OutOrStdout(), "Press Ctrl-C to stop.")
+
+				// Block until context cancelled (Ctrl-C or parent kill).
+				<-cmd.Context().Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				return srv.Shutdown(ctx)
 			}
 
 			registry := &liveRegistry{
@@ -72,7 +83,7 @@ Keybindings (TUI):
 		},
 	}
 
-	cmd.Flags().BoolVar(&web, "web", false, "Use web GUI (planned, not yet implemented)")
+	cmd.Flags().BoolVar(&web, "web", false, "Launch the web GUI (browser-accessible)")
 	return cmd
 }
 
