@@ -5,14 +5,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/harness/harness/internal/agent/driver"
-	"github.com/harness/harness/internal/agent/driver/opencode"
-	"github.com/harness/harness/internal/config"
-	"github.com/harness/harness/internal/mode"
-	"github.com/harness/harness/internal/project"
-	"github.com/harness/harness/internal/project/filestore"
-	"github.com/harness/harness/internal/task"
-	taskstore "github.com/harness/harness/internal/task/filestore"
+	"github.com/JamieDF/agentjam/internal/agent/driver"
+	"github.com/JamieDF/agentjam/internal/agent/driver/opencode"
+	"github.com/JamieDF/agentjam/internal/config"
+	"github.com/JamieDF/agentjam/internal/mode"
+	"github.com/JamieDF/agentjam/internal/project"
+	"github.com/JamieDF/agentjam/internal/project/filestore"
+	"github.com/JamieDF/agentjam/internal/task"
+	taskstore "github.com/JamieDF/agentjam/internal/task/filestore"
 )
 
 func agentCmd() *cobra.Command {

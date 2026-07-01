@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/harness/harness/internal/errs"
+	"github.com/JamieDF/agentjam/internal/errs"
 )
 
 func newTestLoader(t *testing.T) *Loader {

@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/harness/harness/internal/agent/driver"
-	cockpit "github.com/harness/harness/internal/cockpit/tui"
+	"github.com/JamieDF/agentjam/internal/agent/driver"
+	cockpit "github.com/JamieDF/agentjam/internal/cockpit/tui"
 )
 
 func cockpitCmd() *cobra.Command {

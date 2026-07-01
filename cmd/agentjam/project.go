@@ -8,9 +8,9 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/harness/harness/internal/config"
-	"github.com/harness/harness/internal/project"
-	"github.com/harness/harness/internal/project/filestore"
+	"github.com/JamieDF/agentjam/internal/config"
+	"github.com/JamieDF/agentjam/internal/project"
+	"github.com/JamieDF/agentjam/internal/project/filestore"
 )
 
 func projectCmd() *cobra.Command {

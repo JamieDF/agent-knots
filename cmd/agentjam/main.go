@@ -13,7 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/harness/harness/internal/config"
+	"github.com/JamieDF/agentjam/internal/config"
 )
 
 var (

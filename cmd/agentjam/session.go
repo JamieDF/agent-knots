@@ -17,12 +17,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/harness/harness/internal/agent/driver"
-	"github.com/harness/harness/internal/config"
-	"github.com/harness/harness/internal/container"
-	pstore "github.com/harness/harness/internal/project/filestore"
-	"github.com/harness/harness/internal/session"
-	tstore "github.com/harness/harness/internal/task/filestore"
+	"github.com/JamieDF/agentjam/internal/agent/driver"
+	"github.com/JamieDF/agentjam/internal/config"
+	"github.com/JamieDF/agentjam/internal/container"
+	pstore "github.com/JamieDF/agentjam/internal/project/filestore"
+	"github.com/JamieDF/agentjam/internal/session"
+	tstore "github.com/JamieDF/agentjam/internal/task/filestore"
 )
 
 func sessionCmd() *cobra.Command {

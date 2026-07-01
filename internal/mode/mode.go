@@ -17,7 +17,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/harness/harness/internal/errs"
+	"github.com/JamieDF/agentjam/internal/errs"
 )
 
 // Mode is a named system prompt definition.

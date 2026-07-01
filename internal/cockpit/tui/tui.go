@@ -28,7 +28,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/harness/harness/internal/agent/driver"
+	"github.com/JamieDF/agentjam/internal/agent/driver"
 )
 
 // Driver is the subset of driver.Driver that the TUI uses. Defined as

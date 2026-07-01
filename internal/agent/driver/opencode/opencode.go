@@ -40,8 +40,8 @@ import (
 	opencode "github.com/sst/opencode-sdk-go"
 	"github.com/sst/opencode-sdk-go/option"
 
-	"github.com/harness/harness/internal/agent/driver"
-	"github.com/harness/harness/internal/errs"
+	"github.com/JamieDF/agentjam/internal/agent/driver"
+	"github.com/JamieDF/agentjam/internal/errs"
 )
 
 // Driver is an OpenCode-backed agent driver.

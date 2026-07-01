@@ -29,11 +29,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/harness/harness/internal/agent/driver"
-	"github.com/harness/harness/internal/agent/driver/opencode"
-	"github.com/harness/harness/internal/container"
-	"github.com/harness/harness/internal/container/podman"
-	"github.com/harness/harness/internal/errs"
+	"github.com/JamieDF/agentjam/internal/agent/driver"
+	"github.com/JamieDF/agentjam/internal/agent/driver/opencode"
+	"github.com/JamieDF/agentjam/internal/container"
+	"github.com/JamieDF/agentjam/internal/container/podman"
+	"github.com/JamieDF/agentjam/internal/errs"
 )
 
 // ContainerRuntime is the podman-backed containerized-runtime implementation.

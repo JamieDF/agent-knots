@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/harness/harness/internal/errs"
-	"github.com/harness/harness/internal/task"
+	"github.com/JamieDF/agentjam/internal/errs"
+	"github.com/JamieDF/agentjam/internal/task"
 )
 
 func newTestStore(t *testing.T) *Store {

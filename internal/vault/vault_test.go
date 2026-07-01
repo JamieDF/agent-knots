@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/harness/harness/internal/errs"
+	"github.com/JamieDF/agentjam/internal/errs"
 )
 
 func TestCredentialValidate(t *testing.T) {

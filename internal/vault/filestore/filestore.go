@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
-	"github.com/harness/harness/internal/errs"
-	"github.com/harness/harness/internal/vault"
+	"github.com/JamieDF/agentjam/internal/errs"
+	"github.com/JamieDF/agentjam/internal/vault"
 )
 
 // entry is the on-disk representation of a credential. The value is

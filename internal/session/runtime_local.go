@@ -13,9 +13,9 @@ import (
 	"os"
 	"sync"
 
-	"github.com/harness/harness/internal/agent/driver"
-	"github.com/harness/harness/internal/agent/driver/opencode"
-	"github.com/harness/harness/internal/errs"
+	"github.com/JamieDF/agentjam/internal/agent/driver"
+	"github.com/JamieDF/agentjam/internal/agent/driver/opencode"
+	"github.com/JamieDF/agentjam/internal/errs"
 )
 
 // LocalRuntime is the host-mode implementation of Runtime.

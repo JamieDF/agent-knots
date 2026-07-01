@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/harness/harness/internal/vault"
-	"github.com/harness/harness/internal/vault/filestore"
+	"github.com/JamieDF/agentjam/internal/vault"
+	"github.com/JamieDF/agentjam/internal/vault/filestore"
 )
 
 // ExampleFileStore_endToEnd shows the full lifecycle: create, unlock, add a

@@ -25,8 +25,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/harness/harness/internal/errs"
-	"github.com/harness/harness/internal/task"
+	"github.com/JamieDF/agentjam/internal/errs"
+	"github.com/JamieDF/agentjam/internal/task"
 )
 
 // Store is a file-backed task.Store.

@@ -16,8 +16,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/harness/harness/internal/errs"
-	"github.com/harness/harness/internal/project"
+	"github.com/JamieDF/agentjam/internal/errs"
+	"github.com/JamieDF/agentjam/internal/project"
 )
 
 // Store is a file-backed project.Store.

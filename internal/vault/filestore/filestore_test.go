@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/harness/harness/internal/errs"
-	"github.com/harness/harness/internal/vault"
+	"github.com/JamieDF/agentjam/internal/errs"
+	"github.com/JamieDF/agentjam/internal/vault"
 )
 
 // newTestStore returns a fresh FileStore in a temp dir.

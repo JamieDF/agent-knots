@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/harness/harness/internal/task"
+	"github.com/JamieDF/agentjam/internal/task"
 )
 
 // buildTaskPrompt constructs a structured prompt from a task for sending to

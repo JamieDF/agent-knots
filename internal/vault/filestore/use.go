@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/harness/harness/internal/errs"
-	"github.com/harness/harness/internal/vault"
+	"github.com/JamieDF/agentjam/internal/errs"
+	"github.com/JamieDF/agentjam/internal/vault"
 )
 
 // Use implements Vault.Use. The credential value is decrypted in-memory only,

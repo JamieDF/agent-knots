@@ -26,8 +26,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/harness/harness/internal/container"
-	"github.com/harness/harness/internal/errs"
+	"github.com/JamieDF/agentjam/internal/container"
+	"github.com/JamieDF/agentjam/internal/errs"
 )
 
 // Runtime is a podman-backed container.Runtime.

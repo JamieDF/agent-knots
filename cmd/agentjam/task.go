@@ -7,10 +7,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/harness/harness/internal/config"
-	"github.com/harness/harness/internal/errs"
-	"github.com/harness/harness/internal/task"
-	"github.com/harness/harness/internal/task/filestore"
+	"github.com/JamieDF/agentjam/internal/config"
+	"github.com/JamieDF/agentjam/internal/errs"
+	"github.com/JamieDF/agentjam/internal/task"
+	"github.com/JamieDF/agentjam/internal/task/filestore"
 )
 
 func taskCmd() *cobra.Command {

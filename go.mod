@@ -1,4 +1,4 @@
-module github.com/harness/harness
+module github.com/JamieDF/agentjam
 
 go 1.25.0
 

@@ -9,10 +9,10 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/harness/harness/internal/config"
-	"github.com/harness/harness/internal/errs"
-	"github.com/harness/harness/internal/vault"
-	"github.com/harness/harness/internal/vault/filestore"
+	"github.com/JamieDF/agentjam/internal/config"
+	"github.com/JamieDF/agentjam/internal/errs"
+	"github.com/JamieDF/agentjam/internal/vault"
+	"github.com/JamieDF/agentjam/internal/vault/filestore"
 )
 
 func vaultCmd() *cobra.Command {

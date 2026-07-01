@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/harness/harness/internal/agent/driver"
+	"github.com/JamieDF/agentjam/internal/agent/driver"
 )
 
 // mockDriver is a stub Driver for testing.

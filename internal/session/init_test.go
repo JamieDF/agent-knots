@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/harness/harness/internal/agent/driver"
-	"github.com/harness/harness/internal/task"
-	"github.com/harness/harness/internal/task/filestore"
+	"github.com/JamieDF/agentjam/internal/agent/driver"
+	"github.com/JamieDF/agentjam/internal/task"
+	"github.com/JamieDF/agentjam/internal/task/filestore"
 )
 
 func TestNewSessionID_UniqueAndFormatted(t *testing.T) {

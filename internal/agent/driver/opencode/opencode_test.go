@@ -6,8 +6,8 @@ import (
 
 	opencode "github.com/sst/opencode-sdk-go"
 
-	"github.com/harness/harness/internal/agent/driver"
-	"github.com/harness/harness/internal/errs"
+	"github.com/JamieDF/agentjam/internal/agent/driver"
+	"github.com/JamieDF/agentjam/internal/errs"
 )
 
 func TestNew(t *testing.T) {
