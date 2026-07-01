@@ -34,6 +34,8 @@ import (
 	"github.com/JamieDF/agentjam/internal/container"
 	"github.com/JamieDF/agentjam/internal/container/podman"
 	"github.com/JamieDF/agentjam/internal/errs"
+	"github.com/JamieDF/agentjam/internal/project"
+	"github.com/JamieDF/agentjam/internal/vcs"
 )
 
 // ContainerRuntime is the podman-backed containerized-runtime implementation.
@@ -44,9 +46,10 @@ type ContainerRuntime struct {
 	profile  container.IsolationProfile
 	cRuntime container.Runtime // pluggable; defaults to podman
 
-	worktreePath string       // host path to the worktree (source of mount)
-	containerID  container.ID // set after Run
-	portMapping  string       // e.g. "127.0.0.1:49152"
+	worktreePath string          // host path to the worktree base (source of mount)
+	worktrees    []*vcs.Worktree // created worktrees for cleanup
+	containerID  container.ID    // set after Run
+	portMapping  string          // e.g. "127.0.0.1:49152"
 	driver       driver.Driver
 	mu           sync.Mutex
 }
@@ -71,26 +74,123 @@ func NewContainerRuntime(opts Options, r *Resolved) *ContainerRuntime {
 // Kind implements Runtime.
 func (c *ContainerRuntime) Kind() RuntimeKind { return RuntimeKindContainer }
 
-// PrepareWorkspace creates the per-session worktree directory.
+// PrepareWorkspace creates per-session git worktrees for each repo in the
+// project. The worktree base is mounted at /workspace in the container.
 //
-// v1 implementation is "create empty directory"; a future git-worktree
-// integration will branch off the repo and create a real worktree. The
-// goal here is to lock down the API — subsequent phases of agentjam can
-// swap in the git implementation without changing Init().
+// For a single-repo project (WorkspaceRoot is a git repo, no explicit
+// Repos), a single worktree is created directly at the worktree base path.
+//
+// For a multi-repo project, each repo gets its own worktree in a subdirectory
+// matching the repo's relative path, on a branch named
+// agent-<session-id>/<repo-name>.
+//
+// If WorkspaceRoot is not a git repo and no repos are defined, falls back
+// to creating an empty directory (backward-compatible v1 behaviour).
 func (c *ContainerRuntime) PrepareWorkspace(_ context.Context, r *Resolved) (string, error) {
 	if r.Project == nil {
 		return "", errs.Wrap(errs.ErrInvalid, "container runtime: project is required")
 	}
+
 	base := c.opts.WorktreeBase
 	if base == "" {
 		base = filepath.Join(os.Getenv("HOME"), ".agentjam", "worktrees")
 	}
-	wt := filepath.Join(base, string(r.Project.ID), c.opts.ID)
-	if err := os.MkdirAll(wt, 0o755); err != nil {
-		return "", errs.Wrap(err, "create worktree dir %q", wt)
+	wtBase := filepath.Join(base, string(r.Project.ID), c.opts.ID)
+
+	g := vcs.New("")
+
+	// Determine which repos to create worktrees for.
+	repos := c.resolveRepoDirs(r.Project)
+
+	if len(repos) == 0 {
+		// No git repos found — fall back to empty dir.
+		if err := os.MkdirAll(wtBase, 0o755); err != nil {
+			return "", errs.Wrap(err, "create worktree dir %q", wtBase)
+		}
+		c.worktreePath = wtBase
+		return wtBase, nil
 	}
-	c.worktreePath = wt
-	return wt, nil
+
+	// Create a worktree for each repo.
+	for _, rd := range repos {
+		branch := c.branchName(rd)
+		wtDir := wtBase
+		if rd.subDir != "" {
+			wtDir = filepath.Join(wtBase, rd.subDir)
+		}
+
+		wt, err := g.CreateWorktree(vcs.WorktreeSpec{
+			RepoDir:     rd.absPath,
+			Branch:      branch,
+			WorktreeDir: wtDir,
+			BaseBranch:  rd.baseBranch,
+		})
+		if err != nil {
+			// Clean up any worktrees already created.
+			for _, w := range c.worktrees {
+				_ = g.Cleanup(w)
+			}
+			c.worktrees = nil
+			return "", errs.Wrap(err, "create worktree for %q", rd.absPath)
+		}
+		c.worktrees = append(c.worktrees, wt)
+	}
+
+	c.worktreePath = wtBase
+	return wtBase, nil
+}
+
+// repoDir describes a resolved repo for worktree creation.
+type repoDir struct {
+	absPath    string // absolute path to the git repo
+	subDir     string // subdirectory under the worktree base ("" for root)
+	baseBranch string // branch to start from ("" = current HEAD)
+	name       string // branch suffix (repo role or dir name)
+}
+
+// resolveRepoDirs scans the project's repos and returns those that are
+// actual git repositories.
+func (c *ContainerRuntime) resolveRepoDirs(p *project.Project) []repoDir {
+	g := vcs.New("")
+	var out []repoDir
+
+	if len(p.Repos) == 0 {
+		// Single-repo project: treat WorkspaceRoot as the repo.
+		if p.WorkspaceRoot != "" && g.IsGitRepo(p.WorkspaceRoot) {
+			return []repoDir{{
+				absPath: p.WorkspaceRoot,
+				subDir:  "",
+				name:    filepath.Base(p.WorkspaceRoot),
+			}}
+		}
+		return nil
+	}
+
+	for _, repo := range p.Repos {
+		repoPath := repo.Path
+		if !filepath.IsAbs(repoPath) {
+			repoPath = filepath.Join(p.WorkspaceRoot, repoPath)
+		}
+		if !g.IsGitRepo(repoPath) {
+			continue
+		}
+		name := repo.Role
+		if name == "" {
+			name = filepath.Base(repoPath)
+		}
+		out = append(out, repoDir{
+			absPath:    repoPath,
+			subDir:     repo.Path,
+			baseBranch: repo.Branch,
+			name:       name,
+		})
+	}
+	return out
+}
+
+// branchName generates the per-session branch name for a repo.
+func (c *ContainerRuntime) branchName(rd repoDir) string {
+	return "agent-" + c.opts.ID + "/" + rd.name
 }
 
 // Start runs the container, waits for OpenCode inside to be ready, and
@@ -231,14 +331,18 @@ func (c *ContainerRuntime) Driver() driver.Driver {
 	return c.driver
 }
 
-// Cleanup stops the container and driver, and removes the worktree dir.
+// Cleanup stops the container and driver, removes worktrees and their
+// branches.
 func (c *ContainerRuntime) Cleanup(ctx context.Context) {
 	c.mu.Lock()
 	d := c.driver
 	id := c.containerID
-	wt := c.worktreePath
+	worktrees := c.worktrees
+	wtPath := c.worktreePath
 	c.driver = nil
 	c.containerID = ""
+	c.worktrees = nil
+	c.worktreePath = ""
 	c.mu.Unlock()
 
 	if d != nil {
@@ -247,8 +351,17 @@ func (c *ContainerRuntime) Cleanup(ctx context.Context) {
 	if c.cRuntime != nil && id != "" {
 		_ = c.cRuntime.Remove(ctx, id, true)
 	}
-	if wt != "" {
-		_ = os.RemoveAll(wt)
+
+	// Remove git worktrees and delete branches.
+	g := vcs.New("")
+	for _, wt := range worktrees {
+		_ = g.Cleanup(wt)
+	}
+
+	// Remove the worktree base directory if it still exists (handles
+	// non-git fallback and empty dirs).
+	if wtPath != "" {
+		_ = os.RemoveAll(wtPath)
 	}
 }
 

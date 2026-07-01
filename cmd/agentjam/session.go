@@ -64,6 +64,7 @@ func sessionStartCmd() *cobra.Command {
 		detach          bool
 		privilegedDebug bool
 		driverKind      string
+		worktree        bool
 	)
 
 	cmd := &cobra.Command{
@@ -82,6 +83,10 @@ Use --driver=mock to run a scripted fake-event driver for testing and demos
 without an LLM server. The mock driver emits realistic events (thinking,
 tool calls, messages, progress) every ~1.5 seconds.
 
+Use --worktree to create a git worktree on a per-session branch, isolating
+the agent's changes from your main working copy. Container sessions always
+use worktrees.
+
 The agent in a container session runs with the hardened isolation profile
 defined in ADR-004: non-root UID, capabilities dropped, read-only rootfs,
 private network namespace, cgroup limits, deny-by-default egress. Use
@@ -91,6 +96,7 @@ Example:
   agentjam session start --task T-001 --mode agent
   agentjam session start --project my-app --container --detach
   agentjam session start --driver mock           # fake events, no LLM
+  agentjam session start --task T-001 --worktree # isolated git worktree
   agentjam session start --task T-001 --privileged-debug`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -127,10 +133,11 @@ Example:
 				Mode:             driver.Mode(mode),
 				Container:        containerFlag,
 				ContainerImage:   image,
-				ContainerProfile: profile,
-				PrivilegedDebug:  privilegedDebug,
-				DriverKind:        driverKind,
-				TaskStore:        ts,
+			ContainerProfile: profile,
+			PrivilegedDebug:  privilegedDebug,
+			DriverKind:       driverKind,
+			UseWorktree:      worktree,
+			TaskStore:        ts,
 				ProjectStore:     ps,
 				WorktreeBase:     filepath.Join(config.Home(), "worktrees"),
 				VaultSocketPath:  "/run/agentjam/vault.sock",
@@ -168,6 +175,8 @@ Example:
 		"Opt out of isolation hardening (debug only)")
 	cmd.Flags().StringVar(&driverKind, "driver", "opencode",
 		"Driver implementation: opencode (default) or mock")
+	cmd.Flags().BoolVar(&worktree, "worktree", false,
+		"Create a git worktree on a per-session branch (local mode only; container always uses worktrees)")
 
 	return cmd
 }
@@ -456,6 +465,9 @@ func startDetached(_ context.Context, opts session.Options) error {
 	}
 	if opts.PrivilegedDebug {
 		args = append(args, "--privileged-debug")
+	}
+	if opts.UseWorktree {
+		args = append(args, "--worktree")
 	}
 
 	cmd := exec.Command(self, args...)

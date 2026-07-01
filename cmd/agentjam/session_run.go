@@ -41,6 +41,7 @@ func sessionRunCmd() *cobra.Command {
 		image           string
 		privilegedDebug bool
 		driverKind      string
+		worktree        bool
 	)
 
 	cmd := &cobra.Command{
@@ -94,9 +95,10 @@ func sessionRunCmd() *cobra.Command {
 				Container:        containerFlag,
 				ContainerImage:   image,
 				ContainerProfile: profile,
-				PrivilegedDebug:  privilegedDebug,
-				DriverKind:        driverKind,
-				TaskStore:        ts,
+			PrivilegedDebug:  privilegedDebug,
+			DriverKind:       driverKind,
+			UseWorktree:      worktree,
+			TaskStore:        ts,
 				ProjectStore:     ps,
 				WorktreeBase:     filepath.Join(config.Home(), "worktrees"),
 				VaultSocketPath:  "/run/agentjam/vault.sock",
@@ -169,6 +171,7 @@ func sessionRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&image, "image", "", "Container image override")
 	cmd.Flags().BoolVar(&privilegedDebug, "privileged-debug", false, "Debug mode")
 	cmd.Flags().StringVar(&driverKind, "driver", "opencode", "Driver kind")
+	cmd.Flags().BoolVar(&worktree, "worktree", false, "Create git worktree")
 
 	return cmd
 }

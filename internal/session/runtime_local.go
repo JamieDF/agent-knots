@@ -11,12 +11,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/JamieDF/agentjam/internal/agent/driver"
 	"github.com/JamieDF/agentjam/internal/agent/driver/mock"
 	"github.com/JamieDF/agentjam/internal/agent/driver/opencode"
 	"github.com/JamieDF/agentjam/internal/errs"
+	"github.com/JamieDF/agentjam/internal/vcs"
 )
 
 // LocalRuntime is the host-mode implementation of Runtime.
@@ -29,8 +31,9 @@ type LocalRuntime struct {
 	opts Options
 	r    *Resolved
 
-	driver driver.Driver
-	mu     sync.Mutex
+	driver    driver.Driver
+	worktrees []*vcs.Worktree // created if opts.UseWorktree
+	mu        sync.Mutex
 }
 
 // NewLocalRuntime constructs a LocalRuntime.
@@ -41,8 +44,14 @@ func NewLocalRuntime(opts Options, r *Resolved) *LocalRuntime {
 // Kind implements Runtime.
 func (l *LocalRuntime) Kind() RuntimeKind { return RuntimeKindLocal }
 
-// PrepareWorkspace for local mode just resolves the project's
-// WorkspaceRoot and ensures it exists.
+// PrepareWorkspace for local mode resolves the project's WorkspaceRoot.
+//
+// When opts.UseWorktree is true, a git worktree is created on a per-session
+// branch, isolating the agent's changes from the main working copy. This is
+// the local-mode equivalent of what container sessions always do.
+//
+// When UseWorktree is false (default), the agent works directly in the
+// project's WorkspaceRoot.
 func (l *LocalRuntime) PrepareWorkspace(_ context.Context, r *Resolved) (string, error) {
 	if r.Project == nil {
 		// Interactive session with no project: nothing to prepare.
@@ -52,10 +61,42 @@ func (l *LocalRuntime) PrepareWorkspace(_ context.Context, r *Resolved) (string,
 	if wd == "" {
 		return "", errs.Wrap(errs.ErrInvalid, "project %q has no workspace_root", r.Project.ID)
 	}
-	if err := os.MkdirAll(wd, 0o755); err != nil {
-		return "", errs.Wrap(err, "create workspace %q", wd)
+
+	if !l.opts.UseWorktree {
+		// Direct mode: ensure the dir exists and return it.
+		if err := os.MkdirAll(wd, 0o755); err != nil {
+			return "", errs.Wrap(err, "create workspace %q", wd)
+		}
+		return wd, nil
 	}
-	return wd, nil
+
+	// Worktree mode: create a git worktree for isolation.
+	g := vcs.New("")
+	if !g.IsGitRepo(wd) {
+		// Not a git repo — fall back to direct mode.
+		if err := os.MkdirAll(wd, 0o755); err != nil {
+			return "", errs.Wrap(err, "create workspace %q", wd)
+		}
+		return wd, nil
+	}
+
+	base := l.opts.WorktreeBase
+	if base == "" {
+		base = filepath.Join(os.Getenv("HOME"), ".agentjam", "worktrees")
+	}
+	wtDir := filepath.Join(base, string(r.Project.ID), l.opts.ID)
+	branch := "agent-" + l.opts.ID
+
+	wt, err := g.CreateWorktree(vcs.WorktreeSpec{
+		RepoDir:     wd,
+		Branch:      branch,
+		WorktreeDir: wtDir,
+	})
+	if err != nil {
+		return "", errs.Wrap(err, "create worktree for %q", wd)
+	}
+	l.worktrees = append(l.worktrees, wt)
+	return wtDir, nil
 }
 
 // Start launches the driver pointing at the working dir. The driver kind
@@ -134,14 +175,26 @@ func (l *LocalRuntime) Driver() driver.Driver {
 	return l.driver
 }
 
-// Cleanup stops the driver.
+// Cleanup stops the driver and removes any worktrees created in worktree
+// mode.
 func (l *LocalRuntime) Cleanup(ctx context.Context) {
 	l.mu.Lock()
 	d := l.driver
+	worktrees := l.worktrees
 	l.driver = nil
+	l.worktrees = nil
 	l.mu.Unlock()
+
 	if d != nil {
 		_ = d.Stop(ctx)
+	}
+
+	// Remove git worktrees and branches if any were created.
+	if len(worktrees) > 0 {
+		g := vcs.New("")
+		for _, wt := range worktrees {
+			_ = g.Cleanup(wt)
+		}
 	}
 }
 

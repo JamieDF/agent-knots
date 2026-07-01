@@ -87,6 +87,12 @@ type Options struct {
 	// are created. Default: $AGENTJAM_HOME/worktrees.
 	WorktreeBase string
 
+	// UseWorktree enables git worktree isolation for local sessions.
+	// When true, PrepareWorkspace creates a worktree off the project's
+	// repo instead of using the workspace root directly. Container
+	// sessions always use worktrees regardless of this flag.
+	UseWorktree bool
+
 	// VaultSocketPath is the path to the vault daemon's unix socket (only
 	// relevant for container sessions). Empty = no vault socket mount.
 	VaultSocketPath string
