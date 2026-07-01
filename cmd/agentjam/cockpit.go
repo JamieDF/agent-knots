@@ -198,8 +198,22 @@ func (d *liveDriver) Snapshot(_ context.Context) (driver.State, error) {
 	return d.state, nil
 }
 
-func (d *liveDriver) Send(_ context.Context, _ driver.Message) error {
-	return errs.Wrap(errs.ErrUnsupported, "liveDriver.Send not implemented")
+func (d *liveDriver) Send(_ context.Context, msg driver.Message) error {
+	ctrl, err := d.liveSession.Control()
+	if err != nil {
+		return errs.Wrap(err, "connect to session for Send")
+	}
+	defer ctrl.Close()
+	return ctrl.Send(msg.Content)
+}
+
+func (d *liveDriver) SetMode(_ context.Context, mode driver.Mode) error {
+	ctrl, err := d.liveSession.Control()
+	if err != nil {
+		return errs.Wrap(err, "connect to session for SetMode")
+	}
+	defer ctrl.Close()
+	return ctrl.SetMode(string(mode))
 }
 
 func (d *liveDriver) Pause(_ context.Context) error {

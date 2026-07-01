@@ -8,7 +8,8 @@
 //   - AgentFocusView: shows the full event stream for one agent
 //
 // Press Enter or `f` on an agent to focus. Press Esc or `b` to zoom back
-// out to the agent list. Press `a` to assume control, `r` to relinquish,
+// out to the agent list. Press `a` to assume control (switches agent to
+// assistant mode), `r` to relinquish (switches back to agent mode),
 // `p` to pause, `q` to quit.
 //
 // # Status
@@ -38,6 +39,7 @@ type Driver interface {
 	Snapshot(ctx context.Context) (driver.State, error)
 	Events() <-chan driver.Event
 	Send(ctx context.Context, msg driver.Message) error
+	SetMode(ctx context.Context, mode driver.Mode) error
 	Pause(ctx context.Context) error
 	Resume(ctx context.Context) error
 }
@@ -231,18 +233,16 @@ func (m Model) handleKeyFocus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.focusedDriver != nil {
 			return m, pauseCmd(m.focusedDriver)
 		}
-	case "r":
-		if m.focusedDriver != nil {
-			return m, resumeCmd(m.focusedDriver)
-		}
 	case "a":
-		// Assume control — placeholder for full implementation.
-		// Full version: pause the agent, open a shell in its workspace.
+		// Assume control — switch the agent to assistant mode so the
+		// user can interact with it directly.
 		if m.focusedDriver != nil {
-			return m, sendCmd(m.focusedDriver, driver.Message{
-				Role:    "user",
-				Content: "[assume control requested by user]",
-			})
+			return m, setModeCmd(m.focusedDriver, driver.ModeAssistant)
+		}
+	case "r":
+		// Relinquish control — switch back to autonomous agent mode.
+		if m.focusedDriver != nil {
+			return m, setModeCmd(m.focusedDriver, driver.ModeAgent)
 		}
 	}
 	return m, nil
@@ -327,7 +327,7 @@ func (m Model) viewFocus() string {
 		s += "\n"
 	}
 
-	s += dimStyle.Render("  Esc/b: back  p: pause  r: resume  a: assume control  q: quit") + "\n"
+	s += dimStyle.Render("  Esc/b: back  p: pause  a: assume control  r: relinquish  q: quit") + "\n"
 	return s
 }
 
@@ -425,6 +425,13 @@ func resumeCmd(d Driver) tea.Cmd {
 func sendCmd(d Driver, msg driver.Message) tea.Cmd {
 	return func() tea.Msg {
 		_ = d.Send(context.Background(), msg)
+		return nil
+	}
+}
+
+func setModeCmd(d Driver, mode driver.Mode) tea.Cmd {
+	return func() tea.Msg {
+		_ = d.SetMode(context.Background(), mode)
 		return nil
 	}
 }

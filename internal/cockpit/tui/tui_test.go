@@ -31,6 +31,10 @@ func (m *mockDriver) Send(_ context.Context, msg driver.Message) error {
 	return nil
 }
 
+func (m *mockDriver) SetMode(_ context.Context, _ driver.Mode) error {
+	return nil
+}
+
 func (m *mockDriver) Pause(_ context.Context) error {
 	m.state.Status = driver.StatusPaused
 	return nil

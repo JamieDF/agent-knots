@@ -12,6 +12,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -176,7 +177,8 @@ func sessionRunCmd() *cobra.Command {
 	return cmd
 }
 
-// eventServer fans out driver events to connected socket clients.
+// eventServer fans out driver events to connected socket clients and
+// processes control messages (set-mode, send) received from clients.
 type eventServer struct {
 	listener net.Listener
 	d        driver.Driver
@@ -197,6 +199,7 @@ func newEventServer(listener net.Listener, d driver.Driver) *eventServer {
 func (es *eventServer) done() <-chan struct{} { return es.doneCh }
 
 // run accepts connections and forwards driver events to all clients.
+// Each connection is also monitored for control messages.
 // Returns when the driver's event channel closes.
 func (es *eventServer) run() {
 	// Accept loop.
@@ -209,6 +212,8 @@ func (es *eventServer) run() {
 			es.mu.Lock()
 			es.clients[conn] = true
 			es.mu.Unlock()
+			// Monitor this connection for control messages.
+			go es.readControls(conn)
 		}
 	}()
 
@@ -221,6 +226,72 @@ func (es *eventServer) run() {
 	// Event channel closed — driver stopped.
 	close(es.doneCh)
 	es.closeAllClients()
+}
+
+// controlMsg is the wire protocol for client → server commands.
+type controlMsg struct {
+	Type    string `json:"type"`              // always "control"
+	Action  string `json:"action"`            // "set-mode" or "send"
+	Mode    string `json:"mode,omitempty"`    // for set-mode
+	Content string `json:"content,omitempty"` // for send
+	Role    string `json:"role,omitempty"`    // for send (default "user")
+}
+
+// controlResponse is the server's reply to a control message.
+type controlResponse struct {
+	Type  string `json:"type"` // "control-response"
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// readControls reads control messages from a client connection and
+// executes them on the driver. Returns when the connection closes.
+func (es *eventServer) readControls(conn net.Conn) {
+	dec := json.NewDecoder(conn)
+	for {
+		var msg controlMsg
+		if err := dec.Decode(&msg); err != nil {
+			return // connection closed or error
+		}
+		if msg.Type != "control" {
+			continue
+		}
+		resp := es.handleControl(msg)
+		data, _ := json.Marshal(resp)
+		data = append(data, '\n')
+		_, _ = conn.Write(data)
+	}
+}
+
+// handleControl executes a control message on the driver.
+func (es *eventServer) handleControl(msg controlMsg) controlResponse {
+	ctx := context.Background()
+	switch msg.Action {
+	case "set-mode":
+		if msg.Mode == "" {
+			return controlResponse{OK: false, Error: "mode is required"}
+		}
+		if err := es.d.SetMode(ctx, driver.Mode(msg.Mode)); err != nil {
+			return controlResponse{OK: false, Error: err.Error()}
+		}
+		return controlResponse{OK: true}
+
+	case "send":
+		role := msg.Role
+		if role == "" {
+			role = "user"
+		}
+		if err := es.d.Send(ctx, driver.Message{
+			Role:    role,
+			Content: msg.Content,
+		}); err != nil {
+			return controlResponse{OK: false, Error: err.Error()}
+		}
+		return controlResponse{OK: true}
+
+	default:
+		return controlResponse{OK: false, Error: "unknown action: " + msg.Action}
+	}
 }
 
 // broadcast sends an event to all connected clients. Drops clients that

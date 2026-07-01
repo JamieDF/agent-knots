@@ -185,11 +185,38 @@ func (d *Driver) Snapshot(_ context.Context) (driver.State, error) {
 	}, nil
 }
 
-// SetMode changes the agent's behavioral mode.
+// SetMode changes the agent's behavioral mode and emits a visible event
+// so the cockpit can observe the mode swap.
 func (d *Driver) SetMode(_ context.Context, mode driver.Mode) error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	if d.stopped {
+		d.mu.Unlock()
+		return driver.ErrClosed
+	}
+	old := d.modeNow
 	d.modeNow = mode
+	d.mu.Unlock()
+
+	if old == mode {
+		return nil
+	}
+
+	// Emit a mode-change event (non-blocking).
+	ev := driver.Event{
+		Type:      driver.EventMessage,
+		SessionID: d.id,
+		Timestamp: time.Now().UTC(),
+		Message:   fmt.Sprintf("⚡ mode changed: %s → %s", old, mode),
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.stopped {
+		return nil
+	}
+	select {
+	case d.events <- ev:
+	default:
+	}
 	return nil
 }
 

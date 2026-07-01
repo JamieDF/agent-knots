@@ -194,3 +194,72 @@ func (s *Session) cleanupStale() {
 	_ = os.Remove(filepath.Join(s.sessionsDir, s.SessionID+".pid"))
 	_ = os.Remove(filepath.Join(s.sessionsDir, s.SessionID+".sock"))
 }
+
+// Control opens a control connection to the session subprocess. Control
+// connections can send commands (set-mode, send) to the running agent.
+// The connection is full-duplex: the caller writes control messages and
+// reads responses. Event streaming uses a separate connection (see Events).
+func (s *Session) Control() (*Control, error) {
+	conn, err := net.Dial("unix", s.SocketPath)
+	if err != nil {
+		return nil, fmt.Errorf("dial session socket: %w", err)
+	}
+	return &Control{conn: conn}, nil
+}
+
+// Control is a client-side handle for sending commands to a running
+// session subprocess via the event socket.
+type Control struct {
+	conn net.Conn
+}
+
+// SetMode sends a mode-swap command (e.g. "assistant" to assume control,
+// "agent" to relinquish). Returns nil on success.
+func (c *Control) SetMode(mode string) error {
+	return c.send(map[string]string{
+		"type":   "control",
+		"action": "set-mode",
+		"mode":   mode,
+	})
+}
+
+// Send delivers a message to the agent as if typed by the user.
+func (c *Control) Send(content string) error {
+	return c.send(map[string]string{
+		"type":    "control",
+		"action":  "send",
+		"content": content,
+		"role":    "user",
+	})
+}
+
+// Close releases the control connection.
+func (c *Control) Close() error {
+	return c.conn.Close()
+}
+
+// send writes a control message and waits for the response.
+func (c *Control) send(msg any) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal control message: %w", err)
+	}
+	data = append(data, '\n')
+	if _, err := c.conn.Write(data); err != nil {
+		return fmt.Errorf("write control message: %w", err)
+	}
+	// Read the response.
+	dec := json.NewDecoder(c.conn)
+	var resp struct {
+		Type  string `json:"type"`
+		OK    bool   `json:"ok"`
+		Error string `json:"error,omitempty"`
+	}
+	if err := dec.Decode(&resp); err != nil {
+		return fmt.Errorf("read control response: %w", err)
+	}
+	if !resp.OK {
+		return fmt.Errorf("control error: %s", resp.Error)
+	}
+	return nil
+}

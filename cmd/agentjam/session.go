@@ -49,6 +49,9 @@ session is the agent doing it. Use 'agentjam session start' to spawn one,
 		sessionShowCmd(),
 		sessionStopCmd(),
 		sessionLogsCmd(),
+		sessionAssumeCmd(),
+		sessionRelinquishCmd(),
+		sessionSendCmd(),
 	)
 
 	return cmd
@@ -556,4 +559,102 @@ func generateSessionID() string {
 		}
 	}
 	return "cli-" + suffix + "-" + string(s)
+}
+
+// sessionAssumeCmd implements `agentjam session assume <id>`.
+// It switches the agent to assistant mode so the user can interact
+// with it directly.
+func sessionAssumeCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "assume <id>",
+		Short: "Assume control of a running session",
+		Long: `Switch the agent to assistant mode so you can interact with it
+directly. The agent stops autonomous work and waits for your input.
+Use 'agentjam session relinquish <id>' to hand control back.
+
+Requires the session to be running (started with --detach).`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessionsDir := config.SessionsPath()
+			ls, err := live.Get(sessionsDir, args[0])
+			if err != nil {
+				return err
+			}
+			ctrl, err := ls.Control()
+			if err != nil {
+				return err
+			}
+			defer ctrl.Close()
+			if err := ctrl.SetMode("assistant"); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Assumed control of session %s (assistant mode).\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "Use 'agentjam session send %s \"<message>\"' to send messages.\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "Use 'agentjam session relinquish %s' to hand back control.\n", args[0])
+			return nil
+		},
+	}
+	return cmd
+}
+
+// sessionRelinquishCmd implements `agentjam session relinquish <id>`.
+// It switches the agent back to autonomous agent mode.
+func sessionRelinquishCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "relinquish <id>",
+		Short: "Relinquish control of a session",
+		Long: `Switch the agent back to autonomous agent mode. The agent
+resumes working on its task without user input.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessionsDir := config.SessionsPath()
+			ls, err := live.Get(sessionsDir, args[0])
+			if err != nil {
+				return err
+			}
+			ctrl, err := ls.Control()
+			if err != nil {
+				return err
+			}
+			defer ctrl.Close()
+			if err := ctrl.SetMode("agent"); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Relinquished control of session %s (agent mode).\n", args[0])
+			return nil
+		},
+	}
+	return cmd
+}
+
+// sessionSendCmd implements `agentjam session send <id> <message>`.
+// It sends a message to the running agent via the control channel.
+func sessionSendCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "send <id> <message>",
+		Short: "Send a message to a running session",
+		Long: `Send a user message to the agent in a running session.
+The message is delivered via the control channel; the response appears
+in the event stream (use 'agentjam session logs <id>' to follow).`,
+		Args: cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessionsDir := config.SessionsPath()
+			ls, err := live.Get(sessionsDir, args[0])
+			if err != nil {
+				return err
+			}
+			ctrl, err := ls.Control()
+			if err != nil {
+				return err
+			}
+			defer ctrl.Close()
+			msg := strings.Join(args[1:], " ")
+			if err := ctrl.Send(msg); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Message sent to session %s.\n", args[0])
+			return nil
+		},
+	}
+	return cmd
 }
