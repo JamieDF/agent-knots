@@ -50,9 +50,19 @@ const indexHTML = `<!DOCTYPE html>
 		async function refresh() {
 			try {
 				const r = await fetch('/api/agents');
-				if (r.ok) {
-					document.getElementById('agent-list').innerHTML = await r.text();
-				}
+				if (!r.ok) return;
+				const c = document.getElementById('agent-list');
+				// Remember which details are open.
+				const open = new Set();
+				c.querySelectorAll('details[open]').forEach(d => {
+					const id = d.getAttribute('data-id');
+					if (id) open.add(id);
+				});
+				c.innerHTML = await r.text();
+				// Restore open state.
+				c.querySelectorAll('details').forEach(d => {
+					if (open.has(d.getAttribute('data-id'))) d.open = true;
+				});
 			} catch(e) {}
 		}
 		refresh();

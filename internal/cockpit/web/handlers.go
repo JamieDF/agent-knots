@@ -102,14 +102,12 @@ func (s *Server) handleAgentsFragment(w http.ResponseWriter, r *http.Request) {
 
 	for _, ls := range sessions {
 		info := s.loadSessionInfo(ls)
-		fmt.Fprintf(w, `<article>
-	<details>
-		<summary><strong>%s</strong> &nbsp;<mark>%s</mark> &nbsp;<small>%s</small></summary>
-		<p>Mode: <code>%s</code> &middot; Tokens: %s &middot; Uptime: %s</p>
-		<a href="/agent/%s" role="button">View &rarr;</a>
-	</details>
-</article>
-`, info.ID, info.Status, info.StartedAgo, info.Mode,
+		fmt.Fprintf(w, `<details data-id="%s">
+	<summary><strong>%s</strong> &nbsp;<mark>%s</mark> &nbsp;<small>%s</small></summary>
+	<p>Mode: <code>%s</code> &middot; Tokens: %s &middot; Uptime: %s</p>
+	<a href="/agent/%s" role="button">View &rarr;</a>
+</details>
+`, info.ID, info.ID, info.Status, info.StartedAgo, info.Mode,
 			formatTokens(info.Tokens), info.StartedAgo, info.ID)
 	}
 }
