@@ -1,0 +1,42 @@
+{
+  "_comment": "AWS credential templates. Note: for production use, prefer OIDC/SSO via aws-vault or aws sso. These templates are for direct access key + secret pairs.",
+
+  "templates": {
+    "aws_env": {
+      "name": "aws_env",
+      "description": "Inject AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY as env vars",
+      "injection": {
+        "env": {
+          "AWS_ACCESS_KEY_ID": "$value",
+          "AWS_SECRET_ACCESS_KEY": "$value"
+        }
+      },
+      "_note": "This template uses one credential for two values. For real AWS, store them as separate credentials (aws/access_key_id and aws/secret_access_key) and use the composite pattern below."
+    },
+
+    "aws_sso_env": {
+      "name": "aws_sso_env",
+      "description": "Inject AWS SSO credentials (access key + secret + session token)",
+      "injection": {
+        "env": {
+          "AWS_ACCESS_KEY_ID": "$value",
+          "AWS_SECRET_ACCESS_KEY": "$value",
+          "AWS_SESSION_TOKEN": "$value"
+        }
+      },
+      "_note": "Same caveat as aws_env — store three separate credentials in real use."
+    },
+
+    "aws_config_file": {
+      "name": "aws_config_file",
+      "description": "Write credentials to ~/.aws/credentials file",
+      "injection": {
+        "file": {
+          "path": "/tmp/harness-aws-credentials",
+          "permissions": 384
+        }
+      },
+      "cli": "harness vault template add aws/profile --name aws_config_file --file /tmp/harness-aws-credentials"
+    }
+  }
+}

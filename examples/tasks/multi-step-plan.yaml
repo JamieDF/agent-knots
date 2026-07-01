@@ -1,0 +1,122 @@
+# Example: Complex task with nested sub-steps
+#
+# Use this pattern when a task has clear sub-phases with their own steps.
+# The parent step's `sub_steps` field captures the breakdown.
+
+id: T-2026-06-30-004
+project: my-app
+title: "Migrate from REST to gRPC for internal service communication"
+
+description: |
+  Our three internal services currently communicate over REST. We're
+  hitting latency targets as the system grows, and the schema-drift
+  problems are mounting. Migrating to gRPC for internal-only traffic will
+  give us typed contracts, better performance, and code generation.
+
+  This is a big task with multiple distinct phases. Plan accordingly.
+
+status: open
+priority: medium
+
+tags:
+  - migration
+  - backend
+  - infrastructure
+  - large
+
+acceptance_criteria:
+  - "All three services expose gRPC endpoints for their internal APIs"
+  - "REST endpoints remain (for external clients) but are proxied to gRPC internally"
+  - "Latency for service-to-service calls is reduced (benchmark before/after)"
+  - "All existing tests pass"
+  - "New gRPC API has its own test suite"
+  - "Documentation updated (architecture, API reference)"
+  - "Rollout plan documented (canary, then full migration)"
+
+out_of_scope:
+  - "Public-facing REST API (kept for backward compat)"
+  - "Switching to gRPC for client-browser traffic"
+  - "Migrating to protobuf v2 / gRPC-Web"
+  - "Performance optimization beyond what gRPC provides out of the box"
+
+steps:
+  - id: ".1"
+    title: "Discovery and design phase"
+    status: open
+    sub_steps:
+      - id: ".1.1"
+        title: "Inventory all internal REST traffic"
+        status: open
+      - id: ".1.2"
+        title: "Design .proto schemas for each service"
+        status: open
+      - id: ".1.3"
+        title: "Document the migration sequence"
+        status: open
+
+  - id: ".2"
+    title: "Service A: define .proto, generate stubs, implement"
+    status: open
+    sub_steps:
+      - id: ".2.1"
+        title: "Write .proto files"
+        status: open
+      - id: ".2.2"
+        title: "Generate Go stubs"
+        status: open
+      - id: ".2.3"
+        title: "Implement gRPC server alongside REST"
+        status: open
+      - id: ".2.4"
+        title: "Write gRPC server tests"
+        status: open
+
+  - id: ".3"
+    title: "Service B: same as Service A"
+    status: open
+    sub_steps:
+      - id: ".3.1"
+        title: ".proto + stubs"
+        status: open
+      - id: ".3.2"
+        title: "gRPC server + tests"
+        status: open
+
+  - id: ".4"
+    title: "Service C: same as Services A and B"
+    status: open
+
+  - id: ".5"
+    title: "Migrate call sites"
+    status: open
+    sub_steps:
+      - id: ".5.1"
+        title: "Service A -> Service B calls"
+        status: open
+      - id: ".5.2"
+        title: "Service B -> Service C calls"
+        status: open
+      - id: ".5.3"
+        title: "Service A -> Service C calls"
+        status: open
+
+  - id: ".6"
+    title: "Remove REST endpoints (only after all callers migrated)"
+    status: open
+
+  - id: ".7"
+    title: "Performance benchmark before/after"
+    status: open
+
+  - id: ".8"
+    title: "Update architecture documentation"
+    status: open
+
+dependencies: []
+
+required_credentials:
+  - vault://github/work
+
+created_by: user
+
+# progress: []

@@ -1,0 +1,26 @@
+{
+  "_comment": "Anthropic API key templates. Note: Anthropic doesn't support Organization ID via env var the way OpenAI does.",
+
+  "templates": {
+    "anthropic_env": {
+      "name": "anthropic_env",
+      "description": "Inject ANTHROPIC_API_KEY for Anthropic SDK and CLI tools",
+      "injection": {
+        "env": {
+          "ANTHROPIC_API_KEY": "$value"
+        }
+      },
+      "cli": "harness vault template add anthropic/api --name anthropic_env --env '{\"ANTHROPIC_API_KEY\": \"$value\"}'"
+    },
+
+    "curl_bearer": {
+      "name": "curl_bearer",
+      "description": "Wrap curl with x-api-key header for Anthropic REST API",
+      "injection": {
+        "command_wrapper": {
+          "template": "curl -H 'x-api-key: $value' -H 'anthropic-version: 2023-06-01' -H 'Content-Type: application/json' {original}"
+        }
+      }
+    }
+  }
+}

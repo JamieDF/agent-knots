@@ -1,0 +1,115 @@
+# Example: Polyrepo project (multiple git repos in one logical project)
+#
+# This file goes in ~/.harness/projects/<project-id>.yaml.
+# Use `harness project edit` to open in $EDITOR, or copy this file directly.
+
+id: my-saas-app
+name: "My SaaS App"
+description: |
+  Multi-repo project: web frontend, API backend, and a shared types
+  package. All three repos are owned by the same team and developed
+  together, but live in separate git repositories.
+
+workspace_root: ~/work/my-saas-app
+
+# Multiple git repos, each with its own remote, branch, and role.
+repos:
+  - path: web/
+    remote: [email protected]:myorg/web.git
+    branch: main
+    role: frontend
+
+  - path: api/
+    remote: [email protected]:myorg/api.git
+    branch: main
+    role: backend
+
+  - path: shared-types/
+    remote: [email protected]:myorg/shared-types.git
+    branch: main
+    role: library
+    # Library repos can have different commit conventions
+    # (e.g., semantic-release, conventional commits).
+
+# Default models. Cheap is for summarization, agent is for autonomous
+# work, default is for general chat.
+models:
+  default: claude-sonnet-4
+  agent:   claude-sonnet-4
+  cheap:   gpt-4o-mini
+
+# Project-level build/test/lint commands. Used by the agent for
+# verification, by the harness for container builds, and by humans
+# for sanity checks.
+commands:
+  install:    pnpm install
+  test:       pnpm test
+  lint:       pnpm lint
+  typecheck:  pnpm typecheck
+  build:      pnpm build
+  format:     pnpm format
+
+# Paths the agent should never touch. node_modules, build output, lock
+# files, etc. These are common — adapt to your stack.
+ignored_paths:
+  - node_modules
+  - dist
+  - .next
+  - coverage
+  - "*.lock"
+  - "*.min.js"
+  - "*.map"
+
+# Free-form conventions note. Concise — the agent reads this at task
+# start to learn your project's style.
+conventions: |
+  TypeScript (strict mode), React 18, Next.js 14 App Router,
+  Tailwind CSS, tRPC for type-safe API calls, Prisma for DB,
+  Vitest for tests. We use conventional commits. PRs require
+  at least one approval. CI must be green before merge.
+
+# Risk policies. The agent checks these before running shell commands.
+risk_policies:
+  # These always need user approval, even in agent mode.
+  require_approval_for:
+    - "rm -rf"
+    - "git push --force"
+    - "DROP TABLE"
+    - "TRUNCATE"
+    - "prisma migrate reset"
+
+  # These are never allowed, period.
+  blocked_commands:
+    - "sudo *"
+    - "curl * | bash"
+    - "mkfs*"
+    - "dd if=*"
+    - ":(){:|:&};:"  # fork bomb
+
+  # Cap the number of files an agent can modify in a single tool call.
+  # Prevents runaway edits that touch the entire codebase.
+  max_files_per_edit: 20
+
+# Vault credential scope. The agent can only use these credentials
+# in this project. Explicit allowlist + denylist is the safest pattern.
+vault_scope:
+  allowed_credentials:
+    - vault://github/work
+    - vault://npm/internal
+  denied_credentials:
+    # Personal credentials never usable in work projects.
+    - vault://github/personal
+
+# Default mode + extras. Extras are appended to the mode's system
+# prompt at session start. Project-specific instructions.
+prompts:
+  mode: agent
+  extras: |
+    This project uses pnpm, not npm or yarn. Always run `pnpm test`
+    after changes. Database migrations go through Prisma — never
+    edit the migrations folder directly. The shared-types repo is
+    published to npm; bumping its version requires a release PR.
+
+# created_at and last_opened_at are set by the system.
+# created_at: 2026-04-12T09:00:00Z
+# last_opened_at: 2026-06-30T11:00:00Z

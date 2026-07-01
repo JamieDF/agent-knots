@@ -1,0 +1,38 @@
+{
+  "_comment": "OpenAI / OpenAI-compatible API templates. Compatible with: OpenAI, Azure OpenAI, OpenRouter, MiniMax, GLM, Ollama (with compat layer), vLLM, etc.",
+
+  "templates": {
+    "openai_env": {
+      "name": "openai_env",
+      "description": "Inject OPENAI_API_KEY for OpenAI SDK and CLI tools",
+      "injection": {
+        "env": {
+          "OPENAI_API_KEY": "$value"
+        }
+      },
+      "cli": "harness vault template add openai/api --name openai_env --env '{\"OPENAI_API_KEY\": \"$value\"}'"
+    },
+
+    "openai_org_env": {
+      "name": "openai_org_env",
+      "description": "Inject OPENAI_API_KEY plus OPENAI_ORG_ID",
+      "injection": {
+        "env": {
+          "OPENAI_API_KEY": "$value",
+          "OPENAI_ORG_ID": "org-xxxxxxxxxxxxx"
+        }
+      },
+      "_note": "Set OPENAI_ORG_ID to your organization ID. For OpenRouter, MiniMax, GLM, also set the appropriate base URL env var (OPENAI_BASE_URL)."
+    },
+
+    "curl_bearer": {
+      "name": "curl_bearer",
+      "description": "Wrap curl with Bearer token for OpenAI-compatible APIs",
+      "injection": {
+        "command_wrapper": {
+          "template": "curl -H 'Authorization: Bearer $value' -H 'Content-Type: application/json' {original}"
+        }
+      }
+    }
+  }
+}

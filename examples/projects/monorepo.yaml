@@ -1,0 +1,82 @@
+# Example: Monorepo project (single git repo with sub-packages)
+#
+# This file goes in ~/.harness/projects/<project-id>.yaml.
+# Use `harness project edit` to open in $EDITOR, or copy this file directly.
+
+id: monorepo-app
+name: "Monorepo App"
+description: |
+  Single git repo containing multiple packages managed with pnpm
+  workspaces. The harness treats it as one repo with sub-package
+  awareness.
+
+workspace_root: ~/work/monorepo-app
+
+# Single repo with sub-packages listed for awareness. The harness can
+# run commands scoped to specific packages.
+repos:
+  - path: .
+    remote: [email protected]:myorg/monorepo.git
+    branch: main
+    role: monorepo
+    # If your monorepo has packages, you can list them here. The
+    # harness uses this for scoped commands (e.g., `pnpm --filter web test`).
+    # subpackages:
+    #   - packages/web
+    #   - packages/api
+    #   - packages/shared-types
+
+# Models
+models:
+  default: claude-sonnet-4
+  agent:   claude-sonnet-4
+  cheap:   gpt-4o-mini
+
+# Commands. For monorepos, you'll often want to run commands filtered
+# to specific packages. The agent figures this out from context.
+commands:
+  install:    pnpm install
+  test:       pnpm -r test
+  lint:       pnpm -r lint
+  typecheck:  pnpm -r typecheck
+  build:      pnpm -r build
+  format:     pnpm -r format
+
+ignored_paths:
+  - node_modules
+  - dist
+  - .next
+  - packages/*/node_modules
+  - packages/*/dist
+  - "*.lock"
+
+conventions: |
+  Monorepo with pnpm workspaces. Three packages: web (Next.js), api
+  (Express + Prisma), shared-types (TypeScript types). We use
+  Changesets for versioning. Each package has its own README.
+
+risk_policies:
+  require_approval_for:
+    - "rm -rf"
+    - "git push --force"
+    - "DROP TABLE"
+    - "pnpm changeset"
+  blocked_commands:
+    - "sudo *"
+    - "curl * | bash"
+  max_files_per_edit: 30
+
+vault_scope:
+  allowed_credentials:
+    - vault://github/work
+    - vault://npm/internal
+
+prompts:
+  mode: agent
+  extras: |
+    Monorepo with pnpm workspaces. Use `pnpm --filter <pkg>` to run
+    commands scoped to a package. Changesets are required for any
+    user-facing change.
+
+# created_at: 2026-05-01T09:00:00Z
+# last_opened_at: 2026-06-30T11:00:00Z

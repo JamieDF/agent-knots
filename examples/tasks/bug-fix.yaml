@@ -1,0 +1,80 @@
+# Example: Bug-fix task
+#
+# Copy to ~/.harness/tasks/<project>/<id>.yaml and customize.
+# This is a typical small bug fix — single root cause, verification is
+# "the failing test now passes".
+
+id: T-2026-06-30-001
+project: my-app
+title: "Fix race condition in user session cache"
+
+# Short summary of the bug.
+description: |
+  When two requests for the same user arrive within milliseconds of each
+  other, both miss the cache, both fetch from the DB, and both write to the
+  cache. The second write can clobber the first if the first request
+  finished processing in between.
+
+# Status. Bugs typically start in `open` and move through
+# `in_progress` -> `review` -> `done`.
+status: open
+
+# Priority. Use the matrix in CONTRIBUTING.md to decide.
+priority: high
+
+# Free-form tags for filtering.
+tags:
+  - bug
+  - concurrency
+  - backend
+
+# What "done" means. Each criterion must be verifiable — a test, a
+# command, or an inspection. The agent cannot mark this task done
+# without checking every box.
+acceptance_criteria:
+  - "A failing test exists that reproduces the race (run it: see it fail)"
+  - "The fix prevents the clobbering (run the test: see it pass)"
+  - "No existing tests break (run the full suite)"
+  - "linter and typechecker are clean"
+
+# What we're NOT doing in this task. Reduces scope creep.
+out_of_scope:
+  - "Refactoring the entire cache module"
+  - "Adding metrics for cache hit rates"
+  - "Switching to a different cache backend"
+
+# Structured plan. The agent should update this as work progresses.
+steps:
+  - id: ".1"
+    title: "Write failing test that reproduces the race"
+    status: open
+  - id: ".2"
+    title: "Identify the exact clobbering path"
+    status: open
+  - id: ".3"
+    title: "Apply the fix (likely a sync.Map or per-key mutex)"
+    status: open
+  - id: ".4"
+    title: "Verify the failing test now passes"
+    status: open
+  - id: ".5"
+    title: "Run full test suite to confirm no regressions"
+    status: open
+
+# Other tasks this one depends on. Empty if none.
+dependencies: []
+
+# Vault credentials this task will need. Listed up front so the user
+# can confirm they're set up before the agent starts.
+required_credentials:
+  - vault://github/work  # if the test needs to push
+
+# Who created this task. "user" or "agent:<session-id>".
+created_by: user
+
+# Set by the system. Don't edit manually.
+# created_at: 2026-06-30T10:00:00Z
+# updated_at: 2026-06-30T10:00:00Z
+
+# Empty progress log. The agent appends here as it works.
+progress: []

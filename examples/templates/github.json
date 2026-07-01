@@ -1,0 +1,62 @@
+{
+  "_comment": "GitHub Personal Access Token templates. Add the credential first (harness vault add github/work), then add these templates.",
+
+  "templates": {
+    "gh_cli_env": {
+      "name": "gh_cli_env",
+      "description": "Inject as GH_TOKEN env var for the gh CLI",
+      "injection": {
+        "env": {
+          "GH_TOKEN": "$value"
+        }
+      },
+      "cli": "harness vault template add github/work --name gh_cli_env --env '{\"GH_TOKEN\": \"$value\"}'"
+    },
+
+    "gh_cli_all_env": {
+      "name": "gh_cli_all_env",
+      "description": "Inject as GH_TOKEN plus GITHUB_TOKEN (some tools want both)",
+      "injection": {
+        "env": {
+          "GH_TOKEN": "$value",
+          "GITHUB_TOKEN": "$value"
+        }
+      },
+      "cli": "harness vault template add github/work --name gh_cli_all_env --env '{\"GH_TOKEN\": \"$value\", \"GITHUB_TOKEN\": \"$value\"}'"
+    },
+
+    "ssh_key_file": {
+      "name": "ssh_key_file",
+      "description": "Write the token as a key file for SSH-based git access",
+      "injection": {
+        "ssh_key": {
+          "path": "/tmp/harness-github-key",
+          "permissions": 384
+        }
+      },
+      "cli": "harness vault template add github/work --name ssh_key_file --wrapper 'GIT_SSH_COMMAND=\"ssh -i /tmp/harness-github-key -o StrictHostKeyChecking=no\" {original}'"
+    },
+
+    "curl_bearer": {
+      "name": "curl_bearer",
+      "description": "Wrap curl commands with Authorization header",
+      "injection": {
+        "command_wrapper": {
+          "template": "curl -H 'Authorization: token $value' {original}"
+        }
+      },
+      "cli": "harness vault template add github/work --name curl_bearer --wrapper \"curl -H 'Authorization: token \\$value' {original}\""
+    },
+
+    "api_basic_auth": {
+      "name": "api_basic_auth",
+      "description": "Wrap curl commands with HTTP Basic Auth header",
+      "injection": {
+        "command_wrapper": {
+          "template": "curl -u 'user:$value' {original}"
+        }
+      },
+      "cli": "harness vault template add github/work --name api_basic_auth --wrapper \"curl -u 'user:\\$value' {original}\""
+    }
+  }
+}

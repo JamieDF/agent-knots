@@ -1,0 +1,81 @@
+# Example: Refactor task
+#
+# Refactors need risk assessment up front and behavior-preservation
+# guarantees. The plan is more elaborate because the agent must
+# explain what it's preserving.
+
+id: T-2026-06-30-003
+project: my-app
+title: "Extract user validation logic into a dedicated service"
+
+description: |
+  Currently, user validation logic (email format, password complexity,
+  duplicate detection) is spread across the auth controller, the
+  registration service, and the profile-update service. This makes it
+  hard to enforce consistent rules and to test them in isolation.
+
+  Goal: centralize validation in a UserValidator service with a single
+  source of truth for rules.
+
+# Refactors start at low priority unless they're blocking something.
+priority: low
+
+tags:
+  - refactor
+  - backend
+  - quality
+
+acceptance_criteria:
+  - "Single UserValidator service owns all user validation rules"
+  - "All existing tests pass without modification"
+  - "New UserValidator has its own test suite covering all rules"
+  - "Auth controller uses UserValidator"
+  - "Registration service uses UserValidator"
+  - "Profile-update service uses UserValidator"
+  - "No duplicated validation logic remains in the codebase"
+  - "linter and typechecker clean"
+
+# Out-of-scope items protect against scope creep. Refactors are
+# notorious for "while I'm here" additions.
+out_of_scope:
+  - "Adding new validation rules"
+  - "Changing the user data model"
+  - "Performance improvements (separate task if needed)"
+  - "API contract changes (this is internal-only)"
+
+steps:
+  - id: ".1"
+    title: "Identify all validation logic in the codebase"
+    status: open
+  - id: ".2"
+    title: "Write characterization tests for current behavior"
+    status: open
+  - id: ".3"
+    title: "Create UserValidator service with all current rules"
+    status: open
+  - id: ".4"
+    title: "Write UserValidator test suite"
+    status: open
+  - id: ".5"
+    title: "Migrate auth controller to use UserValidator"
+    status: open
+  - id: ".6"
+    title: "Migrate registration service to use UserValidator"
+    status: open
+  - id: ".7"
+    title: "Migrate profile-update service to use UserValidator"
+    status: open
+  - id: ".8"
+    title: "Remove duplicated validation logic"
+    status: open
+  - id: ".9"
+    title: "Run full test suite, confirm no regressions"
+    status: open
+
+dependencies: []
+
+required_credentials: []
+
+created_by: user
+
+# progress: []

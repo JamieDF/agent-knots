@@ -1,0 +1,40 @@
+{
+  "_comment": "Atlassian Jira / Cloud templates. For Atlassian Cloud, the API token is used with HTTP Basic Auth (email:api_token).",
+
+  "templates": {
+    "jira_cli_env": {
+      "name": "jira_cli_env",
+      "description": "Inject JIRA_API_TOKEN, JIRA_USER, JIRA_INSTANCE for the jira-cli",
+      "injection": {
+        "env": {
+          "JIRA_API_TOKEN": "$value",
+          "JIRA_USER": "[email protected]",
+          "JIRA_INSTANCE": "yourcompany.atlassian.net"
+        }
+      },
+      "_note": "Adjust JIRA_USER and JIRA_INSTANCE to match your Atlassian account and instance."
+    },
+
+    "jira_cli_stdin": {
+      "name": "jira_cli_stdin",
+      "description": "Pipe the API token to a jira-cli command that reads from stdin",
+      "injection": {
+        "stdin": {
+          "trailing_newline": true
+        }
+      },
+      "_note": "Use with jira-cli commands that accept the token via stdin."
+    },
+
+    "jira_curl_basic": {
+      "name": "jira_curl_basic",
+      "description": "Wrap curl with HTTP Basic Auth header (email + API token)",
+      "injection": {
+        "command_wrapper": {
+          "template": "curl -u '[email protected]:$value' -H 'Content-Type: application/json' {original}"
+        }
+      },
+      "_note": "Replace [email protected] with the email of the Atlassian account that owns the API token."
+    }
+  }
+}

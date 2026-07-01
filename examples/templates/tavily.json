@@ -1,0 +1,27 @@
+{
+  "_comment": "Tavily search API templates. Tavily is a web search API optimized for AI agents.",
+
+  "templates": {
+    "tavily_python_env": {
+      "name": "tavily_python_env",
+      "description": "Inject TAVILY_API_KEY for the Python SDK",
+      "injection": {
+        "env": {
+          "TAVILY_API_KEY": "$value"
+        }
+      },
+      "cli": "harness vault template add tavily/search --name tavily_python_env --env '{\"TAVILY_API_KEY\": \"$value\"}'"
+    },
+
+    "tavily_curl_bearer": {
+      "name": "tavily_curl_bearer",
+      "description": "Wrap curl with Bearer token for Tavily REST API",
+      "injection": {
+        "command_wrapper": {
+          "template": "curl -H 'Authorization: Bearer $value' -H 'Content-Type: application/json' {original}"
+        }
+      },
+      "cli": "harness vault template add tavily/search --name tavily_curl_bearer --wrapper \"curl -H 'Authorization: Bearer \\$value' -H 'Content-Type: application/json' {original}\""
+    }
+  }
+}

@@ -1,0 +1,25 @@
+# Sample session event stream from an agent working a task.
+#
+# This is what the cockpit sees: a stream of typed events from the
+# agent driver. Each event is a JSON object with a type discriminator.
+# One event per line (JSONL = JSON Lines).
+
+{"type":"session.created","session_id":"oc-1234567890","timestamp":"2026-06-30T10:00:00Z"}
+{"type":"message","session_id":"oc-1234567890","timestamp":"2026-06-30T10:00:05Z","message":"I'll start by reading the existing settings page to understand the structure."}
+{"type":"tool_call","session_id":"oc-1234567890","timestamp":"2026-06-30T10:00:06Z","tool_call":{"id":"call_1","name":"read","args":{"path":"src/pages/Settings.tsx"}}}
+{"type":"tool_result","session_id":"oc-1234567890","timestamp":"2026-06-30T10:00:07Z","tool_call_id":"call_1","stdout":"import React from 'react'\n...\nexport default function Settings() { ... }","stderr":"","exit_code":0}
+{"type":"message","session_id":"oc-1234567890","timestamp":"2026-06-30T10:00:08Z","message":"Now let me check the theme store."}
+{"type":"tool_call","session_id":"oc-1234567890","timestamp":"2026-06-30T10:00:09Z","tool_call":{"id":"call_2","name":"read","args":{"path":"src/stores/themeStore.ts"}}}
+{"type":"tool_result","session_id":"oc-1234567890","timestamp":"2026-06-30T10:00:10Z","tool_call_id":"call_2","stdout":"...","stderr":"","exit_code":0}
+{"type":"progress","session_id":"oc-1234567890","timestamp":"2026-06-30T10:00:12Z","task_id":"T-2026-06-30-002","status":"in_progress","entry":"Started work on dark mode toggle. Read settings page and theme store."}
+{"type":"message","session_id":"oc-1234567890","timestamp":"2026-06-30T10:00:15Z","message":"I'll create the DarkModeToggle component first, then wire it to the theme store."}
+{"type":"tool_call","session_id":"oc-1234567890","timestamp":"2026-06-30T10:00:16Z","tool_call":{"id":"call_3","name":"write","args":{"path":"src/components/DarkModeToggle.tsx","content":"..."}}}
+{"type":"tool_result","session_id":"oc-1234567890","timestamp":"2026-06-30T10:00:18Z","tool_call_id":"call_3","stdout":"Wrote 47 lines to src/components/DarkModeToggle.tsx","stderr":"","exit_code":0}
+{"type":"progress","session_id":"oc-1234567890","timestamp":"2026-06-30T10:00:20Z","task_id":"T-2026-06-30-002","status":"in_progress","entry":"Created DarkModeToggle component (47 lines)."}
+{"type":"state_change","session_id":"oc-1234567890","timestamp":"2026-06-30T10:05:00Z","state":{"status":"running","current_task":"T-2026-06-30-002","last_action":"edit_file src/stores/themeStore.ts","tokens_used":12453,"uptime_s":300}}
+{"type":"message","session_id":"oc-1234567890","timestamp":"2026-06-30T10:15:00Z","message":"Let me run the tests to verify."}
+{"type":"tool_call","session_id":"oc-1234567890","timestamp":"2026-06-30T10:15:01Z","tool_call":{"id":"call_4","name":"shell","args":{"command":"pnpm test"}}}
+{"type":"tool_result","session_id":"oc-1234567890","timestamp":"2026-06-30T10:15:08Z","tool_call_id":"call_4","stdout":"PASS src/components/DarkModeToggle.test.tsx\nPASS src/stores/themeStore.test.ts\n\nTest Suites: 2 passed, 2 total\nTests:       12 passed, 12 total","stderr":"","exit_code":0}
+{"type":"progress","session_id":"oc-1234567890","timestamp":"2026-06-30T10:15:10Z","task_id":"T-2026-06-30-002","status":"in_progress","entry":"Tests pass (12/12). Component works as expected."}
+{"type":"blocker","session_id":"oc-1234567890","timestamp":"2026-06-30T10:20:00Z","task_id":"T-2026-06-30-002","blocker":{"description":"Navbar contrast fails WCAG AA in dark mode","question":"Which palette?","options":["Lighter text (#f0f0f0) on dark bg (#1a1a1a) — passes AAA","Slightly less light text (#d0d0d0) on dark bg — passes AA"],"awaiting":"user"}}
+{"type":"state_change","session_id":"oc-1234567890","timestamp":"2026-06-30T10:20:01Z","state":{"status":"blocked","current_task":"T-2026-06-30-002","last_action":"waiting for user","tokens_used":18932,"uptime_s":1201}}

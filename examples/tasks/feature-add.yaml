@@ -1,0 +1,77 @@
+# Example: New-feature task
+#
+# This is the kind of task where the agent works autonomously from spec to
+# done. Notice the detailed acceptance_criteria — these are the contract.
+
+id: T-2026-06-30-002
+project: my-app
+title: "Add user notification preferences"
+
+description: |
+  Users should be able to control which notifications they receive and how
+  they're delivered (email, in-app, both, neither). Currently all
+  notifications go to email only, which has led to complaint volume.
+
+# Status. Auto-progress through the lifecycle.
+status: open
+
+priority: medium
+
+tags:
+  - feature
+  - frontend
+  - backend
+  - notifications
+
+# Detailed acceptance criteria. Each is verifiable.
+acceptance_criteria:
+  - "User can open /settings/notifications"
+  - "User sees a list of notification types (each is a separate row)"
+  - "Each row has 3 checkboxes: email, in-app, neither"
+  - "Default state: email checked, in-app checked"
+  - "User's choices persist across sessions"
+  - "Backend validates the choices (reject invalid combinations)"
+  - "Existing notifications still send correctly (no regressions)"
+  - "Settings UI is responsive (mobile + desktop)"
+  - "API endpoint exists to fetch and update preferences"
+  - "Preferences API has tests covering all valid/invalid combinations"
+
+out_of_scope:
+  - "Push notifications (separate task)"
+  - "Per-notification snooze settings"
+  - "Notification digest / batching"
+  - "Email template changes (separate task)"
+
+steps:
+  - id: ".1"
+    title: "Add notifications preferences table + migration"
+    status: open
+  - id: ".2"
+    title: "Add API endpoints (GET/PUT /api/users/:id/notification-prefs)"
+    status: open
+  - id: ".3"
+    title: "Write API tests (all valid/invalid combinations)"
+    status: open
+  - id: ".4"
+    title: "Build the settings UI page"
+    status: open
+  - id: ".5"
+    title: "Wire UI to API"
+    status: open
+  - id: ".6"
+    title: "Update existing notification dispatcher to respect prefs"
+    status: open
+  - id: ".7"
+    title: "Test full flow end-to-end"
+    status: open
+  - id: ".8"
+    title: "Update docs (settings help text, API reference)"
+    status: open
+
+dependencies: []
+
+required_credentials: []
+
+created_by: user
+
+# progress: []
