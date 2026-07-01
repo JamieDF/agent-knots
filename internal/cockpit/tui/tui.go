@@ -122,6 +122,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.focused == "" && len(m.agents) > 0 {
 			m.focused = m.agents[0].driver.ID()
 		}
+		// Start watching events for the focused agent (if any).
+		if m.focused != "" {
+			if d, ok := m.registry.Get(m.focused); ok {
+				return m, watchEvents(d)
+			}
+		}
 		return m, nil
 
 	case eventMsg:
@@ -132,6 +138,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Drop oldest.
 				m.events = m.events[len(m.events)-m.eventsLimit:]
 			}
+		}
+		// Re-issue watch to keep the event stream going.
+		if d, ok := m.registry.Get(m.focused); ok {
+			return m, watchEvents(d)
 		}
 		return m, nil
 
@@ -183,6 +193,8 @@ func (m Model) handleKeyList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.focused = m.agents[m.cursor].driver.ID()
 			m.view = viewAgentFocus
 			m.events = nil
+			// Start watching events for this agent.
+			return m, watchEvents(m.agents[m.cursor].driver)
 		}
 	case "p":
 		// Pause the highlighted agent.

@@ -4,11 +4,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
+	"github.com/JamieDF/agentjam/internal/agent/driver"
+	"github.com/JamieDF/agentjam/internal/config"
 	cockpit "github.com/JamieDF/agentjam/internal/cockpit/tui"
+	"github.com/JamieDF/agentjam/internal/session/live"
 )
 
 func cockpitCmd() *cobra.Command {
@@ -24,11 +29,9 @@ func cockpitCmd() *cobra.Command {
 By default, launches the keyboard-driven TUI cockpit. Use --web to launch
 the web GUI (when implemented).
 
-The cockpit is the place to:
-  - See all running agents at a glance
-  - Switch focus between agents
-  - Take over / relinquish control
-  - Manage tasks, vault, and project settings
+The cockpit discovers running sessions (started with --detach) and displays
+them in real time. Use 'agentjam session start --driver mock --detach' to
+start a test session, then launch the cockpit.
 
 Keybindings (TUI):
   ↑/↓ or j/k   navigate agents
@@ -45,10 +48,9 @@ Keybindings (TUI):
 				return nil
 			}
 
-			// For v1, the cockpit launches with an empty agent registry.
-			// Once the active-agent tracking is implemented, this will
-			// be populated from the registry.
-			registry := &emptyRegistry{}
+			registry := &liveRegistry{
+				sessionsDir: config.SessionsPath(),
+			}
 
 			model := cockpit.NewModel(registry)
 			program := tea.NewProgram(model, tea.WithAltScreen())
@@ -73,16 +75,129 @@ Keybindings (TUI):
 	return cmd
 }
 
-// emptyRegistry is a stub DriverRegistry that returns no agents. Used
-// until the live agent tracking from internal/cockpit is implemented.
-//
-// Implements cockpit.DriverRegistry (the tui.DriverRegistry interface)
-// by yielding no drivers — the cockpit renders an empty agent list in
-// that case. When the live registry ships, this will be replaced by an
-// adapter that wraps driver.Driver instances in the tui.Driver subset.
-type emptyRegistry struct{}
-
-func (e *emptyRegistry) List() []cockpit.Driver { return nil }
-func (e *emptyRegistry) Get(_ string) (cockpit.Driver, bool) {
-	return nil, false
+// liveRegistry implements cockpit.DriverRegistry by discovering running
+// session subprocesses via the live package.
+type liveRegistry struct {
+	sessionsDir string
 }
+
+func (r *liveRegistry) List() []cockpit.Driver {
+	sessions, err := live.List(r.sessionsDir)
+	if err != nil {
+		return nil
+	}
+	var drivers []cockpit.Driver
+	for _, ls := range sessions {
+		drivers = append(drivers, newLiveDriver(ls))
+	}
+	return drivers
+}
+
+func (r *liveRegistry) Get(id string) (cockpit.Driver, bool) {
+	ls, err := live.Get(r.sessionsDir, id)
+	if err != nil {
+		return nil, false
+	}
+	return newLiveDriver(ls), true
+}
+
+// liveDriver adapts a live.Session to the cockpit.Driver interface.
+// It connects to the session's event socket, tracks state from events,
+// and forwards them to the TUI.
+type liveDriver struct {
+	sessionID   string
+	liveSession *live.Session
+
+	mu       sync.Mutex
+	state    driver.State
+	outCh    chan driver.Event
+	startOnce sync.Once
+}
+
+func newLiveDriver(ls *live.Session) *liveDriver {
+	return &liveDriver{
+		sessionID:   ls.SessionID,
+		liveSession: ls,
+		state: driver.State{
+			Status:      driver.StatusRunning,
+			CurrentTask: "",
+			LastAction:  "connecting...",
+		},
+	}
+}
+
+func (d *liveDriver) ID() string { return d.sessionID }
+
+// Events opens a connection to the session's event socket (once) and
+// returns a channel that receives forwarded events. The adapter tracks
+// state from the same stream.
+func (d *liveDriver) Events() <-chan driver.Event {
+	d.startOnce.Do(func() {
+		events, err := d.liveSession.Events()
+		if err != nil {
+			d.outCh = make(chan driver.Event) // empty, never written
+			return
+		}
+		d.outCh = make(chan driver.Event, 64)
+		go func() {
+			defer close(d.outCh)
+			for ev := range events {
+				d.trackState(ev)
+				select {
+				case d.outCh <- ev:
+				default:
+					// drop if TUI isn't reading fast enough
+				}
+			}
+			// Socket closed — session ended.
+			d.mu.Lock()
+			d.state.Status = driver.StatusStopped
+			d.mu.Unlock()
+		}()
+	})
+	return d.outCh
+}
+
+// trackState updates the locally-cached state from an event.
+func (d *liveDriver) trackState(ev driver.Event) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	// Estimate tokens: ~70 per event (average script step cost).
+	d.state.TokensUsed += 70
+	d.state.CostUSD = float64(d.state.TokensUsed) * 0.00003
+	d.state.Uptime = time.Since(time.Now().Add(-d.state.Uptime))
+	if ev.ToolCall != nil {
+		d.state.LastAction = ev.ToolCall.Name
+	} else if ev.Message != "" {
+		action := ev.Message
+		if len(action) > 40 {
+			action = action[:37] + "..."
+		}
+		d.state.LastAction = action
+	}
+}
+
+func (d *liveDriver) Snapshot(_ context.Context) (driver.State, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.state, nil
+}
+
+func (d *liveDriver) Send(_ context.Context, _ driver.Message) error {
+	// Not yet implemented: requires bidirectional command protocol.
+	return nil
+}
+
+func (d *liveDriver) Pause(_ context.Context) error {
+	// Not yet implemented: requires bidirectional command protocol.
+	return nil
+}
+
+func (d *liveDriver) Resume(_ context.Context) error {
+	// Not yet implemented: requires bidirectional command protocol.
+	return nil
+}
+
+// Compile-time check.
+var _ cockpit.Driver = (*liveDriver)(nil)
+var _ cockpit.DriverRegistry = (*liveRegistry)(nil)
