@@ -14,8 +14,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,6 +28,7 @@ import (
 	"github.com/JamieDF/agentjam/internal/container"
 	pstore "github.com/JamieDF/agentjam/internal/project/filestore"
 	"github.com/JamieDF/agentjam/internal/session"
+	"github.com/JamieDF/agentjam/internal/session/live"
 	tstore "github.com/JamieDF/agentjam/internal/task/filestore"
 )
 
@@ -41,6 +44,7 @@ session is the agent doing it. Use 'agentjam session start' to spawn one,
 
 	cmd.AddCommand(
 		sessionStartCmd(),
+		sessionRunCmd(),
 		sessionListCmd(),
 		sessionShowCmd(),
 		sessionStopCmd(),
@@ -132,6 +136,10 @@ Example:
 				VaultSocketPath:  "/run/agentjam/vault.sock",
 			}
 
+			if detach {
+				return startDetached(ctx, opts)
+			}
+
 			s, rt, err := session.Init(ctx, mgr, opts)
 			if err != nil {
 				return fmt.Errorf("start session: %w", err)
@@ -144,12 +152,6 @@ Example:
 			fmt.Fprintf(cmd.OutOrStdout(), "  task:     %s\n", s.Task)
 			fmt.Fprintf(cmd.OutOrStdout(), "  mode:     %s\n", s.Mode)
 			fmt.Fprintf(cmd.OutOrStdout(), "  dir:      %s\n", s.WorkingDir)
-
-			if detach {
-				fmt.Fprintln(cmd.OutOrStdout(),
-					"Detached. Use 'agentjam session logs <id>' to follow.")
-				return nil
-			}
 
 			// Stream events until the session ends or the user interrupts.
 			return streamEvents(ctx, s, rt)
@@ -268,28 +270,42 @@ func sessionLogsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs <id>",
 		Short: "Stream session events",
-		Long: `Stream events from a session's driver. Output is line-delimited
-JSON-ish records: one event per line. Use --tail=N to backfill the last
-N events from disk (not yet implemented).`,
+		Long: `Stream events from a running session's driver. The session must have
+been started with --detach. Events are line-delimited and pretty-printed
+to stdout. Press Ctrl-C to stop following (the session keeps running).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr, err := session.New(config.SessionsPath())
+			sessionsDir := config.SessionsPath()
+			ls, err := live.Get(sessionsDir, args[0])
 			if err != nil {
 				return err
 			}
-			s, err := mgr.Get(args[0])
+
+			events, err := ls.Events()
 			if err != nil {
-				return err
+				return fmt.Errorf("connect to session: %w", err)
 			}
-			// We don't have a handle on the running driver (it's in the
-			// container or local process we spawned earlier). For now,
-			// tell the user where to look.
-			fmt.Fprintf(cmd.OutOrStdout(),
-				"Live event streaming requires the session record to be tied to the running driver.\n"+
-					"For now, run 'agentjam session start' in the foreground (no --detach) to follow events.\n"+
-					"Session: %s  mode=%s  status=%s  dir=%s\n",
-				s.ID, s.Mode, s.Status, s.WorkingDir)
-			return nil
+
+			// Handle Ctrl-C: just stop reading, don't kill the session.
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+			defer signal.Stop(sigCh)
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Following session %s (Ctrl-C to stop)...\n\n", args[0])
+
+			for {
+				select {
+				case ev, ok := <-events:
+					if !ok {
+						fmt.Fprintln(cmd.OutOrStdout(), "\n[session ended]")
+						return nil
+					}
+					printEvent(cmd.OutOrStdout(), ev)
+				case <-sigCh:
+					fmt.Fprintln(cmd.OutOrStdout(), "\n[stopped following]")
+					return nil
+				}
+			}
 		},
 	}
 	return cmd
@@ -371,6 +387,114 @@ func formatArgs(args map[string]any) string {
 		return ""
 	}
 	return string(b)
+}
+
+// startDetached forks a background `agentjam session run <id>` subprocess
+// and waits for it to signal readiness via the PID file.
+func startDetached(_ context.Context, opts session.Options) error {
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("find agentjam executable: %w", err)
+	}
+
+	sessionsDir := config.SessionsPath()
+	logPath := filepath.Join(sessionsDir, opts.ID+".log")
+
+	// Open the log file for the child's stdout/stderr.
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("open session log: %w", err)
+	}
+
+	// Build the child command with the same options.
+	args := []string{"session", "run", opts.ID,
+		"--driver", opts.DriverKind,
+		"--mode", string(opts.Mode),
+	}
+	if opts.TaskID != "" {
+		args = append(args, "--task", opts.TaskID)
+	}
+	if opts.ProjectID != "" {
+		args = append(args, "--project", opts.ProjectID)
+	}
+	if opts.Container {
+		args = append(args, "--container")
+	}
+	if opts.ContainerImage != "" {
+		args = append(args, "--image", opts.ContainerImage)
+	}
+	if opts.PrivilegedDebug {
+		args = append(args, "--privileged-debug")
+	}
+
+	cmd := exec.Command(self, args...)
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detach from terminal
+
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return fmt.Errorf("start session subprocess: %w", err)
+	}
+	// Don't wait — the child runs independently.
+	_ = cmd.Process.Release()
+	logFile.Close()
+
+	// Poll for the PID file (success) or child exit (failure).
+	pidPath := filepath.Join(sessionsDir, opts.ID+".pid")
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(pidPath); err == nil {
+			// PID file exists — session started successfully.
+			break
+		}
+		// Check if child process died.
+		if cmd.ProcessState != nil {
+			// Process exited before writing PID — read error from log.
+			errMsg := readLogTail(logPath, 5)
+			return fmt.Errorf("session process exited prematurely:\n%s", errMsg)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Verify the PID file actually appeared.
+	if _, err := os.Stat(pidPath); err != nil {
+		return fmt.Errorf("session did not start within 15 seconds; check %s", logPath)
+	}
+
+	// Load the persisted session record and print info.
+	mgr, err := session.New(sessionsDir)
+	if err != nil {
+		return err
+	}
+	s, err := mgr.Get(opts.ID)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Started session %s (detached)\n", s.ID)
+	fmt.Printf("  runtime:  %s\n", s.Runtime)
+	fmt.Printf("  driver:   %s\n", s.DriverID)
+	fmt.Printf("  project:  %s\n", s.Project)
+	fmt.Printf("  task:     %s\n", s.Task)
+	fmt.Printf("  mode:     %s\n", s.Mode)
+	fmt.Printf("  dir:      %s\n", s.WorkingDir)
+	fmt.Printf("  log:      %s\n", logPath)
+	fmt.Println("Use 'agentjam session logs <id>' to follow events.")
+	return nil
+}
+
+// readLogTail reads the last n lines of a file as a string.
+func readLogTail(path string, n int) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "(could not read log)"
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // generateSessionID is a thin wrapper around session's id generator; kept
