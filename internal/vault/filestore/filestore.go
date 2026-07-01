@@ -159,7 +159,7 @@ func (f *FileStore) Unlock(_ context.Context, passphrase string) error {
 			return err
 		}
 		key := deriveKey(passphrase, salt)
-		marker, err := encrypt(key, []byte("harness-vault-marker-v1"))
+		marker, err := encrypt(key, []byte("agentjam-vault-marker-v1"))
 		if err != nil {
 			return err
 		}
@@ -194,7 +194,7 @@ func (f *FileStore) Unlock(_ context.Context, passphrase string) error {
 	if err != nil {
 		return errs.Wrap(errs.ErrUnauthorized, "wrong passphrase or corrupted vault")
 	}
-	if string(plain) != "harness-vault-marker-v1" {
+	if string(plain) != "agentjam-vault-marker-v1" {
 		return errs.Wrap(errs.ErrInvalid, "vault marker mismatch")
 	}
 

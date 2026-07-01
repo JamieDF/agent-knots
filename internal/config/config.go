@@ -1,9 +1,13 @@
-// Package config defines global harness configuration and the home directory
+// Package config defines global agentjam configuration and the home directory
 // resolution logic.
 //
-// All harness data lives under a single root directory:
-//   - ~/.harness/ by default
-//   - overridden by HARNESS_HOME env var
+// All agentjam data lives under a single root directory:
+//   - ~/.agentjam/ by default
+//   - overridden by AGENTJAM_HOME env var
+//
+// On first call, Home() will auto-migrate a legacy ~/.agentjam/ directory
+// to ~/.agentjam/ (renaming on disk) with a one-time stderr notice. This
+// only fires when ~/.agentjam/ exists and ~/.agentjam/ does not.
 //
 // Subdirectories:
 //   - vault/         encrypted credential store
@@ -14,23 +18,46 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
 
-// Home returns the harness data root directory. Defaults to ~/.harness.
-// Overridden by HARNESS_HOME.
+// Home returns the agentjam data root directory. Defaults to ~/.agentjam.
+// Overridden by AGENTJAM_HOME.
+//
+// If neither AGENTJAM_HOME nor ~/.agentjam/ exists, but a legacy
+// ~/.agentjam/ directory does, it is renamed to ~/.agentjam/ in place.
+// Safe to call repeatedly: migration runs at most once per process.
 func Home() string {
-	if v := os.Getenv("HARNESS_HOME"); v != "" {
+	if v := os.Getenv("AGENTJAM_HOME"); v != "" {
 		return v
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".harness")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".agentjam"
 	}
-	return ".harness"
+	newDir := filepath.Join(home, ".agentjam")
+	if _, err := os.Stat(newDir); err == nil {
+		return newDir
+	}
+	oldDir := filepath.Join(home, ".harness")
+	if _, err := os.Stat(oldDir); err == nil {
+		if err := os.Rename(oldDir, newDir); err == nil {
+			fmt.Fprintf(os.Stderr,
+				"agentjam: migrated %s → %s (one-time, from prior 'harness' install)\n",
+				oldDir, newDir)
+		} else {
+			fmt.Fprintf(os.Stderr,
+				"agentjam: could not migrate %s → %s (%v); using %s\n",
+				oldDir, newDir, err, newDir)
+		}
+		return newDir
+	}
+	return newDir
 }
 
-// EnsureDirs creates the standard harness directory structure under Home()
+// EnsureDirs creates the standard agentjam directory structure under Home()
 // if it doesn't exist.
 func EnsureDirs() error {
 	dirs := []string{

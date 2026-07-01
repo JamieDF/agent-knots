@@ -183,7 +183,7 @@ func DefaultIsolationProfile() IsolationProfile {
 // PrivilegedDebugProfile returns a profile that disables most isolation.
 // This exists ONLY for the `--privileged-debug` CLI flag and is gated
 // behind a confirmation prompt in the CLI. It logs a warning to
-// ~/.harness/logs/harness.log every time it's used.
+// ~/.agentjam/logs/agentjam.log every time it's used.
 func PrivilegedDebugProfile() IsolationProfile {
 	p := DefaultIsolationProfile()
 	p.User = "0:0" // run as root
@@ -252,7 +252,7 @@ func ApplyIsolation(p IsolationProfile, base ContainerConfig, hostUID string) (C
 	if cfg.Labels == nil {
 		cfg.Labels = map[string]string{}
 	}
-	cfg.Labels["io.harness.managed"] = "true"
+	cfg.Labels["io.agentjam.managed"] = "true"
 
 	return cfg, nil
 }

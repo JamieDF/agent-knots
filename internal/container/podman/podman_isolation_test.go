@@ -15,7 +15,7 @@ func TestRun_BuildArgsHardened(t *testing.T) {
 	r := New("")
 
 	cfg, err := container.ApplyIsolation(container.DefaultIsolationProfile(), container.ContainerConfig{
-		Image: container.ImageID("harness-agent-node:20"),
+		Image: container.ImageID("agentjam-agent-node:20"),
 		User:  "1000:1000",
 	}, "1000:1000")
 	if err != nil {
@@ -25,7 +25,7 @@ func TestRun_BuildArgsHardened(t *testing.T) {
 	got := buildArgs(r, cfg)
 
 	// Sanity: contains the image last but before command.
-	if !strings.Contains(got, "harness-agent-node:20") {
+	if !strings.Contains(got, "agentjam-agent-node:20") {
 		t.Errorf("args missing image: %q", got)
 	}
 

@@ -1,7 +1,7 @@
 // Package mode loads Mode definitions from markdown files.
 //
 // A Mode is a system prompt that controls agent behavior. Modes live in
-// ~/.harness/modes/<name>.md as plain markdown. The first line is treated
+// ~/.agentjam/modes/<name>.md as plain markdown. The first line is treated
 // as the mode's display name; the rest is the system prompt body.
 //
 // Users can add custom modes by dropping a markdown file into the modes

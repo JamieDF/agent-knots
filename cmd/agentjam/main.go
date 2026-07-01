@@ -25,7 +25,7 @@ var (
 
 func main() {
 	if err := config.EnsureDirs(); err != nil {
-		fmt.Fprintf(os.Stderr, "harness: failed to initialize directories: %v\n", err)
+		fmt.Fprintf(os.Stderr, "agentjam: failed to initialize directories: %v\n", err)
 		os.Exit(1)
 	}
 	if err := rootCmd().Execute(); err != nil {

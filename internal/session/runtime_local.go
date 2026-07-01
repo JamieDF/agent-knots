@@ -73,7 +73,7 @@ func (l *LocalRuntime) Start(ctx context.Context, p *Prepared) error {
 
 	d, err := opencode.New(opencode.Options{
 		Directory: dir,
-		Title:     fmt.Sprintf("harness-session-%s", l.opts.ID),
+		Title:     fmt.Sprintf("agentjam-session-%s", l.opts.ID),
 		ID:        "session-" + l.opts.ID,
 		BaseURL:   opencodeBaseURLFromEnv(),
 	})

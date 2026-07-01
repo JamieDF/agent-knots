@@ -2,8 +2,8 @@
 //
 // Layout:
 //
-//	~/.harness/projects/<project-id>.yaml
-//	~/.harness/projects/active.yaml     # active project ID
+//	~/.agentjam/projects/<project-id>.yaml
+//	~/.agentjam/projects/active.yaml     # active project ID
 package filestore
 
 import (

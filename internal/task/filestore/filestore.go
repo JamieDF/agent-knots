@@ -2,8 +2,8 @@
 //
 // Layout:
 //
-//	~/.harness/tasks/<project-id>/<task-id>.yaml
-//	~/.harness/tasks/index.yaml         # task ID -> project + path lookup
+//	~/.agentjam/tasks/<project-id>/<task-id>.yaml
+//	~/.agentjam/tasks/index.yaml         # task ID -> project + path lookup
 //
 // YAML is used so files are greppable, hand-editable, and version-controllable
 // by users who want to commit their task history.

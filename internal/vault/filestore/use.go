@@ -153,7 +153,7 @@ func (f *FileStore) runWithFile(
 ) (vault.UseResult, error) {
 	path := tmpl.Injection.File.Path
 	if path == "" {
-		f, err := os.CreateTemp("", "harness-vault-*")
+		f, err := os.CreateTemp("", "agentjam-vault-*")
 		if err != nil {
 			return vault.UseResult{}, errs.Wrap(err, "create temp file")
 		}
@@ -174,7 +174,7 @@ func (f *FileStore) runWithFile(
 	}
 
 	res, err := f.execCommand(ctx, req, map[string]string{
-		"HARNESS_VAULT_FILE": path,
+		"AGENTJAM_VAULT_FILE": path,
 	})
 	// Best-effort cleanup; ignore errors.
 	_ = os.Remove(path)

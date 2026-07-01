@@ -2,7 +2,7 @@
 //
 // Layout:
 //
-//	~/.harness/vault/
+//	~/.agentjam/vault/
 //	├── vault.enc       # AES-256-GCM encrypted credential entries
 //	├── vault.key       # Key-encryption-key, optionally fetched from OS
 //	│                   # keychain (preferred) or derived from passphrase

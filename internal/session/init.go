@@ -83,7 +83,7 @@ type Options struct {
 	TaskStore task.Store
 
 	// WorktreeBase is the directory under which per-session worktrees
-	// are created. Default: $HARNESS_HOME/worktrees.
+	// are created. Default: $AGENTJAM_HOME/worktrees.
 	WorktreeBase string
 
 	// VaultSocketPath is the path to the vault daemon's unix socket (only
@@ -273,16 +273,16 @@ func phase3Prepare(ctx context.Context, rt Runtime, r *Resolved, opts Options) (
 		if opts.VaultSocketPath != "" {
 			p.Mounts = append(p.Mounts, container.Mount{
 				Source:   opts.VaultSocketPath,
-				Target:   "/run/harness/vault.sock",
+				Target:   "/run/agentjam/vault.sock",
 				ReadOnly: false,
 			})
 		}
 	}
 
-	p.Env["HARNESS_SESSION_ID"] = opts.ID
-	p.Env["HARNESS_PROJECT_ID"] = opts.ProjectID
+	p.Env["AGENTJAM_SESSION_ID"] = opts.ID
+	p.Env["AGENTJAM_PROJECT_ID"] = opts.ProjectID
 	if opts.TaskID != "" {
-		p.Env["HARNESS_TASK_ID"] = opts.TaskID
+		p.Env["AGENTJAM_TASK_ID"] = opts.TaskID
 	}
 	return p, nil
 }

@@ -124,10 +124,10 @@ func (c *ContainerRuntime) Start(ctx context.Context, p *Prepared) error {
 	// Build the hardened ContainerConfig.
 	cfg := container.ContainerConfig{
 		Image:    container.ImageID(image),
-		Name:     "harness-" + c.opts.ID,
+		Name:     "agentjam-" + c.opts.ID,
 		Detached: true,
 		Env: map[string]string{
-			"HARNESS_SESSION_ID": c.opts.ID,
+			"AGENTJAM_SESSION_ID": c.opts.ID,
 		},
 		// OpenCode server listens on 4096 inside the container; we
 		// ask podman to publish it on a random host port.
@@ -148,13 +148,13 @@ func (c *ContainerRuntime) Start(ctx context.Context, p *Prepared) error {
 	if c.opts.VaultSocketPath != "" {
 		cfg.Mounts = append(cfg.Mounts, container.Mount{
 			Source: c.opts.VaultSocketPath,
-			Target: "/run/harness/vault.sock",
+			Target: "/run/agentjam/vault.sock",
 		})
 	}
 
 	// Map the container's OpenCode port to a random host port. We'll
 	// discover the actual port after Run via `podman port`.
-	cfg.Labels["io.harness.exposed-port"] = "4096"
+	cfg.Labels["io.agentjam.exposed-port"] = "4096"
 
 	// Start the container.
 	cont, err := c.cRuntime.Run(ctx, cfg)
@@ -182,7 +182,7 @@ func (c *ContainerRuntime) Start(ctx context.Context, p *Prepared) error {
 	d, err := opencode.New(opencode.Options{
 		BaseURL:   "http://" + mapping,
 		Directory: "/workspace",
-		Title:     "harness-session-" + c.opts.ID,
+		Title:     "agentjam-session-" + c.opts.ID,
 		ID:        "session-" + c.opts.ID,
 	})
 	if err != nil {
@@ -311,7 +311,7 @@ func (c *ContainerRuntime) waitForOpenCodeReady(ctx context.Context) error {
 // v1: a tiny stack detector. v2: read project.container.image setting.
 func pickImage(r *Resolved) string {
 	if r == nil || r.Project == nil {
-		return "harness-agent-base:latest"
+		return "agentjam-agent-base:latest"
 	}
 	root := r.Project.WorkspaceRoot
 
@@ -319,17 +319,17 @@ func pickImage(r *Resolved) string {
 		file  string
 		image string
 	}{
-		{"package.json", "harness-agent-node:20"},
-		{"pyproject.toml", "harness-agent-python:3.12"},
-		{"go.mod", "harness-agent-go:1.23"},
-		{"Cargo.toml", "harness-agent-rust:1.82"},
+		{"package.json", "agentjam-agent-node:20"},
+		{"pyproject.toml", "agentjam-agent-python:3.12"},
+		{"go.mod", "agentjam-agent-go:1.23"},
+		{"Cargo.toml", "agentjam-agent-rust:1.82"},
 	}
 	for _, c := range candidates {
 		if _, err := os.Stat(filepath.Join(root, c.file)); err == nil {
 			return c.image
 		}
 	}
-	return "harness-agent-base:latest"
+	return "agentjam-agent-base:latest"
 }
 
 // Compile-time check.

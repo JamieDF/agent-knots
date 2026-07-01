@@ -144,7 +144,7 @@ func TestPrivilegedDebugProfile_OptInToInsecure(t *testing.T) {
 func TestApplyIsolation_SubstitutesHostUID(t *testing.T) {
 	p := DefaultIsolationProfile()
 	base := ContainerConfig{
-		Image: ImageID("harness-agent-node:20"),
+		Image: ImageID("agentjam-agent-node:20"),
 	}
 
 	cfg, err := ApplyIsolation(p, base, "1234:5678")
@@ -160,7 +160,7 @@ func TestApplyIsolation_SubstitutesHostUID(t *testing.T) {
 func TestApplyIsolation_KeepsExplicitUser(t *testing.T) {
 	p := DefaultIsolationProfile()
 	base := ContainerConfig{
-		Image: ImageID("harness-agent-node:20"),
+		Image: ImageID("agentjam-agent-node:20"),
 		User:  "555:555", // already set
 	}
 
@@ -175,24 +175,24 @@ func TestApplyIsolation_KeepsExplicitUser(t *testing.T) {
 	}
 }
 
-func TestApplyIsolation_AddsHarnessLabel(t *testing.T) {
+func TestApplyIsolation_AddsManagedLabel(t *testing.T) {
 	p := DefaultIsolationProfile()
 	base := ContainerConfig{
-		Image: ImageID("harness-agent-node:20"),
+		Image: ImageID("agentjam-agent-node:20"),
 	}
 	cfg, err := ApplyIsolation(p, base, "1000:1000")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Labels["io.harness.managed"] != "true" {
-		t.Error("missing io.harness.managed label")
+	if cfg.Labels["io.agentjam.managed"] != "true" {
+		t.Error("missing io.agentjam.managed label")
 	}
 }
 
 func TestApplyIsolation_AppliesResourceDefaults(t *testing.T) {
 	p := DefaultIsolationProfile()
 	base := ContainerConfig{
-		Image: ImageID("harness-agent-node:20"),
+		Image: ImageID("agentjam-agent-node:20"),
 		// No Resources set.
 	}
 	cfg, err := ApplyIsolation(p, base, "1000:1000")
@@ -211,7 +211,7 @@ func TestApplyIsolation_AppliesResourceDefaults(t *testing.T) {
 func TestApplyIsolation_RespectsProvidedResources(t *testing.T) {
 	p := DefaultIsolationProfile()
 	base := ContainerConfig{
-		Image: ImageID("harness-agent-node:20"),
+		Image: ImageID("agentjam-agent-node:20"),
 		Resources: Resources{
 			CPUs:        8.0,
 			MemoryBytes: 16 << 30,
@@ -233,7 +233,7 @@ func TestApplyIsolation_RespectsProvidedResources(t *testing.T) {
 func TestApplyIsolation_DefaultsNetworkToPrivate(t *testing.T) {
 	p := DefaultIsolationProfile()
 	base := ContainerConfig{
-		Image: ImageID("harness-agent-node:20"),
+		Image: ImageID("agentjam-agent-node:20"),
 		// Network empty.
 	}
 	cfg, err := ApplyIsolation(p, base, "1000:1000")

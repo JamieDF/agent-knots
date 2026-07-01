@@ -103,7 +103,7 @@ Example:
 				fmt.Fprintln(cmd.OutOrStdout(),
 					"WARNING: privileged-debug profile — agent runs as root with no isolation.")
 				fmt.Fprintln(cmd.OutOrStdout(),
-					"  This is unsafe for untrusted code. Logging to ~/.harness/logs.")
+					"  This is unsafe for untrusted code. Logging to ~/.agentjam/logs.")
 			}
 
 			opts := session.Options{
@@ -118,7 +118,7 @@ Example:
 				TaskStore:        ts,
 				ProjectStore:     ps,
 				WorktreeBase:     filepath.Join(config.Home(), "worktrees"),
-				VaultSocketPath:  "/run/harness/vault.sock",
+				VaultSocketPath:  "/run/agentjam/vault.sock",
 			}
 
 			s, err := session.Init(ctx, mgr, opts)
