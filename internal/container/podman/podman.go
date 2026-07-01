@@ -196,9 +196,12 @@ func (r *Runtime) Run(ctx context.Context, cfg container.ContainerConfig) (conta
 		args = append(args, "-m", fmt.Sprintf("%db", cfg.Resources.MemoryBytes))
 	}
 	if cfg.Resources.DiskBytes > 0 {
-		// podman doesn't have a direct --disk-quota flag for
-		// unprivileged containers; we use --storage-opt to set the
-		// overlay quota. (Requires rootless storage driver support.)
+		// --storage-opt size=N requires overlay on XFS (with quota
+		// support). On btrfs/ext4 this will error. We skip the flag
+		// and rely on container-level disk limits or the runtime's
+		// default quota. Callers who know their storage driver
+		// supports it can set DiskBytes explicitly.
+		// Disabled by default — see IsolationProfile.Resources.
 		args = append(args, "--storage-opt", fmt.Sprintf("size=%d", cfg.Resources.DiskBytes))
 	}
 
@@ -244,6 +247,20 @@ func (r *Runtime) Stop(ctx context.Context, id container.ID, timeout time.Durati
 	}
 	_, err := r.run(ctx, "stop", "-t", fmt.Sprintf("%d", secs), string(id))
 	return err
+}
+
+// ContainerPID returns the host-side PID of the container's init process.
+// Used for nsenter-based operations (e.g. egress rule installation).
+func (r *Runtime) ContainerPID(ctx context.Context, id container.ID) (int, error) {
+	out, err := r.run(ctx, "inspect", "--format", "{{.State.Pid}}", string(id))
+	if err != nil {
+		return 0, err
+	}
+	var pid int
+	if _, err := fmt.Sscanf(strings.TrimSpace(out), "%d", &pid); err != nil {
+		return 0, fmt.Errorf("parse container PID: %w", err)
+	}
+	return pid, nil
 }
 
 // Remove implements container.Runtime.

@@ -230,7 +230,7 @@ func TestApplyIsolation_RespectsProvidedResources(t *testing.T) {
 	}
 }
 
-func TestApplyIsolation_DefaultsNetworkToPrivate(t *testing.T) {
+func TestApplyIsolation_DefaultsNetworkIsolated(t *testing.T) {
 	p := DefaultIsolationProfile()
 	base := ContainerConfig{
 		Image: ImageID("agentjam-agent-node:20"),
@@ -240,8 +240,10 @@ func TestApplyIsolation_DefaultsNetworkToPrivate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Network != "private" {
-		t.Errorf("Network = %q, want private", cfg.Network)
+	// Network must not be "host" — rootless podman's default is already
+	// isolated (slirp4netns/pasta). Egress filtering is applied separately.
+	if cfg.Network == "host" {
+		t.Error("default profile must not use host network")
 	}
 }
 

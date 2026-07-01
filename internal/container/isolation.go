@@ -142,7 +142,11 @@ func DefaultIsolationProfile() IsolationProfile {
 			"/run",     // for the vault socket mount
 		},
 
-		Network: "private", // per-container netns
+		// Rootless podman already creates an isolated network namespace
+		// via slirp4netns/pasta. We leave Network empty so podman uses
+		// its default (already private). Egress filtering is applied
+		// separately by installEgressRules() after the container starts.
+		Network: "",
 
 		// Always-allowed egress (whitelist):
 		//   - LLM provider APIs (real list comes from project config)
@@ -167,7 +171,7 @@ func DefaultIsolationProfile() IsolationProfile {
 		Resources: Resources{
 			CPUs:        2.0,
 			MemoryBytes: 4 << 30,  // 4 GiB
-			DiskBytes:   10 << 30, // 10 GiB
+			DiskBytes:   0,        // disabled: --storage-opt only works on XFS+overlay
 		},
 
 		PidsLimit: 512,

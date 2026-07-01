@@ -22,6 +22,7 @@ package session
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -263,6 +264,12 @@ func (c *ContainerRuntime) Start(ctx context.Context, p *Prepared) error {
 	}
 	c.containerID = cont.ID
 
+	// Install egress filtering rules in the container's network namespace.
+	// This blocks the deny-list CIDR ranges (private nets, cloud metadata,
+	// etc.) at the iptables level. Failures are logged but non-fatal —
+	// the container still runs, just without network-level egress filtering.
+	c.installEgress(ctx)
+
 	// Wait briefly for the OpenCode server inside to be ready. We poll
 	// `podman port` to find the host-side mapping, then probe the HTTP
 	// healthcheck.
@@ -301,6 +308,28 @@ func (c *ContainerRuntime) Start(ctx context.Context, p *Prepared) error {
 
 	c.driver = d
 	return nil
+}
+
+// installEgress installs iptables DROP rules in the container's network
+// namespace. Uses podman unshare nsenter to access the netns. Failures
+// are non-fatal (logged to stderr).
+func (c *ContainerRuntime) installEgress(ctx context.Context) {
+	if len(c.profile.EgressDenyList) == 0 {
+		return
+	}
+	// Get the container's host-side PID.
+	pm, ok := c.cRuntime.(*podman.Runtime)
+	if !ok {
+		return
+	}
+	pid, err := pm.ContainerPID(ctx, c.containerID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "egress: could not get container PID: %v\n", err)
+		return
+	}
+	if err := container.InstallEgressRules(ctx, pid, c.profile.EgressDenyList); err != nil {
+		fmt.Fprintf(os.Stderr, "egress: warning: %v\n", err)
+	}
 }
 
 // Send delivers a message to OpenCode inside the container.
