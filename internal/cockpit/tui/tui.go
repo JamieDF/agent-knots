@@ -55,13 +55,16 @@ type Model struct {
 	registry DriverRegistry
 
 	// View state.
-	view           viewKind
-	agents         []agentRow
-	cursor         int
-	focused        string // driver ID currently focused
-	focusedDriver  Driver // cached for event watching (avoids re-dialing socket)
-	events         []driver.Event
-	eventsLimit    int
+	view          viewKind
+	agents        []agentRow
+	cursor        int
+	focused       string // driver ID currently focused
+	focusedDriver Driver // cached for event watching (avoids re-dialing socket)
+	events        []driver.Event
+	eventsLimit   int
+
+	// Event streaming state.
+	streaming bool // true while a watchEvents goroutine is active
 
 	// Dimensions.
 	width  int
@@ -126,8 +129,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.focused = m.agents[0].driver.ID()
 		}
 		// Refresh focusedDriver from the fresh agent list. This picks up
-		// new liveDriver instances on each tick, which retry socket
-		// connections if the previous one failed.
+		// the cached liveDriver instance (same socket connection).
 		if m.focused != "" {
 			for _, a := range m.agents {
 				if a.driver.ID() == m.focused {
@@ -136,8 +138,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		// Start watching events for the focused agent (if not yet streaming).
-		if m.focusedDriver != nil {
+		// Start watching events ONLY if we're not already streaming.
+		// The eventMsg handler re-issues watchEvents after each event,
+		// so we don't need to do it here on every tick.
+		if m.focusedDriver != nil && !m.streaming && m.view == viewAgentFocus {
+			m.streaming = true
 			return m, watchEvents(m.focusedDriver)
 		}
 		return m, nil
@@ -153,6 +158,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.focusedDriver != nil {
 			return m, watchEvents(m.focusedDriver)
 		}
+		m.streaming = false
+		return m, nil
+
+	case streamEndedMsg:
+		// The event channel closed (session stopped or driver finished).
+		// Allow agentsMsg to restart streaming if the session comes back.
+		m.streaming = false
 		return m, nil
 
 	case snapshotMsg:
@@ -205,6 +217,7 @@ func (m Model) handleKeyList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.view = viewAgentFocus
 			m.events = nil
 			// Start watching events for this agent.
+			m.streaming = true
 			return m, watchEvents(m.focusedDriver)
 		}
 	case "p":
@@ -229,6 +242,7 @@ func (m Model) handleKeyFocus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "b":
 		m.view = viewAgentList
 		m.events = nil
+		m.streaming = false
 	case "p":
 		if m.focusedDriver != nil {
 			return m, pauseCmd(m.focusedDriver)
@@ -380,13 +394,15 @@ type eventMsg struct {
 	event driver.Event
 }
 
+type streamEndedMsg struct{}
+
 // watchEvents returns a command that subscribes to driver events.
 func watchEvents(d Driver) tea.Cmd {
 	return func() tea.Msg {
 		// Read one event off the channel and emit it.
 		ev, ok := <-d.Events()
 		if !ok {
-			return nil
+			return streamEndedMsg{}
 		}
 		return eventMsg{event: ev}
 	}
