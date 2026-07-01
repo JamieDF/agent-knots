@@ -224,6 +224,13 @@ func (c *ContainerRuntime) DriverID() string {
 	return c.driver.ID()
 }
 
+// Driver returns the underlying driver, or nil before Start.
+func (c *ContainerRuntime) Driver() driver.Driver {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.driver
+}
+
 // Cleanup stops the container and driver, and removes the worktree dir.
 func (c *ContainerRuntime) Cleanup(ctx context.Context) {
 	c.mu.Lock()

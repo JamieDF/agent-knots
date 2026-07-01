@@ -26,7 +26,7 @@ func TestNewSessionID_UniqueAndFormatted(t *testing.T) {
 }
 
 func TestInit_ValidatesManager(t *testing.T) {
-	_, err := Init(context.Background(), nil, Options{
+	_, _, err := Init(context.Background(), nil, Options{
 		ID: "S1",
 	})
 	if err == nil {
@@ -41,7 +41,7 @@ func TestInit_ValidatesID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = Init(context.Background(), mgr, Options{})
+	_, _, err = Init(context.Background(), mgr, Options{})
 	if err == nil {
 		t.Fatal("expected error for empty ID without GenerateID")
 	}
@@ -57,7 +57,7 @@ func TestInit_GeneratesIDWhenRequested(t *testing.T) {
 	// Even with no task, no project, no real driver behind, we should at
 	// least get an error from one of the phases (probably driver start),
 	// not from ID validation.
-	_, err = Init(context.Background(), mgr, Options{
+	_, _, err = Init(context.Background(), mgr, Options{
 		GenerateID: true,
 		Container:  false,
 	})
@@ -73,7 +73,7 @@ func TestInit_RefusesContainerWithoutProjectOrTask(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = Init(context.Background(), mgr, Options{
+	_, _, err = Init(context.Background(), mgr, Options{
 		ID:        "S-test",
 		Container: true,
 	})

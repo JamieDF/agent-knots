@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/JamieDF/agentjam/internal/agent/driver"
+	"github.com/JamieDF/agentjam/internal/agent/driver/mock"
 	"github.com/JamieDF/agentjam/internal/agent/driver/opencode"
 	"github.com/JamieDF/agentjam/internal/errs"
 )
@@ -57,7 +58,9 @@ func (l *LocalRuntime) PrepareWorkspace(_ context.Context, r *Resolved) (string,
 	return wd, nil
 }
 
-// Start launches OpenCode pointing at the working dir.
+// Start launches the driver pointing at the working dir. The driver kind
+// is selected by opts.DriverKind: "mock" uses the scripted fake-event
+// driver (for testing/demos); anything else uses OpenCode.
 func (l *LocalRuntime) Start(ctx context.Context, p *Prepared) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -66,26 +69,37 @@ func (l *LocalRuntime) Start(ctx context.Context, p *Prepared) error {
 		return errs.Wrap(errs.ErrAlreadyExists, "runtime already started")
 	}
 
-	dir := p.WorkingDir
-	if dir == "" {
-		return errs.Wrap(errs.ErrInvalid, "local runtime: empty working dir")
+	var d driver.Driver
+
+	if l.opts.DriverKind == "mock" {
+		d = mock.New(mock.Options{
+			ID:     "mock-" + l.opts.ID,
+			TaskID: l.opts.TaskID,
+			Mode:   l.r.Mode,
+		})
+	} else {
+		dir := p.WorkingDir
+		if dir == "" {
+			return errs.Wrap(errs.ErrInvalid, "local runtime: empty working dir")
+		}
+		var err error
+		d, err = opencode.New(opencode.Options{
+			Directory: dir,
+			Title:     fmt.Sprintf("agentjam-session-%s", l.opts.ID),
+			ID:        "session-" + l.opts.ID,
+			BaseURL:   opencodeBaseURLFromEnv(),
+		})
+		if err != nil {
+			return err
+		}
 	}
 
-	d, err := opencode.New(opencode.Options{
-		Directory: dir,
-		Title:     fmt.Sprintf("agentjam-session-%s", l.opts.ID),
-		ID:        "session-" + l.opts.ID,
-		BaseURL:   opencodeBaseURLFromEnv(),
-	})
-	if err != nil {
-		return err
-	}
 	if err := d.Start(ctx); err != nil {
-		return errs.Wrap(err, "opencode start")
+		return errs.Wrap(err, "driver start")
 	}
 	if err := d.SetMode(ctx, l.r.Mode); err != nil {
 		_ = d.Stop(ctx)
-		return errs.Wrap(err, "opencode set mode %q", l.r.Mode)
+		return errs.Wrap(err, "set mode %q", l.r.Mode)
 	}
 
 	l.driver = d
@@ -111,6 +125,13 @@ func (l *LocalRuntime) DriverID() string {
 		return ""
 	}
 	return l.driver.ID()
+}
+
+// Driver returns the underlying driver, or nil before Start.
+func (l *LocalRuntime) Driver() driver.Driver {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.driver
 }
 
 // Cleanup stops the driver.

@@ -52,6 +52,10 @@ type Runtime interface {
 	// Returns empty string before Start.
 	DriverID() string
 
+	// Driver returns the underlying driver instance, or nil before Start.
+	// Callers use this to access Events() and Snapshot() for streaming.
+	Driver() driver.Driver
+
 	// Cleanup releases any resources held by the runtime. Called when an
 	// earlier phase fails so we don't leak worktrees or containers.
 	Cleanup(ctx context.Context)

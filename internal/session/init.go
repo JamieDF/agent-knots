@@ -89,29 +89,37 @@ type Options struct {
 	// VaultSocketPath is the path to the vault daemon's unix socket (only
 	// relevant for container sessions). Empty = no vault socket mount.
 	VaultSocketPath string
+
+	// DriverKind selects which driver the runtime constructs. "opencode"
+	// (default) uses the OpenCode SDK driver. "mock" uses a scripted
+	// fake-event driver for testing and demos without an LLM server.
+	DriverKind string
 }
 
 // Init starts a new agent session. The returned *Session has its Driver
-// field populated (callers can stream events from Driver.Events()).
+// field populated. The returned Runtime is live (driver started) and the
+// caller owns it — use rt.Driver().Events() to stream events, and call
+// rt.Cleanup() when done (or rely on process exit).
 //
 // On error, the returned *Session may still contain useful diagnostic
 // state (e.g. the resolved working dir). The runtime's Cleanup method has
-// already been invoked to release any partial state.
+// already been invoked to release any partial state, and the returned
+// Runtime may be nil.
 //
 // The *Manager argument is required; it owns persistence of the session
 // record. Build it once at startup with session.New(dir) and reuse.
-func Init(ctx context.Context, mgr *Manager, opts Options) (*Session, error) {
+func Init(ctx context.Context, mgr *Manager, opts Options) (*Session, Runtime, error) {
 	if mgr == nil {
-		return nil, errs.Wrap(errs.ErrInvalid, "session: manager is required")
+		return nil, nil, errs.Wrap(errs.ErrInvalid, "session: manager is required")
 	}
 	if err := opts.validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if opts.ID == "" && opts.GenerateID {
 		opts.ID = newSessionID()
 	}
 	if opts.ID == "" {
-		return nil, errs.Wrap(errs.ErrInvalid, "session ID is required (set Options.ID or Options.GenerateID)")
+		return nil, nil, errs.Wrap(errs.ErrInvalid, "session ID is required (set Options.ID or Options.GenerateID)")
 	}
 
 	s := &Session{
@@ -125,7 +133,7 @@ func Init(ctx context.Context, mgr *Manager, opts Options) (*Session, error) {
 	// Phase 1: Resolve task / project / mode / dir.
 	resolved, err := phase1Resolve(ctx, opts)
 	if err != nil {
-		return nil, fmt.Errorf("phase 1 (resolve): %w", err)
+		return nil, nil, fmt.Errorf("phase 1 (resolve): %w", err)
 	}
 	s.Project = resolved.ProjectID
 	s.Task = resolved.TaskID
@@ -137,7 +145,7 @@ func Init(ctx context.Context, mgr *Manager, opts Options) (*Session, error) {
 	// Phase 2: Decide runtime.
 	rt, err := phase2DecideRuntime(opts, resolved)
 	if err != nil {
-		return nil, fmt.Errorf("phase 2 (decide runtime): %w", err)
+		return nil, nil, fmt.Errorf("phase 2 (decide runtime): %w", err)
 	}
 	s.Runtime = string(rt.Kind())
 
@@ -145,7 +153,7 @@ func Init(ctx context.Context, mgr *Manager, opts Options) (*Session, error) {
 	prep, err := phase3Prepare(ctx, rt, resolved, opts)
 	if err != nil {
 		rt.Cleanup(ctx)
-		return s, fmt.Errorf("phase 3 (prepare): %w", err)
+		return s, rt, fmt.Errorf("phase 3 (prepare): %w", err)
 	}
 	s.WorkingDir = prep.WorkingDir
 	s.Env = prep.Env
@@ -153,14 +161,14 @@ func Init(ctx context.Context, mgr *Manager, opts Options) (*Session, error) {
 	// Phase 4: Start driver (and container if container runtime).
 	if err := phase4Start(ctx, rt, prep); err != nil {
 		rt.Cleanup(ctx)
-		return s, fmt.Errorf("phase 4 (start): %w", err)
+		return s, rt, fmt.Errorf("phase 4 (start): %w", err)
 	}
 	s.Status = StatusRunning
 
 	// Register + persist.
 	if err := mgr.Register(s); err != nil {
 		rt.Cleanup(ctx)
-		return s, fmt.Errorf("phase 5 (register session): %w", err)
+		return s, rt, fmt.Errorf("phase 5 (register session): %w", err)
 	}
 	s.DriverID = rt.DriverID()
 
@@ -172,13 +180,13 @@ func Init(ctx context.Context, mgr *Manager, opts Options) (*Session, error) {
 	// Phase 6: Send initial prompt.
 	if err := phase6Prompt(ctx, rt, resolved, opts); err != nil {
 		rt.Cleanup(ctx)
-		return s, fmt.Errorf("phase 6 (prompt): %w", err)
+		return s, rt, fmt.Errorf("phase 6 (prompt): %w", err)
 	}
 
 	s.UpdatedAt = time.Now().UTC()
 	_ = mgr.Update(s) // best-effort
 
-	return s, nil
+	return s, rt, nil
 }
 
 // Resolved is the output of phase 1.

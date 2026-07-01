@@ -10,9 +10,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -55,6 +59,7 @@ func sessionStartCmd() *cobra.Command {
 		image           string
 		detach          bool
 		privilegedDebug bool
+		driverKind      string
 	)
 
 	cmd := &cobra.Command{
@@ -69,6 +74,10 @@ By default, the session is attached: events stream to stdout until the
 agent exits. Pass --detach to return immediately; use 'agentjam session logs
 <id>' to follow.
 
+Use --driver=mock to run a scripted fake-event driver for testing and demos
+without an LLM server. The mock driver emits realistic events (thinking,
+tool calls, messages, progress) every ~1.5 seconds.
+
 The agent in a container session runs with the hardened isolation profile
 defined in ADR-004: non-root UID, capabilities dropped, read-only rootfs,
 private network namespace, cgroup limits, deny-by-default egress. Use
@@ -77,6 +86,7 @@ private network namespace, cgroup limits, deny-by-default egress. Use
 Example:
   agentjam session start --task T-001 --mode agent
   agentjam session start --project my-app --container --detach
+  agentjam session start --driver mock           # fake events, no LLM
   agentjam session start --task T-001 --privileged-debug`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
@@ -115,13 +125,14 @@ Example:
 				ContainerImage:   image,
 				ContainerProfile: profile,
 				PrivilegedDebug:  privilegedDebug,
+				DriverKind:        driverKind,
 				TaskStore:        ts,
 				ProjectStore:     ps,
 				WorktreeBase:     filepath.Join(config.Home(), "worktrees"),
 				VaultSocketPath:  "/run/agentjam/vault.sock",
 			}
 
-			s, err := session.Init(ctx, mgr, opts)
+			s, rt, err := session.Init(ctx, mgr, opts)
 			if err != nil {
 				return fmt.Errorf("start session: %w", err)
 			}
@@ -140,8 +151,8 @@ Example:
 				return nil
 			}
 
-			// Stream events until the session ends.
-			return streamEvents(ctx, s)
+			// Stream events until the session ends or the user interrupts.
+			return streamEvents(ctx, s, rt)
 		},
 	}
 
@@ -153,6 +164,8 @@ Example:
 	cmd.Flags().BoolVar(&detach, "detach", false, "Return immediately after starting")
 	cmd.Flags().BoolVar(&privilegedDebug, "privileged-debug", false,
 		"Opt out of isolation hardening (debug only)")
+	cmd.Flags().StringVar(&driverKind, "driver", "opencode",
+		"Driver implementation: opencode (default) or mock")
 
 	return cmd
 }
@@ -282,28 +295,82 @@ N events from disk (not yet implemented).`,
 	return cmd
 }
 
-// streamEvents tails a session's events from the driver until it exits.
-// For the v1 implementation, we just print a status line each second and
-// detach; the real event forwarding lives in the runtime adapters (and is
-// wired into the foreground `agentjam agent spawn` path).
-func streamEvents(ctx context.Context, s *session.Session) error {
-	tick := time.NewTicker(time.Second)
-	defer tick.Stop()
-	for {
+// streamEvents reads from the driver's Events channel and prints each
+// event to stdout until the channel closes or the context is cancelled.
+// Handles SIGINT/SIGTERM by stopping the driver gracefully.
+func streamEvents(ctx context.Context, s *session.Session, rt session.Runtime) error {
+	d := rt.Driver()
+	if d == nil {
+		return fmt.Errorf("no driver available for session %s", s.ID)
+	}
+
+	// Handle Ctrl-C / SIGTERM: stop the driver and cleanup.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	go func() {
 		select {
+		case <-sigCh:
+			fmt.Fprintln(os.Stderr, "\nInterrupt received, stopping session...")
+			d.Stop(ctx)
+			rt.Cleanup(ctx)
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-tick.C:
-			// Real implementation will read from the driver Events channel.
-			// Until the Session struct exposes a Driver handle, just print
-			// a heartbeat so the user knows the session is alive.
-			fmt.Fprintf(os.Stderr, "[%s] session %s alive (status=%s)\n",
-				time.Now().Format("15:04:05"), s.ID, s.Status)
-			// Bailing out after the first tick keeps the foreground mode
-			// snappy. Future: read from s.Driver.Events().
-			return nil
+		}
+	}()
+
+	events := d.Events()
+	for ev := range events {
+		printEvent(os.Stdout, ev)
+	}
+
+	// Channel closed — driver stopped. Final snapshot.
+	state, err := d.Snapshot(ctx)
+	if err == nil {
+		fmt.Fprintf(os.Stderr, "\nSession ended. Tokens: %d  Cost: $%.4f  Uptime: %s\n",
+			state.TokensUsed, state.CostUSD, state.Uptime.Round(time.Second))
+	}
+	rt.Cleanup(ctx)
+	return nil
+}
+
+// printEvent renders a driver event as a single line to w.
+func printEvent(w io.Writer, ev driver.Event) {
+	ts := ev.Timestamp.Format("15:04:05")
+	switch ev.Type {
+	case driver.EventMessage:
+		fmt.Fprintf(w, "%s  %s\n", ts, ev.Message)
+	case driver.EventThinking:
+		fmt.Fprintf(w, "%s  [thinking] %s\n", ts, ev.Message)
+	case driver.EventToolCall:
+		if ev.ToolCall != nil {
+			fmt.Fprintf(w, "%s  [tool] %s %s\n", ts, ev.ToolCall.Name, formatArgs(ev.ToolCall.Args))
+		} else {
+			fmt.Fprintf(w, "%s  [tool] %s\n", ts, ev.Message)
+		}
+	case driver.EventToolResult:
+		fmt.Fprintf(w, "%s  [result] %s\n", ts, ev.Message)
+	case driver.EventProgress:
+		fmt.Fprintf(w, "%s  [progress] %s\n", ts, ev.Message)
+	case driver.EventError:
+		fmt.Fprintf(w, "%s  [error] %s\n", ts, ev.Error)
+	default:
+		if ev.Message != "" {
+			fmt.Fprintf(w, "%s  %s\n", ts, ev.Message)
 		}
 	}
+}
+
+// formatArgs renders tool call args compactly for display.
+func formatArgs(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(args)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // generateSessionID is a thin wrapper around session's id generator; kept
