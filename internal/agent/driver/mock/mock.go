@@ -119,6 +119,9 @@ func (d *Driver) Start(_ context.Context) error {
 }
 
 // Stop stops the event goroutine and closes the events channel.
+// The events channel is closed by the eventLoop goroutine's defer, NOT
+// here — this prevents send-after-close panics from concurrent Send
+// or emitStep calls.
 func (d *Driver) Stop(_ context.Context) error {
 	d.mu.Lock()
 	if d.stopped {
@@ -129,20 +132,20 @@ func (d *Driver) Stop(_ context.Context) error {
 	d.status = driver.StatusStopped
 	d.mu.Unlock()
 
-	close(d.stopCh)
-	close(d.events)
+	close(d.stopCh) // signal eventLoop to exit; eventLoop closes d.events
 	return nil
 }
 
 // Send injects a user message as an event into the stream. This lets
 // the cockpit's "assume control" flow produce a visible effect.
+// The mutex is held during the channel send to prevent Stop from
+// closing the channel mid-send.
 func (d *Driver) Send(_ context.Context, msg driver.Message) error {
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	if d.stopped {
-		d.mu.Unlock()
 		return driver.ErrClosed
 	}
-	d.mu.Unlock()
 
 	ev := driver.Event{
 		Type:      driver.EventMessage,
@@ -257,7 +260,11 @@ var script = []scriptStep{
 }
 
 // eventLoop is the main goroutine that emits scripted events.
+// The events channel is closed when this goroutine exits (via defer),
+// ensuring no sends happen after close.
 func (d *Driver) eventLoop() {
+	defer close(d.events)
+
 	stepIdx := 0
 	ticker := time.NewTicker(d.interval)
 	defer ticker.Stop()

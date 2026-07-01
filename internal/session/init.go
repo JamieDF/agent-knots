@@ -19,6 +19,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/JamieDF/agentjam/internal/agent/driver"
@@ -353,6 +354,30 @@ func (o Options) validate() error {
 	if o.PrivilegedDebug && !o.Container {
 		// --privileged-debug without --container is a no-op (local mode
 		// is already unprivileged for sensible defaults).
+	}
+	// Reject session IDs that could escape the sessions directory via
+	// path traversal. PID files, socket files, and YAML files are all
+	// constructed as filepath.Join(dir, id + ".ext"), so the ID must
+	// not contain separators or parent-directory sequences.
+	if o.ID != "" {
+		if err := validateID(o.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateID rejects session IDs containing path separators or relative
+// traversal sequences.
+func validateID(id string) error {
+	if id == "" {
+		return errs.Wrap(errs.ErrInvalid, "session ID is empty")
+	}
+	if strings.ContainsAny(id, `/\`) {
+		return errs.Wrap(errs.ErrInvalid, "session ID %q contains path separator", id)
+	}
+	if id == "." || id == ".." || strings.Contains(id, "..") {
+		return errs.Wrap(errs.ErrInvalid, "session ID %q contains path traversal", id)
 	}
 	return nil
 }

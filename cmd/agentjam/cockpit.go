@@ -13,6 +13,7 @@ import (
 	"github.com/JamieDF/agentjam/internal/agent/driver"
 	"github.com/JamieDF/agentjam/internal/config"
 	cockpit "github.com/JamieDF/agentjam/internal/cockpit/tui"
+	"github.com/JamieDF/agentjam/internal/errs"
 	"github.com/JamieDF/agentjam/internal/session/live"
 )
 
@@ -107,54 +108,65 @@ func (r *liveRegistry) Get(id string) (cockpit.Driver, bool) {
 type liveDriver struct {
 	sessionID   string
 	liveSession *live.Session
+	startedAt   time.Time
 
-	mu       sync.Mutex
-	state    driver.State
-	outCh    chan driver.Event
-	startOnce sync.Once
+	mu    sync.Mutex
+	state driver.State
+	outCh chan driver.Event // nil until Events() is first called
 }
 
 func newLiveDriver(ls *live.Session) *liveDriver {
 	return &liveDriver{
 		sessionID:   ls.SessionID,
 		liveSession: ls,
+		startedAt:   time.Now(),
 		state: driver.State{
-			Status:      driver.StatusRunning,
-			CurrentTask: "",
-			LastAction:  "connecting...",
+			Status:     driver.StatusRunning,
+			LastAction: "connecting...",
 		},
 	}
 }
 
 func (d *liveDriver) ID() string { return d.sessionID }
 
-// Events opens a connection to the session's event socket (once) and
-// returns a channel that receives forwarded events. The adapter tracks
-// state from the same stream.
+// Events opens a connection to the session's event socket and returns
+// a channel that receives forwarded events. If the connection fails,
+// returns a closed channel so the caller stops retrying this instance
+// (a fresh liveDriver is created on the next registry.List() call).
 func (d *liveDriver) Events() <-chan driver.Event {
-	d.startOnce.Do(func() {
-		events, err := d.liveSession.Events()
-		if err != nil {
-			d.outCh = make(chan driver.Event) // empty, never written
-			return
-		}
-		d.outCh = make(chan driver.Event, 64)
-		go func() {
-			defer close(d.outCh)
-			for ev := range events {
-				d.trackState(ev)
-				select {
-				case d.outCh <- ev:
-				default:
-					// drop if TUI isn't reading fast enough
-				}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.outCh != nil {
+		return d.outCh // already connected (or failed)
+	}
+
+	events, err := d.liveSession.Events()
+	if err != nil {
+		// Connection failed — return a closed channel so watchEvents
+		// gets ok=false and stops. A fresh driver from the next tick
+		// will retry.
+		ch := make(chan driver.Event)
+		close(ch)
+		d.outCh = ch
+		return ch
+	}
+
+	d.outCh = make(chan driver.Event, 64)
+	go func(outCh chan driver.Event) {
+		defer close(outCh)
+		for ev := range events {
+			d.trackState(ev)
+			select {
+			case outCh <- ev:
+			default:
+				// drop if TUI isn't reading fast enough
 			}
-			// Socket closed — session ended.
-			d.mu.Lock()
-			d.state.Status = driver.StatusStopped
-			d.mu.Unlock()
-		}()
-	})
+		}
+		// Socket closed — session ended.
+		d.mu.Lock()
+		d.state.Status = driver.StatusStopped
+		d.mu.Unlock()
+	}(d.outCh)
 	return d.outCh
 }
 
@@ -163,9 +175,10 @@ func (d *liveDriver) trackState(ev driver.Event) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	// Estimate tokens: ~70 per event (average script step cost).
+	// Real token counts require a bidirectional snapshot protocol.
 	d.state.TokensUsed += 70
 	d.state.CostUSD = float64(d.state.TokensUsed) * 0.00003
-	d.state.Uptime = time.Since(time.Now().Add(-d.state.Uptime))
+	d.state.Uptime = time.Since(d.startedAt)
 	if ev.ToolCall != nil {
 		d.state.LastAction = ev.ToolCall.Name
 	} else if ev.Message != "" {
@@ -180,24 +193,23 @@ func (d *liveDriver) trackState(ev driver.Event) {
 func (d *liveDriver) Snapshot(_ context.Context) (driver.State, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	// Update uptime on every snapshot so it stays current between events.
+	d.state.Uptime = time.Since(d.startedAt)
 	return d.state, nil
 }
 
 func (d *liveDriver) Send(_ context.Context, _ driver.Message) error {
-	// Not yet implemented: requires bidirectional command protocol.
-	return nil
+	return errs.Wrap(errs.ErrUnsupported, "liveDriver.Send not implemented")
 }
 
 func (d *liveDriver) Pause(_ context.Context) error {
-	// Not yet implemented: requires bidirectional command protocol.
-	return nil
+	return errs.Wrap(errs.ErrUnsupported, "liveDriver.Pause not implemented")
 }
 
 func (d *liveDriver) Resume(_ context.Context) error {
-	// Not yet implemented: requires bidirectional command protocol.
-	return nil
+	return errs.Wrap(errs.ErrUnsupported, "liveDriver.Resume not implemented")
 }
 
-// Compile-time check.
+// Compile-time checks.
 var _ cockpit.Driver = (*liveDriver)(nil)
 var _ cockpit.DriverRegistry = (*liveRegistry)(nil)

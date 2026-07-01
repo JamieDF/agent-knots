@@ -251,3 +251,38 @@ func TestInit_Phase1WithFilestoreTasks(t *testing.T) {
 		t.Errorf("Project should be nil without ProjectStore, got %v", r.Project)
 	}
 }
+
+func TestValidateID_Valid(t *testing.T) {
+	t.Parallel()
+	valid := []string{
+		"S-abc123",
+		"session-001",
+		"a",
+		"2024-01-01_session",
+	}
+	for _, id := range valid {
+		if err := validateID(id); err != nil {
+			t.Errorf("validateID(%q) = %v; want nil", id, err)
+		}
+	}
+}
+
+func TestValidateID_RejectsPathTraversal(t *testing.T) {
+	t.Parallel()
+	invalid := []string{
+		"../etc/passwd",
+		"a/../b",
+		"/etc/passwd",
+		`C:\Windows`,
+		"foo/bar",
+		`foo\bar`,
+		"..",
+		".",
+		"",
+	}
+	for _, id := range invalid {
+		if err := validateID(id); err == nil {
+			t.Errorf("validateID(%q) = nil; want error", id)
+		}
+	}
+}

@@ -129,10 +129,15 @@ func TestMockDriver_StopClosesChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Channel should be closed.
-	ev, ok := <-d.Events()
-	if ok {
-		t.Fatalf("expected channel closed, got event: %+v", ev)
+	// Channel is closed asynchronously by the eventLoop goroutine's
+	// defer. Wait for it with a timeout.
+	select {
+	case ev, ok := <-d.Events():
+		if ok {
+			t.Fatalf("expected channel closed, got event: %+v", ev)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("events channel not closed within 2s after Stop")
 	}
 
 	// Stop is idempotent.
@@ -203,8 +208,53 @@ func TestMockDriver_AbortIsStop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ev, ok := <-d.Events()
-	if ok {
-		t.Fatalf("expected channel closed after abort, got: %+v", ev)
+	// Channel is closed asynchronously — wait with timeout.
+	select {
+	case ev, ok := <-d.Events():
+		if ok {
+			t.Fatalf("expected channel closed after abort, got: %+v", ev)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("events channel not closed within 2s after Abort")
 	}
 }
+
+// TestMockDriver_SendStopRace exercises the concurrent Send/Stop path.
+// Before the fix, Stop closed the events channel while Send could be
+// mid-write, causing a panic. Run with -race to detect data races.
+func TestMockDriver_SendStopRace(t *testing.T) {
+	t.Parallel()
+
+	d := New(Options{
+		ID:       "mock-race-001",
+		Interval: 1 * time.Millisecond, // fast events
+		Seed:     99,
+	})
+	if err := d.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hammer Send from multiple goroutines while eventLoop is also
+	// emitting, then call Stop.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			_ = d.Send(context.Background(), driver.Message{
+				Content: "concurrent message",
+			})
+		}
+	}()
+
+	// Give the sender a moment to get going, then stop.
+	time.Sleep(5 * time.Millisecond)
+	if err := d.Stop(context.Background()); err != nil {
+		t.Errorf("Stop: %v", err)
+	}
+	<-done
+
+	// Drain the events channel until closed (verifies no panic).
+	for range d.Events() {
+	}
+}
+

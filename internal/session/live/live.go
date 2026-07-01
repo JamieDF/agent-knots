@@ -144,7 +144,10 @@ func (s *Session) Events() (<-chan driver.Event, error) {
 			}
 			if err := dec.Decode(&msg); err != nil {
 				if err != io.EOF {
-					// Socket closed or decode error — either way, stream ends.
+					// Non-EOF errors indicate protocol corruption or
+					// a crash mid-write. Log to stderr for debugging.
+					fmt.Fprintf(os.Stderr, "live: event stream error for %s: %v\n",
+						s.SessionID, err)
 				}
 				return
 			}

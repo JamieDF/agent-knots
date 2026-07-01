@@ -122,9 +122,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Auto-focus first agent if nothing focused yet.
 		if m.focused == "" && len(m.agents) > 0 {
 			m.focused = m.agents[0].driver.ID()
-			m.focusedDriver = m.agents[0].driver
 		}
-		// Start watching events for the focused agent (if any).
+		// Refresh focusedDriver from the fresh agent list. This picks up
+		// new liveDriver instances on each tick, which retry socket
+		// connections if the previous one failed.
+		if m.focused != "" {
+			for _, a := range m.agents {
+				if a.driver.ID() == m.focused {
+					m.focusedDriver = a.driver
+					break
+				}
+			}
+		}
+		// Start watching events for the focused agent (if not yet streaming).
 		if m.focusedDriver != nil {
 			return m, watchEvents(m.focusedDriver)
 		}

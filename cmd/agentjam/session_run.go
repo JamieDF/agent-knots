@@ -116,16 +116,19 @@ func sessionRunCmd() *cobra.Command {
 				rt.Cleanup(ctx)
 				return fmt.Errorf("write pid file: %w", err)
 			}
+			// Clean up PID file on any exit path (including crash/panic).
+			defer os.Remove(pidPath)
 
 			// Open event socket.
 			sockPath := filepath.Join(sessionsDir, sessionID+".sock")
 			listener, err := net.Listen("unix", sockPath)
 			if err != nil {
 				rt.Cleanup(ctx)
-				os.Remove(pidPath)
 				return fmt.Errorf("listen on event socket: %w", err)
 			}
 			_ = os.Chmod(sockPath, 0o600)
+			// Clean up socket file on any exit path.
+			defer os.Remove(sockPath)
 
 			// Set up signal handling.
 			sigCh := make(chan os.Signal, 1)
@@ -153,10 +156,6 @@ func sessionRunCmd() *cobra.Command {
 			s.StoppedAt = time.Now().UTC()
 			s.UpdatedAt = s.StoppedAt
 			_ = mgr.Update(s)
-
-			// Clean up IPC files.
-			os.Remove(pidPath)
-			os.Remove(sockPath)
 
 			fmt.Fprintf(logFile, "Session %s stopped cleanly.\n", sessionID)
 			return nil
