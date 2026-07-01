@@ -131,11 +131,12 @@ func sessionRunCmd() *cobra.Command {
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-			// Run the event server until the driver stops or we get a signal.
+			// Run the event server in a goroutine so the main goroutine
+			// can receive signals.
 			es := newEventServer(listener, rt.Driver())
-			es.run()
+			go es.run()
 
-			// Wait for a signal or the event server to finish.
+			// Wait for a signal or the event server to finish (driver stopped).
 			select {
 			case sig := <-sigCh:
 				fmt.Fprintf(logFile, "Received signal %v, shutting down...\n", sig)

@@ -179,7 +179,8 @@ func sessionListCmd() *cobra.Command {
 		Short:   "List sessions",
 		Aliases: []string{"ls"},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			mgr, err := session.New(config.SessionsPath())
+			sessionsDir := config.SessionsPath()
+			mgr, err := session.New(sessionsDir)
 			if err != nil {
 				return err
 			}
@@ -188,12 +189,31 @@ func sessionListCmd() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "No sessions.")
 				return nil
 			}
+
+			// Build a set of live session IDs for status enrichment.
+			liveSessions, _ := live.List(sessionsDir)
+			liveIDs := make(map[string]bool, len(liveSessions))
+			for _, ls := range liveSessions {
+				liveIDs[ls.SessionID] = true
+			}
+
 			w := cmd.OutOrStdout()
-			fmt.Fprintf(w, "%-30s %-12s %-10s %-30s %s\n",
-				"ID", "STATUS", "RUNTIME", "MODE", "PROJECT")
+			fmt.Fprintf(w, "%-30s %-14s %-10s %-10s %-30s %s\n",
+				"ID", "STATUS", "RUNTIME", "DRIVER", "MODE", "PROJECT")
 			for _, s := range sessions {
-				fmt.Fprintf(w, "%-30s %-12s %-10s %-30s %s\n",
-					s.ID, s.Status, s.Runtime, s.Mode, s.Project)
+				status := string(s.Status)
+				if liveIDs[s.ID] {
+					status = "running*"
+				}
+				driverID := s.DriverID
+				if len(driverID) > 10 {
+					driverID = driverID[:10]
+				}
+				fmt.Fprintf(w, "%-30s %-14s %-10s %-10s %-30s %s\n",
+					s.ID, status, s.Runtime, driverID, s.Mode, s.Project)
+			}
+			if len(liveIDs) > 0 {
+				fmt.Fprintln(w, "\n* = live subprocess")
 			}
 			return nil
 		},
@@ -244,23 +264,34 @@ func sessionStopCmd() *cobra.Command {
 		Short: "Stop a running session",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			mgr, err := session.New(config.SessionsPath())
-			if err != nil {
-				return err
+			sessionsDir := config.SessionsPath()
+
+			// Try to stop the live subprocess.
+			ls, err := live.Get(sessionsDir, args[0])
+			if err == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Stopping session %s (pid %d)...\n", args[0], ls.PID)
+				if err := ls.Stop(); err != nil {
+					return fmt.Errorf("stop session: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Stopped %s.\n", args[0])
+			} else {
+				// Session not running as a subprocess — just update the record.
+				mgr, err := session.New(sessionsDir)
+				if err != nil {
+					return err
+				}
+				s, err := mgr.Get(args[0])
+				if err != nil {
+					return err
+				}
+				s.Status = session.StatusStopped
+				s.StoppedAt = time.Now().UTC()
+				s.UpdatedAt = s.StoppedAt
+				if err := mgr.Update(s); err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Stopped %s.\n", s.ID)
 			}
-			s, err := mgr.Get(args[0])
-			if err != nil {
-				return err
-			}
-			s.Status = session.StatusStopped
-			s.StoppedAt = time.Now().UTC()
-			s.UpdatedAt = s.StoppedAt
-			if err := mgr.Update(s); err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Stopped %s.\n", s.ID)
-			// Note: actual driver stop is delegated to the container/
-			// local runtimes via session registry in a future cycle.
 			return nil
 		},
 	}
