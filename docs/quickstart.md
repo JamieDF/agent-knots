@@ -14,48 +14,48 @@ This walkthrough gets you from zero to a running agent in five minutes.
 From source:
 
 ```bash
-git clone https://github.com/harness/harness.git
-cd harness
-go build -o ~/.local/bin/harness ./cmd/harness
+git clone https://github.com/agentjam/agentjam.git
+cd agentjam
+go build -o ~/.local/bin/agentjam ./cmd/agentjam
 export PATH=$PATH:~/.local/bin
 ```
 
 Verify:
 
 ```bash
-harness version
-# harness 0.1.0 (commit dev)
+agentjam version
+# agentjam 0.1.0 (commit dev)
 ```
 
 ## Set up data directory
 
-harness stores everything under `~/.harness/` by default. Override with
-`HARNESS_HOME=/some/path`.
+agentjam stores everything under `~/.agentjam/` by default. Override with
+`AGENTJAM_HOME=/some/path`.
 
 The first run creates the directory structure:
 
 ```bash
-harness version
-ls ~/.harness/
+agentjam version
+ls ~/.agentjam/
 # logs/  modes/  projects/  tasks/  vault/
 ```
 
 ## Initialize the vault
 
 ```bash
-harness vault init
+agentjam vault init
 # Choose a passphrase: ********
 # Confirm passphrase: ********
 # Vault initialized.
 ```
 
-The vault is now unlocked for this session. Lock it with `harness vault lock`,
-unlock with `harness vault unlock`.
+The vault is now unlocked for this session. Lock it with `agentjam vault lock`,
+unlock with `agentjam vault unlock`.
 
 ## Add a credential
 
 ```bash
-harness vault add github/work \
+agentjam vault add github/work \
   --description "GitHub PAT for work" \
   --tag github --tag work
 # Value: ********
@@ -65,7 +65,7 @@ harness vault add github/work \
 ## Add a template so the agent can use it
 
 ```bash
-harness vault template add github/work \
+agentjam vault template add github/work \
   --name gh_cli_env \
   --env '{"GH_TOKEN": "$value"}'
 # Added template "gh_cli_env".
@@ -78,28 +78,28 @@ process's environment.
 ## Create a project
 
 ```bash
-harness project create my-app \
+agentjam project create my-app \
   --name "My Cool App" \
   --repo [email protected]:you/my-app.git \
   --branch main \
   --role frontend
 # Created project "my-app".
 
-harness project switch my-app
+agentjam project switch my-app
 # Switched to project "my-app".
 ```
 
 For multi-repo projects:
 
 ```yaml
-# Edit ~/.harness/projects/my-app.yaml directly for advanced config.
+# Edit ~/.agentjam/projects/my-app.yaml directly for advanced config.
 # See docs/architecture.md for the full schema.
 ```
 
 ## Create a task
 
 ```bash
-harness task new \
+agentjam task new \
   --title "Add dark mode toggle to settings" \
   --project my-app \
   --priority medium \
@@ -112,7 +112,7 @@ harness task new \
 ## Spawn an agent on the task
 
 ```bash
-harness agent spawn --task T-2026-06-30-... --mode agent
+agentjam agent spawn --task T-2026-06-30-... --mode agent
 ```
 
 The agent starts in `agent` mode (autonomous, spec-driven) and begins
@@ -130,7 +130,7 @@ Streaming events (Ctrl-C to stop):
 ## Watch progress
 
 ```bash
-harness task show T-2026-06-30-...
+agentjam task show T-2026-06-30-...
 ```
 
 You'll see the task's progress log fill up as the agent logs each action.
@@ -140,6 +140,6 @@ You'll see the task's progress log fill up as the agent logs each action.
 - **Read [docs/architecture.md](architecture.md)** to understand the
   design.
 - **Browse [modes/](../modes/)** to see the default modes. Add your own
-  by dropping a markdown file in `~/.harness/modes/`.
+  by dropping a markdown file in `~/.agentjam/modes/`.
 - **Check [docs/roadmap.md](roadmap.md)** for what's coming next.
 - **Open an issue** if you find a bug or want a feature.

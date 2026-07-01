@@ -1,5 +1,5 @@
 {
-  "_comment": "GitHub Personal Access Token templates. Add the credential first (harness vault add github/work), then add these templates.",
+  "_comment": "GitHub Personal Access Token templates. Add the credential first (agentjam vault add github/work), then add these templates.",
 
   "templates": {
     "gh_cli_env": {
@@ -10,7 +10,7 @@
           "GH_TOKEN": "$value"
         }
       },
-      "cli": "harness vault template add github/work --name gh_cli_env --env '{\"GH_TOKEN\": \"$value\"}'"
+      "cli": "agentjam vault template add github/work --name gh_cli_env --env '{\"GH_TOKEN\": \"$value\"}'"
     },
 
     "gh_cli_all_env": {
@@ -22,7 +22,7 @@
           "GITHUB_TOKEN": "$value"
         }
       },
-      "cli": "harness vault template add github/work --name gh_cli_all_env --env '{\"GH_TOKEN\": \"$value\", \"GITHUB_TOKEN\": \"$value\"}'"
+      "cli": "agentjam vault template add github/work --name gh_cli_all_env --env '{\"GH_TOKEN\": \"$value\", \"GITHUB_TOKEN\": \"$value\"}'"
     },
 
     "ssh_key_file": {
@@ -30,11 +30,11 @@
       "description": "Write the token as a key file for SSH-based git access",
       "injection": {
         "ssh_key": {
-          "path": "/tmp/harness-github-key",
+          "path": "/tmp/agentjam-github-key",
           "permissions": 384
         }
       },
-      "cli": "harness vault template add github/work --name ssh_key_file --wrapper 'GIT_SSH_COMMAND=\"ssh -i /tmp/harness-github-key -o StrictHostKeyChecking=no\" {original}'"
+      "cli": "agentjam vault template add github/work --name ssh_key_file --wrapper 'GIT_SSH_COMMAND=\"ssh -i /tmp/agentjam-github-key -o StrictHostKeyChecking=no\" {original}'"
     },
 
     "curl_bearer": {
@@ -45,7 +45,7 @@
           "template": "curl -H 'Authorization: token $value' {original}"
         }
       },
-      "cli": "harness vault template add github/work --name curl_bearer --wrapper \"curl -H 'Authorization: token \\$value' {original}\""
+      "cli": "agentjam vault template add github/work --name curl_bearer --wrapper \"curl -H 'Authorization: token \\$value' {original}\""
     },
 
     "api_basic_auth": {
@@ -56,7 +56,7 @@
           "template": "curl -u 'user:$value' {original}"
         }
       },
-      "cli": "harness vault template add github/work --name api_basic_auth --wrapper \"curl -u 'user:\\$value' {original}\""
+      "cli": "agentjam vault template add github/work --name api_basic_auth --wrapper \"curl -u 'user:\\$value' {original}\""
     }
   }
 }

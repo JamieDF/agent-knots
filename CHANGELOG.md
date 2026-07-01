@@ -1,31 +1,22 @@
 # Changelog
 
-All notable changes to harness are documented here. The format is based on
+All notable changes to agentjam are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
-
-- **Container isolation profile (`internal/container/isolation.go`)** — hardened-by-default `IsolationProfile` for every container session: non-root UID, all Linux capabilities dropped except the file-ops subset, read-only root filesystem, private network namespace, no-new-privileges, seccomp, tmpfs scratch space, cgroup CPU/RAM/PID/disk limits, deny-by-default egress (private subnets + cloud metadata blocked). Apply via `container.ApplyIsolation` in session init; runtimes read the profile and emit the corresponding podman flags. See ADR-004.
-- **Hardened podman runtime flags** — `internal/container/podman/podman.go` now emits `--cap-drop=ALL` + `--cap-add` for kept caps, `--security-opt no-new-privileges:true` and `seccomp=runtime/default`, `--read-only`, `--tmpfs` per scratch path, `--pids-limit`, `--userns keep-id`, `--storage-opt` for disk quotas. Verified by new `podman_isolation_test.go`.
-- **`privileged-debug` profile (`container.PrivilegedDebugProfile()`)** — opt-out path: run as root with `--privileged` and host network. The CLI gates this behind `--privileged-debug` with a console warning.
-- **`harness session` subcommand (`cmd/harness/session.go`)** — start / list / show / stop / logs for sessions. Supports `--task`, `--project`, `--mode`, `--container`, `--image`, `--detach`, `--privileged-debug`. A session may be task-less (interactive) or task-driven; same flow either way.
-- **Session init flow (`internal/session/init.go`)** — six phases: Resolve → Decide runtime → Prepare workspace → Start → Register → Prompt. Each phase logs context for diagnose-on-failure. Partial sessions record where they failed.
-- **Runtime adapters (`internal/session/runtime.go` + `runtime_local.go` + `runtime_container.go`)** — `Runtime` interface with `LocalRuntime` (host) and `ContainerRuntime` (podman) implementations. Container runtime creates per-session worktree, hardens via `IsolationProfile`, runs the container, parses `podman port` to discover the host-side mapping, polls OpenCode's HTTP root until ready, then dials into it via the SDK.
-- **ADR-004 (`docs/decisions/004-container-isolation.md`)** — full rationale for the default hardening: threat model, what we forbid, why not VM isolation in v1, alternatives considered (gVisor, no isolation, root, bind-mount-everything), and follow-ups (eBPF, Firecracker, runtime audit in cockpit).
-
 ### Changed
 
-- `Session` struct extended with `Runtime` (local/container) and `Env` (per-session env vars). Existing sessions persisted without these fields load with empty defaults.
-- `ContainerConfig` extended with `Privileged` and `ReadOnlyRootfs` fields; runtimes honor them.
+- **Renamed project from "harness" to "AgentJam".** Module path is now `github.com/JamieDF/agentjam`. CLI binary is now `agentjam` (single word). Default data directory is now `~/.agentjam/` (the old `~/.harness/` is auto-migrated on first run with a one-time stderr notice). Container image prefix is now `agentjam-agent-{stack}:{ver}` (e.g. `agentjam-agent-node:20`). Container labels are now `io.agentjam.managed` and `io.agentjam.exposed-port`. Vault marker is now `agentjam-vault-marker-v1`. See the commit history for the four-commit rename series.
+
+> **Note:** This is a hard cutover for the encrypted vault. Any pre-existing encrypted vault stored under the prior marker cannot be unlocked after upgrade. Users with pre-existing state should run `agentjam vault export` BEFORE upgrading, then re-init the vault and re-add credentials. (In normal use the auto-migration of the home directory is sufficient; only encrypted blobs need re-init if they pre-date this release.)
 
 ## [0.1.0] - 2026-06-30
 
 ### Added
 
-- Initial release of harness, a local-first orchestrator for AI coding
+- Initial release of agentjam, a local-first orchestrator for AI coding
   agents.
 
 #### Core interfaces
@@ -53,14 +44,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 #### CLI
 
-- `cmd/harness/` — Cobra-based CLI with subcommands:
-  - `harness project` — list, create, switch, show, delete, active
-  - `harness task` — list, new, show, status, assign, log
-  - `harness vault` — init, unlock, lock, list, add, remove, show,
+- `cmd/agentjam/` — Cobra-based CLI with subcommands:
+  - `agentjam project` — list, create, switch, show, delete, active
+  - `agentjam task` — list, new, show, status, assign, log
+  - `agentjam vault` — init, unlock, lock, list, add, remove, show,
     template (list/add/remove), audit
-  - `harness agent` — spawn, list (stub)
-  - `harness cockpit` — stub
-  - `harness version`
+  - `agentjam agent` — spawn, list (stub)
+  - `agentjam cockpit` — stub
+  - `agentjam version`
 
 #### Modes
 

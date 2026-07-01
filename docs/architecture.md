@@ -1,13 +1,13 @@
 # Architecture
 
-This document describes harness's design at a level intended for contributors
+This document describes agentjam's design at a level intended for contributors
 and curious users. For the high-level "what does it do" see the
 [README](../README.md). For the rationale behind specific decisions, see the
 decision records in [`docs/decisions/`](decisions/).
 
 ## Goals
 
-harness is built around five goals. Each architectural decision should serve
+agentjam is built around five goals. Each architectural decision should serve
 at least one of these:
 
 1. **You always own the session.** No dead-end states. Control transfers
@@ -55,9 +55,9 @@ at least one of these:
 ## Package layout
 
 ```
-harness/
+agentjam/
 ├── cmd/
-│   └── harness/                # CLI entry point
+│   └── agentjam/                # CLI entry point
 │       ├── main.go             # root cobra command
 │       ├── project.go          # project subcommand
 │       ├── task.go             # task subcommand
@@ -69,7 +69,7 @@ harness/
 │   ├── agent/
 │   │   ├── driver/             # AgentDriver interface + event types
 │   │   └── driver/opencode/    # OpenCode Go SDK implementation
-│   ├── config/                 # HARNESS_HOME resolution
+│   ├── config/                 # AGENTJAM_HOME resolution
 │   ├── container/              # ContainerRuntime interface
 │   ├── container/podman/       # Podman implementation
 │   ├── errs/                   # sentinel errors
@@ -154,7 +154,7 @@ turns "agent state" into an external, queryable, inspectable artifact.
 
 **Anti-abandonment mechanisms:**
 - The agent *must* call `task_log_progress` after every meaningful action.
-- On context compaction, the harness summarizes the conversation into a
+- On context compaction, the agentjam summarizes the conversation into a
   progress entry *before* trimming, so compaction never loses task state.
 - If a task is `in_progress` with no log entry for N hours, it's flagged
   as `stalled` and surfaced in the cockpit.
@@ -175,7 +175,7 @@ the entire context.
 ### Mode
 
 A named system prompt that controls agent behavior. Modes live as markdown
-files in `~/.harness/modes/` and are loaded by name. The same driver
+files in `~/.agentjam/modes/` and are loaded by name. The same driver
 implements every mode; only the system prompt changes.
 
 **Why this exists:** different tasks want different agent personalities.
@@ -198,7 +198,7 @@ choose their tool without us maintaining N implementations.
 ### Spawning an agent on a task
 
 ```
-User runs: harness agent spawn --task T-001 --mode agent
+User runs: agentjam agent spawn --task T-001 --mode agent
                 │
                 ▼
 CLI resolves:
@@ -274,7 +274,7 @@ URL, the vault saw the token. The audit log records that the agent
 
 ### Threat model
 
-harness is a personal tool. The user is the operator, the agent is the
+agentjam is a personal tool. The user is the operator, the agent is the
 assistant. Threats:
 
 1. **Credential leakage.** A bug or LLM hallucination causes a credential
@@ -307,7 +307,7 @@ not editable from the orchestrator.
 
 ## Concurrency
 
-harness is designed for concurrent agents:
+agentjam is designed for concurrent agents:
 
 - **Multiple drivers run in parallel.** Each driver is independent; the
   cockpit manages N of them.
@@ -330,14 +330,14 @@ and wire it into the spawn command.
 
 ### Custom modes
 
-Drop a markdown file in `~/.harness/modes/<name>.md`. The mode loader picks
+Drop a markdown file in `~/.agentjam/modes/<name>.md`. The mode loader picks
 it up automatically. First line becomes the display name; rest is the system
 prompt.
 
 ### Custom vault templates
 
-`harness vault template add <cred-id> --name <tname> --env '{...}'` — see
-`harness vault template add --help` for all injection modes.
+`agentjam vault template add <cred-id> --name <tname> --env '{...}'` — see
+`agentjam vault template add --help` for all injection modes.
 
 ### Custom container runtimes
 

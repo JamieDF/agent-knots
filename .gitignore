@@ -31,7 +31,7 @@ go.work.sum
 .DS_Store
 
 # Local config and state
-.harness/
+.agentjam/
 *.log
 
 # Generated

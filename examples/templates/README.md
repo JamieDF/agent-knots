@@ -7,11 +7,11 @@ to your needs.
 
 ```bash
 # 1. Add a credential (interactive)
-harness vault add github/work
+agentjam vault add github/work
 # Value: <paste your token>
 
 # 2. Add a template from this library
-harness vault template add github/work \
+agentjam vault template add github/work \
   --name gh_cli_env \
   --env '{"GH_TOKEN": "$value"}'
 
@@ -30,7 +30,7 @@ harness vault template add github/work \
 - **`anthropic.json`** — Anthropic API key
 
 Each file shows the same template in JSON form (which you can hand-edit
-in your vault's `vault.enc`) and as CLI flags for `harness vault template add`.
+in your vault's `vault.enc`) and as CLI flags for `agentjam vault template add`.
 
 ## Variables
 
@@ -43,7 +43,7 @@ with the agent's original command + arguments.
 
 ## Adding custom templates
 
-The fastest path is `harness vault template add` with the right flags.
+The fastest path is `agentjam vault template add` with the right flags.
 The library files here are reference; they're not auto-loaded.
 
 If you want a template the agent can use for a tool not in this library,

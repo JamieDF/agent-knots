@@ -1,14 +1,16 @@
-# Handoff Context — harness v0.1 (pre-alpha)
+> **Note:** This document was originally authored under the prior project name "harness"; references to "agentjam" reflect the rename. See CHANGELOG.
+
+# Handoff Context — agentjam v0.1 (pre-alpha)
 
 > **Purpose:** this is the doc to hand to the next agent / dev that picks up
-> harness. Read it once, top to bottom, before touching anything. Save
+> agentjam. Read it once, top to bottom, before touching anything. Save
 > yourself the two days I spent re-discovering things.
 
 ---
 
 ## 0. One-paragraph summary
 
-`harness` is a **local-first Go orchestrator for multiple AI coding agents
+`agentjam` is a **local-first Go orchestrator for multiple AI coding agents
 in parallel across multi-repo projects**. v0.1 ships:
 
 - ~12K LOC Go, 8 git commits, ~3.7K LOC tests, all tests passing
@@ -20,7 +22,7 @@ in parallel across multi-repo projects**. v0.1 ships:
 - Full docs and ADRs in `docs/`
 
 **What it can do today:** pass `go test ./internal/...`. State persists to
-`~/.harness/`. Spawn an OpenCode session in a hardened podman container.
+`~/.agentjam/`. Spawn an OpenCode session in a hardened podman container.
 **What it cannot do today:** see live events from a detached session, stop a
 session, take over a session, the TUI doesn't connect to real drivers, no
 web GUI, no git worktrees, no egress filtering, no OpenCode SDK compilation
@@ -31,16 +33,16 @@ verified.
 ## 1. The repo, top to bottom
 
 ```
-/workspace/harness/
-├── cmd/harness/                  # cobra CLI, ~1700 LOC
+/workspace/agentjam/
+├── cmd/agentjam/                  # cobra CLI, ~1700 LOC
 │   ├── main.go                   # registers subcommands, version, ensure dirs
-│   ├── agent.go                  # `harness agent spawn|list` — talks to OpenCode directly (pre-session model)
-│   ├── session.go                # `harness session start|list|show|stop|logs` — new, runs Init flow
-│   ├── project.go                # `harness project ...`
-│   ├── task.go                   # `harness task ...`
-│   ├── vault.go                  # `harness vault ...`
-│   ├── cockpit.go                # `harness cockpit` — launches TUI
-│   └── prompt.go                 # `harness prompt` — task→agent prompt builder
+│   ├── agent.go                  # `agentjam agent spawn|list` — talks to OpenCode directly (pre-session model)
+│   ├── session.go                # `agentjam session start|list|show|stop|logs` — new, runs Init flow
+│   ├── project.go                # `agentjam project ...`
+│   ├── task.go                   # `agentjam task ...`
+│   ├── vault.go                  # `agentjam vault ...`
+│   ├── cockpit.go                # `agentjam cockpit` — launches TUI
+│   └── prompt.go                 # `agentjam prompt` — task→agent prompt builder
 │
 ├── internal/
 │   ├── agent/driver/             # THE interface every backend implements
@@ -82,7 +84,7 @@ verified.
 │   │   ├── tui.go                # ~750 LOC of bubble tea, two views, stub DriverRegistry
 │   │   └── styles.go             # lipgloss styles
 │   │
-│   ├── config/                   # ~/.harness/ path resolution (HARNESS_HOME override)
+│   ├── config/                   # ~/.agentjam/ path resolution (AGENTJAM_HOME override)
 │   └── errs/                     # sentinel errors + Wrap helper
 │
 ├── modes/                        # 11 markdown system prompts (assistant, agent, reviewer, security, junior-dev, senior-dev, planner, debugger, documenter, refactorer, test-writer)
@@ -158,7 +160,7 @@ podman.
 ┌──────────────────────┐         ┌──────────────────────┐
 │   cockpit (TUI/Web)  │ ─reads─►│   session.Manager    │
 │   (operators, UI)    │         │   (YAML files in     │
-└──────────┬───────────┘         │    ~/.harness/)      │
+└──────────┬───────────┘         │    ~/.agentjam/)      │
            │                     └──────────┬───────────┘
            │                                │
            │ writes/talks-to                │ owns
@@ -177,7 +179,7 @@ podman.
 └──────────────────────┘         └──────────────────────┘
 ```
 
-All persistence = YAML files under `~/.harness/`. No database.
+All persistence = YAML files under `~/.agentjam/`. No database.
 
 The vault is the **only piece the agent can never touch directly** —
 agents ask via unix socket, host's vault daemon proxies commands and
@@ -193,7 +195,7 @@ daemon is a v0.2 deliverable.)
 | **Language = Go** | single binary, OpenCode Go SDK, services-style orchestration | — |
 | **Driver = OpenCode SDK** in v1 | mature, OSS, Has Go SDK; we keep our driver thin | ADR-001 |
 | **Embed-then-own** | ship OpenCode-backed, write own thin driver later behind same iface | ADR-001 |
-| **Storage = local-only** | no cloud sync in v1, just `~/.harness/` | high-level plan §1 |
+| **Storage = local-only** | no cloud sync in v1, just `~/.agentjam/` | high-level plan §1 |
 | **Container runtime = Podman** (v1), pluggable | OpenHands-style "local + remote/cloud" model | high-level plan §8 |
 | **Modes = system prompts**, not separate modes in code | same driver, different persona; control transfer is mode swap | high-level plan §3 |
 | **Vault = never expose raw values**; injection templates only | credential hygiene | ADR-002 |
@@ -219,9 +221,9 @@ daemon is a v0.2 deliverable.)
    container/local runtimes via session registry in a future cycle." The
    runtime's `Cleanup()` works but no caller invokes it.
 
-2. **`streamEvents` in `cmd/harness/session.go` is a lie.** It's a 1-second
+2. **`streamEvents` in `cmd/agentjam/session.go` is a lie.** It's a 1-second
    heartbeat loop. There is no path from a detached session back to a
-   `harness session logs <id>`. To fix, need: live driver registry (map of
+   `agentjam session logs <id>`. To fix, need: live driver registry (map of
    session-id → driver) + event-source multiplexer (likely SSE on a local
    unix socket that the daemon writes to).
 
@@ -291,8 +293,8 @@ git add -A && git commit -m "..."
 
 Tarball/bundle for delivery:
 ```bash
-cd /workspace && tar -czf harness.tar.gz --exclude='harness/.git' --exclude='harness/.harness' --exclude='harness/node_modules' harness/
-cd /workspace/harness && git bundle create /workspace/harness.bundle --all
+cd /workspace && tar -czf agentjam.tar.gz --exclude='agentjam/.git' --exclude='agentjam/.agentjam' --exclude='agentjam/node_modules' agentjam/
+cd /workspace/agentjam && git bundle create /workspace/agentjam.bundle --all
 ```
 
 **NOTE:** `go mod tidy` requires network and has been broken in our sandbox
@@ -359,7 +361,7 @@ These are unwritten but enforced by the existing code:
    unlock: ~1 second on a modern CPU. Locked ⇒ agent can't inject creds.
    Acceptable, but it'll surprise users on slow machines.
 
-8. **No graceful shutdown wiring.** A SIGINT during `harness session
+8. **No graceful shutdown wiring.** A SIGINT during `agentjam session
    start --container` will orphan the container. Add signal handling in
    the CLI subcommand before long-running containers become the norm.
 
@@ -386,7 +388,7 @@ The dev sandbox this was authored in has:
   on the args; nothing about the live runtime.
 
 If you're picking this up and you DO have podman + Go: the first thing
-to do is `go mod tidy && go build ./...` and run a real `harness
+to do is `go mod tidy && go build ./...` and run a real `agentjam
 session start --task T-001 --container --detach` against a stub task.
 That single end-to-end run will reveal half the issues listed above.
 
@@ -402,7 +404,7 @@ That single end-to-end run will reveal half the issues listed above.
 - `session stop` actually stops the runtime
 
 **Week 2: usable** (TUI gets real, sessions get costs)
-- Take-over flow: `harness assume <session>`, TUI `a`/`r` keys
+- Take-over flow: `agentjam assume <session>`, TUI `a`/`r` keys
 - Per-session token / cost tracking (driver-side, exposed to UI)
 - `scripts/smoke.sh` end-to-end test against fake LLM endpoint
 - macOS podman CI integration test
@@ -433,7 +435,7 @@ Concrete, in order:
 2. **Run `go test -race ./internal/...`** on your machine (no podman, no
    OpenCode server needed). Confirm green.
 
-3. **Open `cmd/harness/session.go` and trace `session.StartCmd`** end to
+3. **Open `cmd/agentjam/session.go` and trace `session.StartCmd`** end to
    end. Note the `streamEvents` lie. That's your first concrete bug to
    fix.
 
@@ -445,7 +447,7 @@ Concrete, in order:
    the biggest user-facing win. Take-over flow is the most-aligned-with-
    the-spec. Your call.
 
-6. **Run a real `harness session start --container --detach` end-to-end**
+6. **Run a real `agentjam session start --container --detach` end-to-end**
    the moment you have OpenCode + podman + git in your dev env. Write
    down what breaks. Half the F's will collapse.
 
@@ -473,7 +475,7 @@ Concrete, in order:
 | **Runtime** | the per-session abstraction over local-execution vs containerized-execution |
 | **Isolation profile** | the hardened container defaults (caps, seccomp, network, etc.) |
 | **Cockpit** | the UI surface for managing multiple sessions (TUI today; Web v0.4) |
-| **Operator** | a `harness <command>` that scripts can call (not a UI surface) |
+| **Operator** | a `agentjam <command>` that scripts can call (not a UI surface) |
 | **Scrubber** | vault-side string substitution that removes leaked credential values from command output before returning it to the agent |
 
 ---
@@ -482,9 +484,9 @@ Concrete, in order:
 
 ```
 Hour 0–1:  Read this doc + RETRO.md + the 3 ADRs
-Hour 1–2:  Skim all of cmd/harness/*.go, knowing the test matrix
+Hour 1–2:  Skim all of cmd/agentjam/*.go, knowing the test matrix
 Hour 2–3:  Run `go test -race ./internal/...`, confirm green
-Hour 3–4:  Trace cmd/harness/session.go::sessionStartCmd by hand
+Hour 3–4:  Trace cmd/agentjam/session.go::sessionStartCmd by hand
 Hour 4–5:  Read internal/session/runtime_container.go::Start in full
 Hour 5–6:  Skim internal/vault/filestore/crypto.go to know what's there
 Hour 6–8:  Pick a single F → D. Implement. Commit. Test.

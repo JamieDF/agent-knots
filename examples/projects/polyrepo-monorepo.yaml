@@ -1,7 +1,7 @@
 # Example: Polyrepo project (multiple git repos in one logical project)
 #
-# This file goes in ~/.harness/projects/<project-id>.yaml.
-# Use `harness project edit` to open in $EDITOR, or copy this file directly.
+# This file goes in ~/.agentjam/projects/<project-id>.yaml.
+# Use `agentjam project edit` to open in $EDITOR, or copy this file directly.
 
 id: my-saas-app
 name: "My SaaS App"
@@ -39,7 +39,7 @@ models:
   cheap:   gpt-4o-mini
 
 # Project-level build/test/lint commands. Used by the agent for
-# verification, by the harness for container builds, and by humans
+# verification, by the agentjam for container builds, and by humans
 # for sanity checks.
 commands:
   install:    pnpm install

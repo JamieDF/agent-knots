@@ -32,11 +32,11 @@
       "description": "Write credentials to ~/.aws/credentials file",
       "injection": {
         "file": {
-          "path": "/tmp/harness-aws-credentials",
+          "path": "/tmp/agentjam-aws-credentials",
           "permissions": 384
         }
       },
-      "cli": "harness vault template add aws/profile --name aws_config_file --file /tmp/harness-aws-credentials"
+      "cli": "agentjam vault template add aws/profile --name aws_config_file --file /tmp/agentjam-aws-credentials"
     }
   }
 }

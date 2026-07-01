@@ -56,7 +56,7 @@ Different providers can be the default for different project types — or even d
 Modes are just markdown files with system prompts. Editable, add your own:
 
 ```
-~/.llm-harness/modes/
+~/.llm-agentjam/modes/
 ├── assistant.md     # Interactive — waits for user, suggests, asks questions
 ├── agent.md         # Spec-driven — works autonomously to completion
 ├── reviewer.md      # Read-only — finds issues, doesn't edit
@@ -165,29 +165,29 @@ prompts:
 
 - Each repo gets its own worktree per agent session (no collisions)
 - Cross-repo search aggregates results from all repos
-- `harness project test` runs each repo's test command, aggregates results
+- `agentjam project test` runs each repo's test command, aggregates results
 - Cross-repo PRs opened in dependency order, linked in descriptions
 - Per-repo credential binding possible
 
 ### Project commands
 
 ```
-harness project create <name>          # Interactive
-harness project clone <github-url>     # Create + clone in one step
-harness project list
-harness project switch <name>
-harness project info
-harness project edit                   # Open project.yaml in $EDITOR
-harness project detect                 # Auto-detect language/framework/build commands
-harness project add-repo <github-url>  # Add another repo
-harness project status                 # Git status across all repos
-harness project test / lint / build    # Run project-wide
+agentjam project create <name>          # Interactive
+agentjam project clone <github-url>     # Create + clone in one step
+agentjam project list
+agentjam project switch <name>
+agentjam project info
+agentjam project edit                   # Open project.yaml in $EDITOR
+agentjam project detect                 # Auto-detect language/framework/build commands
+agentjam project add-repo <github-url>  # Add another repo
+agentjam project status                 # Git status across all repos
+agentjam project test / lint / build    # Run project-wide
 ```
 
 ### Storage
 
 ```
-~/.llm-harness/
+~/.llm-agentjam/
 ├── projects/
 │   ├── index.json
 │   ├── my-cool-app.yaml
@@ -198,7 +198,7 @@ harness project test / lint / build    # Run project-wide
 
 ## 5. Tasks (Persistent Work Records)
 
-**Core principle:** A Task is a structured object in the harness database, NOT a string in the agent's context. The agent reads from and writes to a Task; it doesn't contain it. Tasks survive context compaction, session restarts, agent crashes, model swaps, mode swaps.
+**Core principle:** A Task is a structured object in the agentjam database, NOT a string in the agent's context. The agent reads from and writes to a Task; it doesn't contain it. Tasks survive context compaction, session restarts, agent crashes, model swaps, mode swaps.
 
 ### Task schema
 
@@ -317,7 +317,7 @@ progress:
 ### Storage
 
 ```
-~/.llm-harness/tasks/<project-id>/<task-id>.yaml
+~/.llm-agentjam/tasks/<project-id>/<task-id>.yaml
 ```
 
 YAML so it's greppable, hand-editable, optionally version-controllable.
@@ -357,7 +357,7 @@ What the agent can actually do to your codebase.
 ### Storage
 
 - Encrypted at rest using OS keychain (macOS Keychain, Linux `secret-service`, Windows Credential Manager)
-- Fallback: `~/.llm-harness/vault.enc` with passphrase-derived key
+- Fallback: `~/.llm-agentjam/vault.enc` with passphrase-derived key
 - Each credential is just a named secret — no type enum
 
 ```json
@@ -458,7 +458,7 @@ Records which template and which command. Never the secret value. Exportable as 
 ### Storage
 
 ```
-~/.llm-harness/
+~/.llm-agentjam/
 ├── vault.enc
 ├── vault.key                  # From OS keychain
 └── vault.log                  # Append-only audit log
@@ -478,7 +478,7 @@ Records which template and which command. Never the secret value. Exportable as 
 4. **Agent loop runs** — full tool access inside the sandbox, communicating via the standard driver interface (see Section 11)
 5. **Verification** — run full test suite + linter as final check
 6. **PR submission** — push branch, open PR via vault credentials, capture URL
-7. **Cleanup** — auto-remove container, or keep for inspection (`harness keep`)
+7. **Cleanup** — auto-remove container, or keep for inspection (`agentjam keep`)
 
 ### Sandbox policies
 
@@ -562,7 +562,7 @@ If user picks a runtime that isn't implemented yet, the UI shows a clear message
 **Relationship:**
 - Both backed by the same event stream from the driver interface
 - Both can do everything — launch agents, switch modes, manage tasks, edit vault, change settings
-- The `harness` CLI exposes subcommands (`harness project ...`, `harness vault ...`, etc.) for scripting and CI — these are operators, not a separate UI surface
+- The `agentjam` CLI exposes subcommands (`agentjam project ...`, `agentjam vault ...`, etc.) for scripting and CI — these are operators, not a separate UI surface
 
 **Why two surfaces, not one:** GUI is best for visual/spatial reasoning (multiple agents, diffs, code). TUI is best for keyboard-driven power use and SSH workflows. Both share the same backend; switching is just a different rendering.
 
@@ -588,12 +588,12 @@ The TUI handles both multi-agent and single-agent modes through the same interfa
 
 ### CLI subcommands (not a UI surface)
 
-The `harness` CLI exposes subcommands for scripting and CI:
-- `harness project ...`
-- `harness task ...`
-- `harness vault ...`
-- `harness agent spawn/start/stop ...`
-- `harness cockpit` — launches the TUI cockpit
+The `agentjam` CLI exposes subcommands for scripting and CI:
+- `agentjam project ...`
+- `agentjam task ...`
+- `agentjam vault ...`
+- `agentjam agent spawn/start/stop ...`
+- `agentjam cockpit` — launches the TUI cockpit
 
 These are operators, not UI surfaces. They use the same orchestrator internals but output text to stdout / read from stdin.
 
@@ -603,7 +603,7 @@ These are operators, not UI surfaces. They use the same orchestrator internals b
 - **TUI cockpit — v1** — keyboard-driven, fast, runs over SSH, lightweight. Handles both multi-agent management AND single-agent focus — no separate CLI needed. Press a key to focus on one agent, press another to see all. Same interface, different zoom level.
 - All backed by the same event stream from the orchestrator.
 
-No standalone CLI / single-agent view — the TUI does both jobs, and the CLI commands (`harness project`, `harness vault`, `harness task`) are subcommands for scripting and CI, not a separate UI surface.
+No standalone CLI / single-agent view — the TUI does both jobs, and the CLI commands (`agentjam project`, `agentjam vault`, `agentjam task`) are subcommands for scripting and CI, not a separate UI surface.
 
 ### Cockpit display
 
@@ -839,7 +839,7 @@ orchestrator/                        # Go module
 ├── go.mod
 ├── go.sum
 ├── cmd/
-│   └── harness/                      # Main CLI entry point
+│   └── agentjam/                      # Main CLI entry point
 │       └── main.go
 ├── internal/
 │   ├── drivers/                      # Agent driver implementations
@@ -902,7 +902,7 @@ orchestrator/                        # Go module
 - Director
 - Studio
 
-⚠️ ~~UI direction for cockpit~~ **Resolved:** Two surfaces — **Web GUI (primary, most useful)** for visual multi-agent management, **TUI** for keyboard-driven multi-agent + single-agent focus (zoom in/out in the same interface). No separate CLI UI — `harness` subcommands are operators for scripting/CI.
+⚠️ ~~UI direction for cockpit~~ **Resolved:** Two surfaces — **Web GUI (primary, most useful)** for visual multi-agent management, **TUI** for keyboard-driven multi-agent + single-agent focus (zoom in/out in the same interface). No separate CLI UI — `agentjam` subcommands are operators for scripting/CI.
 
 ✅ **Driver for v1:** **OpenCode** (by SST/Anomaly) via the official Go SDK (`github.com/sst/opencode-sdk-go`). Justification:
 - **Native Go SDK** — generated with Stainless, type-safe, direct `import` from our Go orchestrator. No subprocess, no HTTP bridge.
@@ -930,11 +930,11 @@ When we write our own thin driver later, it goes behind the same `AgentDriver` i
 | Decision | Choice |
 |---|---|
 | Repo strategy for Projects | Multi-repo (Strategy 3) — single-repo is just one repo in the list |
-| Storage | Local only — `~/.llm-harness/`, no cloud sync in v1 |
+| Storage | Local only — `~/.llm-agentjam/`, no cloud sync in v1 |
 | Container runtime | `ContainerRuntime` interface configured for all (Podman, Docker, Apple, nerdctl); **only Podman implemented in v1** — others clearly marked as planned |
 | Driver strategy | **OpenCode via Go SDK** in v1; write our own thin driver later behind the same interface |
 | Mode architecture | Single agent driver + mode system prompts (assistant / agent / reviewer / etc. — same driver, different system prompt) |
-| UI surfaces | **Web GUI (primary, most useful) + TUI (handles both multi-agent cockpit AND single-agent focus via zoom).** No separate CLI UI — `harness` subcommands are operators, not a UI surface. |
+| UI surfaces | **Web GUI (primary, most useful) + TUI (handles both multi-agent cockpit AND single-agent focus via zoom).** No separate CLI UI — `agentjam` subcommands are operators, not a UI surface. |
 | Online sync | Parked for future |
 | Language | **Go** — single binary distribution, native OpenCode SDK integration, mature ecosystem for CLI/network/containers, different from Python/TS as a learning experience |
 | Driver | **OpenCode via Go SDK** (`github.com/sst/opencode-sdk-go`) |

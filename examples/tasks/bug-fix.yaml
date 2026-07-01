@@ -1,6 +1,6 @@
 # Example: Bug-fix task
 #
-# Copy to ~/.harness/tasks/<project>/<id>.yaml and customize.
+# Copy to ~/.agentjam/tasks/<project>/<id>.yaml and customize.
 # This is a typical small bug fix — single root cause, verification is
 # "the failing test now passes".
 

@@ -1,3 +1,5 @@
+> **Note:** Captured under the prior project name "harness"; see CHANGELOG for the rename.
+
 # ADR 0002: Vault uses injection templates, not direct value retrieval
 
 **Status:** Accepted

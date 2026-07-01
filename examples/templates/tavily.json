@@ -10,7 +10,7 @@
           "TAVILY_API_KEY": "$value"
         }
       },
-      "cli": "harness vault template add tavily/search --name tavily_python_env --env '{\"TAVILY_API_KEY\": \"$value\"}'"
+      "cli": "agentjam vault template add tavily/search --name tavily_python_env --env '{\"TAVILY_API_KEY\": \"$value\"}'"
     },
 
     "tavily_curl_bearer": {
@@ -21,7 +21,7 @@
           "template": "curl -H 'Authorization: Bearer $value' -H 'Content-Type: application/json' {original}"
         }
       },
-      "cli": "harness vault template add tavily/search --name tavily_curl_bearer --wrapper \"curl -H 'Authorization: Bearer \\$value' -H 'Content-Type: application/json' {original}\""
+      "cli": "agentjam vault template add tavily/search --name tavily_curl_bearer --wrapper \"curl -H 'Authorization: Bearer \\$value' -H 'Content-Type: application/json' {original}\""
     }
   }
 }

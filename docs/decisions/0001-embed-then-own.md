@@ -1,3 +1,5 @@
+> **Note:** Captured under the prior project name "harness"; see CHANGELOG for the rename.
+
 # ADR 0001: Embed-then-Own for the agent driver
 
 **Status:** Accepted
@@ -5,7 +7,7 @@
 
 ## Context
 
-harness needs to drive an AI coding agent. The orchestrator is the
+agentjam needs to drive an AI coding agent. The orchestrator is the
 interesting part (multi-agent, vault, tasks, projects) — the agent loop
 itself is well-trodden ground. We need to choose how to integrate an
 agent engine.

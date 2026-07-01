@@ -1,8 +1,8 @@
-# Harness
+# AgentJam
 
 > Local-first orchestrator for AI coding agents. You stay in control.
 
-Harness is a platform for running, observing, and orchestrating multiple AI
+AgentJam is a platform for running, observing, and orchestrating multiple AI
 coding agents in parallel across multi-repo projects. It ships with:
 
 - **A unified driver interface** so any agent backend (OpenCode today, custom
@@ -27,36 +27,36 @@ moment. No dead-end states.
 
 ```bash
 # Install
-go install github.com/harness/harness/cmd/harness@latest
+go install github.com/agentjam/agentjam/cmd/agentjam@latest
 
 # Initialize a new project
-harness project init my-app --repo [email protected]:you/my-app.git
+agentjam project init my-app --repo [email protected]:you/my-app.git
 
 # Switch to it
-harness project switch my-app
+agentjam project switch my-app
 
 # Open the cockpit (TUI default, web if --gui)
-harness cockpit
+agentjam cockpit
 
 # Spawn an agent on a task
-harness task new --title "Add dark mode toggle"
-harness agent spawn --task T-... --mode agent
+agentjam task new --title "Add dark mode toggle"
+agentjam agent spawn --task T-... --mode agent
 ```
 
 For a full walkthrough, see [`docs/quickstart.md`](docs/quickstart.md).
 
 ---
 
-## Why Harness?
+## Why AgentJam?
 
 Most AI coding tools are single-agent, single-session. When you want to run
 three agents in parallel — one refactoring auth, one fixing failing tests, one
 reviewing a PR — you're stuck with N separate terminal tabs and no shared view
 of what's happening.
 
-Harness is built for that case from day one:
+AgentJam is built for that case from day one:
 
-| Need | Harness |
+| Need | AgentJam |
 |------|---------|
 | Run multiple agents at once | ✅ Concurrent cockpit |
 | See all of them at a glance | ✅ Web GUI + TUI |
@@ -98,7 +98,7 @@ The full architecture document lives at [`docs/architecture.md`](docs/architectu
 
 ## Status
 
-Harness is in **early development (v0.1.0)**. The interfaces and core
+AgentJam is in **early development (v0.1.0)**. The interfaces and core
 implementations are usable; the cockpit UIs and container integration are
 scaffolded but evolving.
 

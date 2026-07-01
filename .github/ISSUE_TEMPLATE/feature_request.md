@@ -1,5 +1,5 @@
 name: Feature request
-about: Suggest a feature for harness
+about: Suggest a feature for agentjam
 title: "[Feature] "
 labels: enhancement
 assignees: ''

@@ -1,5 +1,5 @@
 name: Bug report
-about: Report a bug in harness
+about: Report a bug in agentjam
 title: "[Bug] "
 labels: bug
 assignees: ''
@@ -24,7 +24,7 @@ What actually happened.
 **Environment**
 - OS: [e.g. macOS 14, Ubuntu 24.04]
 - Go version: [e.g. 1.23.4]
-- harness version: [output of `harness version`]
+- agentjam version: [output of `agentjam version`]
 - OpenCode version: [if relevant]
 - Podman version: [if relevant]
 

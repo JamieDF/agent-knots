@@ -1,18 +1,18 @@
 # Example: Monorepo project (single git repo with sub-packages)
 #
-# This file goes in ~/.harness/projects/<project-id>.yaml.
-# Use `harness project edit` to open in $EDITOR, or copy this file directly.
+# This file goes in ~/.agentjam/projects/<project-id>.yaml.
+# Use `agentjam project edit` to open in $EDITOR, or copy this file directly.
 
 id: monorepo-app
 name: "Monorepo App"
 description: |
   Single git repo containing multiple packages managed with pnpm
-  workspaces. The harness treats it as one repo with sub-package
+  workspaces. The agentjam treats it as one repo with sub-package
   awareness.
 
 workspace_root: ~/work/monorepo-app
 
-# Single repo with sub-packages listed for awareness. The harness can
+# Single repo with sub-packages listed for awareness. The agentjam can
 # run commands scoped to specific packages.
 repos:
   - path: .
@@ -20,7 +20,7 @@ repos:
     branch: main
     role: monorepo
     # If your monorepo has packages, you can list them here. The
-    # harness uses this for scoped commands (e.g., `pnpm --filter web test`).
+    # agentjam uses this for scoped commands (e.g., `pnpm --filter web test`).
     # subpackages:
     #   - packages/web
     #   - packages/api
