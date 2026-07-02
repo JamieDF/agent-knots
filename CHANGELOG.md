@@ -6,81 +6,126 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Session Lifecycle & IPC
+
+- **Per-session subprocess management.** `session start --detach` forks a
+  child process (`agentjam session run <id>`) that holds the driver alive,
+  serves events on a UNIX socket, and writes PID/sock/log files.
+- **Live event streaming protocol.** Each session exposes a UNIX socket
+  (`~/.agentjam/sessions/<id>.sock`) that broadcasts JSON-encoded events
+  to any connected client. `session logs <id>` follows the stream.
+- **Bidirectional control channel.** The same socket accepts control
+  messages (set-mode, send) from clients, enabling assume/relinquish and
+  message injection from any UI surface.
+- **Session discovery.** `live.List()` scans the sessions directory for
+  live PID files, verifies process liveness, and cleans up stale entries.
+
+### Added — Drivers
+
+- **Mock driver** (`internal/agent/driver/mock`). 364 LOC. Emits scripted
+  agent events (thinking, tool calls, messages, mode changes) on a timer.
+  Supports SetMode/Send for testing take-over flow. Used by all demos
+  and integration tests.
+
+### Added — Take-over Flow
+
+- **Assume/relinquish control.** Mode swap between `agent` and `assistant`.
+  Implemented across three surfaces:
+  - CLI: `session assume <id>`, `session relinquish <id>`, `session send <id> <msg>`
+  - TUI: `a` key (assume), `r` key (relinquish)
+  - Web: POST endpoints + action buttons
+- The control channel delivers mode-swap commands to the session
+  subprocess, which calls `driver.SetMode()` and emits a state-change event.
+
+### Added — Git Worktree Integration
+
+- **`--worktree` flag** on `session start`. Creates a real git worktree
+  at `.agentjam/worktrees/<session-id>/` with a branch named
+  `agent-<session-id>`. Worktree is removed and branch deleted on stop.
+- `internal/vcs/git.go` (192 LOC): CreateWorktree, RemoveWorktree,
+  DeleteBranch, Cleanup, IsGitRepo — all via `git` shell-outs.
+
+### Added — Egress Filtering
+
+- **iptables DROP rules** in the container's network namespace for 12
+  CIDR ranges (RFC1918, link-local, loopback, cloud metadata endpoints).
+  Installed via `podman unshare nsenter -t <PID> -n iptables -A OUTPUT`.
+- `internal/container/egress.go` (109 LOC): InstallEgressRules,
+  VerifyEgressRules. Non-fatal on failure (logged, not fatal).
+- 4 egress unit tests + integration verification.
+
+### Added — TUI Cockpit (v0.3)
+
+- **Bubble Tea TUI** with two views: agent list and per-agent focus.
+  - Agent list: live status, mode, uptime, tokens, current action.
+    j/k to navigate, Enter to focus.
+  - Focus view: real-time event stream from the session's event socket.
+    a/r to assume/relinquish, p to pause, Esc to go back.
+- `liveRegistry` caches `liveDriver` instances by session ID to avoid
+  duplicate socket connections on every poll tick.
+- `streaming` flag prevents goroutine accumulation from re-issuing
+  `watchEvents` on every 2-second tick.
+
+### Added — Web Cockpit (v0.4)
+
+- **Browser-accessible cockpit** at `127.0.0.1:<random-port>`.
+  - Token auth: 64-hex-char token generated on first start, saved to
+    `~/.agentjam/cockpit.token` (mode 0600). Cookie-based after first
+    login. `?token=` query param for one-click CLI integration.
+  - Agent list page: vanilla JS `fetch()` polling every 2 seconds.
+    Agent cards with status, mode, uptime, tokens, cost.
+  - Agent detail page: SSE event stream via `EventSource`. Each browser
+    tab gets its own event socket connection (no sharing issues).
+  - Control actions: Assume, Relinquish, Send message (POST endpoints).
+  - Fully self-contained: inline CSS, no CDN dependencies.
+- `internal/cockpit/web/` package (671 LOC): server.go, handlers.go,
+  sse.go, templates.go.
+
+### Added — Testing
+
+- **Integration test suite** (`internal/integration/`, 651 LOC, 10 tests).
+  Build-tagged (`//go:build integration`). Exercises the full lifecycle:
+  session start → event streaming → control channel → worktree → stop.
+  Run with: `go test -tags integration ./internal/integration/...`
+- **Smoke test script** (`scripts/smoke.sh`, 13 checks). Bash end-to-end
+  covering lifecycle, events, takeover, worktree. All passing.
+
+### Added — Podman Fixes
+
+- Rootless podman 5.8.2 verified working. Network mode `"private"` → `""`
+  (pasta creates isolated netns). `--storage-opt` disabled by default
+  (only works on XFS+overlay). `--userns keep-id` confirmed working.
+
+### Fixed
+
+- **Duplicate events in cockpit TUI.** Registry created new `liveDriver`
+  (new socket connection) on every 2-second tick. Event server broadcasts
+  to all connected clients → fan-out amplification. Fixed by caching
+  `liveDriver` instances by session ID + tracking streaming state.
+- **CDN dependencies in web cockpit.** HTMX and Pico CSS loaded from CDN
+  that was unreachable. Replaced with inline CSS + vanilla JS.
+- **Expanded `<details>` collapsing on poll.** Agent list innerHTML swap
+  destroyed open state every 2s. Fixed by tracking open IDs and restoring.
+- **P0/P1 code review fixes.** Send/Stop race, uptime bug, sync.Once→mutex,
+  path traversal, decode errors, PID file leak.
+
 ### Changed
 
-- **Renamed project from "harness" to "AgentJam".** Module path is now `github.com/JamieDF/agentjam`. CLI binary is now `agentjam` (single word). Default data directory is now `~/.agentjam/` (the old `~/.harness/` is auto-migrated on first run with a one-time stderr notice). Container image prefix is now `agentjam-agent-{stack}:{ver}` (e.g. `agentjam-agent-node:20`). Container labels are now `io.agentjam.managed` and `io.agentjam.exposed-port`. Vault marker is now `agentjam-vault-marker-v1`. See the commit history for the four-commit rename series.
-
-> **Note:** This is a hard cutover for the encrypted vault. Any pre-existing encrypted vault stored under the prior marker cannot be unlocked after upgrade. Users with pre-existing state should run `agentjam vault export` BEFORE upgrading, then re-init the vault and re-add credentials. (In normal use the auto-migration of the home directory is sufficient; only encrypted blobs need re-init if they pre-date this release.)
+- **Renamed project from "harness" to "AgentJam".** Module path is now
+  `github.com/JamieDF/agentjam`. CLI binary is now `agentjam` (single word).
+  Default data directory is now `~/.agentjam/`.
 
 ## [0.1.0] - 2026-06-30
 
 ### Added
 
-- Initial release of agentjam, a local-first orchestrator for AI coding
-  agents.
-
-#### Core interfaces
-
-- `internal/agent/driver.Driver` — the abstraction every agent backend
-  implements. OpenCode today, custom drivers tomorrow.
-- `internal/vault.Vault` — credential storage with injection templates.
-- `internal/task.Store` — persistent task system with progress logs.
-- `internal/project.Store` — multi-repo project workspaces.
-- `internal/container.Runtime` — abstraction over container engines.
-- `internal/mode.Loader` — markdown → system prompt conversion.
-
-#### Implementations
-
-- `internal/vault/filestore` — AES-256-GCM encrypted file-backed vault
-  with argon2id key derivation, 6 injection modes (env, file, ssh,
-  stdin, wrapper, plugin), output scrubbing, and append-only audit log.
-- `internal/task/filestore` — YAML file-backed task store with progress
-  log, acceptance criteria gating, and step-level plan tracking.
-- `internal/project/filestore` — YAML file-backed project store with
-  active-project tracking.
-- `internal/mode` — markdown mode loader with caching and reload.
-- `internal/container/podman` — podman CLI-based container runtime.
-- `internal/agent/driver/opencode` — OpenCode Go SDK adapter.
-
-#### CLI
-
-- `cmd/agentjam/` — Cobra-based CLI with subcommands:
-  - `agentjam project` — list, create, switch, show, delete, active
-  - `agentjam task` — list, new, show, status, assign, log
-  - `agentjam vault` — init, unlock, lock, list, add, remove, show,
-    template (list/add/remove), audit
-  - `agentjam agent` — spawn, list (stub)
-  - `agentjam cockpit` — stub
-  - `agentjam version`
-
-#### Modes
-
-Six default modes as markdown files in `modes/`:
-
-- `assistant` — interactive, waits for user
-- `agent` — autonomous, spec-driven, works to completion
-- `reviewer` — read-only, finds issues, structured output
-- `security` — read-only, security audit with CWE tags
-- `junior-dev` — cautious, asks questions, runs tests often
-- `senior-dev` — confident, decisive, moves fast
-
-#### Tests
-
-- Unit tests across all core packages with table-driven subtests
-- Race detector enabled (`go test -race`)
-- Coverage: errs 75%, vault 97.6%, vault/filestore 68.8%, mode 90%+,
-  task/filestore 90%+, project/filestore 90%+, container/podman 100%
-  (parsers)
-
-#### Documentation
-
-- README with quickstart, architecture diagram, status
-- LICENSE (MIT)
-- CONTRIBUTING with development setup and conventions
-- docs/architecture.md — full design document
-- Plan document at PLAN.md (will be moved to docs/plan/ in 0.2)
-
-### Notes
-
-This is the first public release. All core interfaces are stable; we
-expect minor breaking changes as the project evolves.
+- Initial release: core interfaces, file-backed implementations, CLI, modes.
+- `driver.Driver`, `vault.Vault`, `task.Store`, `project.Store`,
+  `container.Runtime`, `mode.Loader` interfaces.
+- Vault (AES-256-GCM, argon2id, injection templates, audit log).
+- Task system (progress logs, acceptance criteria, step tracking).
+- Project workspaces (multi-repo YAML).
+- Podman container runtime (CLI-based).
+- OpenCode driver via Go SDK (written, not live-tested).
+- 11 default modes as markdown files.
+- Unit tests across all core packages with `-race`.
