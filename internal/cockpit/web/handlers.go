@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -95,20 +96,49 @@ func (s *Server) handleAgentsFragment(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	if len(sessions) == 0 {
-		fmt.Fprint(w, `<p><em>No active agents. Start one with:</em></p>`)
-		fmt.Fprint(w, `<pre><code>agentjam session start --driver mock --detach</code></pre>`)
+		fmt.Fprint(w, `<div style="text-align:center;padding:60px 0;color:var(--muted)">
+			<p style="font-size:18px;margin-bottom:8px">No active agents</p>
+			<p style="margin-bottom:12px">Start one:</p>
+			<code style="font:12px 'DM Mono',monospace;background:var(--surface);padding:8px 14px;border-radius:6px;display:inline-block;color:var(--fg-soft)">agentjam session start --driver mock --detach</code>
+		</div>`)
 		return
 	}
 
 	for _, ls := range sessions {
 		info := s.loadSessionInfo(ls)
-		fmt.Fprintf(w, `<details data-id="%s">
-	<summary><strong>%s</strong> &nbsp;<mark>%s</mark> &nbsp;<small>%s</small></summary>
-	<p>Mode: <code>%s</code> &middot; Tokens: %s &middot; Uptime: %s</p>
-	<a href="/agent/%s" role="button">View &rarr;</a>
-</details>
-`, info.ID, info.ID, info.Status, info.StartedAgo, info.Mode,
-			formatTokens(info.Tokens), info.StartedAgo, info.ID)
+		statusClass := statusDotClass(info.Status)
+		modeBadge := modeBadgeHTML(info.Mode)
+		actionIcon, actionText := actionInfo(info)
+		tokenStr := formatTokens(info.Tokens)
+		if tokenStr == "—" {
+			tokenStr = "0"
+		}
+		costStr := fmt.Sprintf("$%.3f", info.Cost)
+		if info.Cost == 0 {
+			costStr = "$0.000"
+		}
+
+		fmt.Fprintf(w, `<a href="/agent/%s" class="card" data-tokens="%d" data-cost="%.6f">
+	<div class="card-row">
+		<div style="display:flex;align-items:center;gap:8px">
+			<span class="dot %s"></span>
+			<span class="card-id">%s</span>
+		</div>
+		<span class="badge %s">%s</span>
+	</div>
+	<div class="card-meta">
+		<span>Status<span class="val">%s</span></span>
+		<span>Uptime<span class="val mono">%s</span></span>
+		<span>Tokens<span class="val mono">%s</span></span>
+		<span>Cost<span class="val mono">%s</span></span>
+	</div>
+	<div class="card-action">%s %s</div>
+</a>
+`, info.ID, info.Tokens, info.Cost,
+			statusClass, info.ID,
+			modeBadge, info.Mode,
+			info.Status, info.StartedAgo, tokenStr, costStr,
+			actionIcon, actionText)
 	}
 }
 
@@ -233,20 +263,116 @@ func formatTokens(n int64) string {
 	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
+// statusDotClass returns the CSS class for a status dot.
+func statusDotClass(status string) string {
+	switch status {
+	case "running", "starting":
+		return "dot-running"
+	case "blocked":
+		return "dot-blocked"
+	case "paused", "assumed":
+		return "dot-assumed"
+	case "stopped", "error":
+		return "dot-stopped"
+	default:
+		return "dot-stopped"
+	}
+}
+
+// modeBadgeHTML returns badge HTML for a mode.
+func modeBadgeHTML(mode string) string {
+	switch mode {
+	case "agent":
+		return "badge-agent"
+	case "assistant":
+		return "badge-assistant"
+	default:
+		return "badge-stopped"
+	}
+}
+
+// actionIcon returns the icon HTML for the last action.
+func actionInfo(info sessionInfo) (string, string) {
+	if !info.Alive {
+		return "&#9679;", "stopped"
+	}
+	switch info.Status {
+	case "blocked":
+		return "&#9888;", "needs input"
+	case "running", "starting":
+		return "&#9679;", "running"
+	default:
+		return "&#9679;", info.Status
+	}
+}
+
 // formatEventHTML renders a driver.Event as an HTML fragment for SSE.
 func formatEventHTML(ev driver.Event) template.HTML {
 	ts := ev.Timestamp.Format("15:04:05")
+	icon := "&#9679;"
+	cssClass := "event-message"
 	msg := ev.Message
-	if msg == "" && ev.ToolCall != nil {
-		args, _ := json.Marshal(ev.ToolCall.Args)
-		msg = fmt.Sprintf("🔧 %s(%s)", ev.ToolCall.Name, string(args))
+
+	switch ev.Type {
+	case driver.EventThinking:
+		icon = "&#9670;"
+		cssClass = "event-thinking"
+	case driver.EventToolCall:
+		icon = "&#9881;"
+		cssClass = "event-tool"
+		if ev.ToolCall != nil {
+			msg = fmt.Sprintf(`<span class="tool-name">%s</span> %s`, ev.ToolCall.Name, formatArgs(ev.ToolCall.Args))
+		}
+	case driver.EventToolResult:
+		icon = "&#10003;"
+		cssClass = "event-tool"
+	case driver.EventError:
+		icon = "&#9888;"
+		cssClass = "event-error"
+		if ev.Error != "" {
+			msg = ev.Error
+		}
+	case driver.EventStateChange:
+		icon = "&#9889;"
+		cssClass = "event-state"
+	case driver.EventProgress:
+		icon = "&#9776;"
+		cssClass = "event-progress"
 	}
-	if msg == "" {
+
+	if msg == "" && ev.Type == driver.EventMessage {
+		msg = ev.Message
+	}
+	if msg == "" && ev.Type != driver.EventToolCall && ev.Type != driver.EventToolResult {
 		msg = string(ev.Type)
 	}
+
 	return template.HTML(fmt.Sprintf(
-		`<small>%s</small> &middot; <span>%s</span>`,
-		template.HTMLEscapeString(ts),
-		template.HTMLEscapeString(msg),
+		`<span class="ts">%s</span><span class="icon %s">%s</span><span class="content %s">%s</span>`,
+		ts, cssClass, icon, cssClass, msg,
 	))
+}
+
+// formatArgs formats tool call arguments as a compact string.
+func formatArgs(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(args))
+	for k, v := range args {
+		var s string
+		switch val := v.(type) {
+		case string:
+			if len(val) > 40 {
+				val = val[:37] + "..."
+			}
+			s = val
+		case float64:
+			s = fmt.Sprintf("%v", val)
+		default:
+			s = fmt.Sprintf("%v", val)
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", k, s))
+	}
+	return strings.Join(parts, ", ")
 }
