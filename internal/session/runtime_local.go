@@ -15,9 +15,8 @@ import (
 	"sync"
 
 	"github.com/JamieDF/agentjam/internal/agent/driver"
-	"github.com/JamieDF/agentjam/internal/agent/driver/mock"
-	"github.com/JamieDF/agentjam/internal/agent/driver/opencode"
 	"github.com/JamieDF/agentjam/internal/errs"
+	"github.com/JamieDF/agentjam/internal/mode"
 	"github.com/JamieDF/agentjam/internal/vcs"
 )
 
@@ -99,9 +98,8 @@ func (l *LocalRuntime) PrepareWorkspace(_ context.Context, r *Resolved) (string,
 	return wtDir, nil
 }
 
-// Start launches the driver pointing at the working dir. The driver kind
-// is selected by opts.DriverKind: "mock" uses the scripted fake-event
-// driver (for testing/demos); anything else uses OpenCode.
+// Start launches the driver via the driver registry.
+// The driver kind is selected by opts.DriverKind.
 func (l *LocalRuntime) Start(ctx context.Context, p *Prepared) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -110,29 +108,30 @@ func (l *LocalRuntime) Start(ctx context.Context, p *Prepared) error {
 		return errs.Wrap(errs.ErrAlreadyExists, "runtime already started")
 	}
 
-	var d driver.Driver
+	dir := p.WorkingDir
+	if dir == "" {
+		return errs.Wrap(errs.ErrInvalid, "local runtime: empty working dir")
+	}
 
-	if l.opts.DriverKind == "mock" {
-		d = mock.New(mock.Options{
-			ID:     "mock-" + l.opts.ID,
-			TaskID: l.opts.TaskID,
-			Mode:   l.r.Mode,
-		})
-	} else {
-		dir := p.WorkingDir
-		if dir == "" {
-			return errs.Wrap(errs.ErrInvalid, "local runtime: empty working dir")
-		}
-		var err error
-		d, err = opencode.New(opencode.Options{
-			Directory: dir,
-			Title:     fmt.Sprintf("agentjam-session-%s", l.opts.ID),
-			ID:        "session-" + l.opts.ID,
-			BaseURL:   opencodeBaseURLFromEnv(),
-		})
-		if err != nil {
-			return err
-		}
+	// Resolve mode file for drivers that need a system prompt (Pi, opencode).
+	modeFile, err := resolveModeFile(l.r.Mode)
+	if err != nil {
+		return fmt.Errorf("resolve mode file: %w", err)
+	}
+
+	kind := l.opts.DriverKind
+	if kind == "" {
+		kind = "pi"
+	}
+
+	d, err := driver.Default.Build(kind, driver.FactoryOptions{
+		ID:       "session-" + l.opts.ID,
+		Workdir:  dir,
+		ModeFile: modeFile,
+		TaskID:   l.opts.TaskID,
+	})
+	if err != nil {
+		return err
 	}
 
 	if err := d.Start(ctx); err != nil {
@@ -200,8 +199,34 @@ func (l *LocalRuntime) Cleanup(ctx context.Context) {
 
 // opencodeBaseURLFromEnv returns OPENCODE_BASE_URL or "" for SDK default.
 func opencodeBaseURLFromEnv() string {
-	if v := os.Getenv("OPENCODE_BASE_URL"); v != "" {
-		return v
+	return os.Getenv("OPENCODE_BASE_URL")
+}
+
+// resolveModeFile loads the mode markdown for the given mode name and
+// returns its on-disk path. Drivers that need a system prompt file
+// (Pi, opencode) pass this path as --system-prompt or equivalent.
+func resolveModeFile(modeName driver.Mode) (string, error) {
+	if modeName == "" {
+		return "", nil
 	}
-	return ""
+
+	// Look for modes in the bundled modes/ directory relative to the cwd,
+	// then fall back to ~/.agentjam/modes/.
+	loaderDir := filepath.Join("modes")
+	if _, err := os.Stat(loaderDir); err != nil {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			loaderDir = filepath.Join(home, ".agentjam", "modes")
+		}
+	}
+
+	loader, err := mode.NewLoader(loaderDir)
+	if err != nil {
+		return "", fmt.Errorf("create mode loader: %w", err)
+	}
+	m, err := loader.Load(string(modeName))
+	if err != nil {
+		return "", fmt.Errorf("load mode %q: %w", modeName, err)
+	}
+	return m.Path, nil
 }
