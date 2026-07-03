@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>agentjam — Agent Thread</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: oklch(9% 0.005 260);
+      --surface: oklch(14% 0.006 260);
+      --surface-raised: oklch(18% 0.008 260);
+      --fg: oklch(92% 0.003 260);
+      --muted: oklch(58% 0.012 260);
+      --border: oklch(22% 0.006 260);
+      --border-subtle: oklch(16% 0.004 260);
+      --running: oklch(72% 0.16 155);
+      --blocked: oklch(70% 0.14 65);
+      --assumed: oklch(76% 0.16 75);
+      --info: oklch(68% 0.12 235);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'DM Sans', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .mono { font-family: 'DM Mono', monospace; }
+
+    /* ── Header ── */
+    .header {
+      height: 52px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 16px;
+      background: var(--bg);
+      flex-shrink: 0;
+    }
+    .back-btn {
+      width: 30px; height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      color: var(--muted);
+      cursor: pointer;
+      border: 1px solid var(--border-subtle);
+      background: none;
+      transition: all 0.12s;
+    }
+    .back-btn:hover { background: var(--surface); color: var(--fg); }
+    .back-btn svg { width: 14px; height: 14px; }
+
+    .agent-identity {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .status-pip {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-pip.running { background: var(--running); box-shadow: 0 0 10px var(--running); animation: glow 2s ease-in-out infinite; }
+    .status-pip.blocked { background: var(--blocked); }
+    .status-pip.assumed { background: var(--assumed); }
+    @keyframes glow { 0%,100% { opacity: 1; box-shadow: 0 0 10px var(--running); } 50% { opacity: 0.6; box-shadow: 0 0 4px var(--running); } }
+
+    .agent-sid { font-size: 14px; font-weight: 600; font-family: 'DM Mono', monospace; }
+    .breadcrumb { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 6px; }
+    .breadcrumb svg { width: 12px; height: 12px; }
+    .breadcrumb-current { color: var(--fg); font-size: 13px; }
+
+    .header-right { margin-left: auto; display: flex; align-items: center; gap: 20px; }
+    .header-stats { display: flex; gap: 20px; font-size: 12px; color: var(--muted); }
+    .header-stat { display: flex; align-items: center; gap: 5px; }
+    .header-stat-val { color: var(--fg); font-weight: 500; font-family: 'DM Mono', monospace; font-size: 12px; }
+    .stat-sep { width: 1px; height: 16px; background: var(--border-subtle); }
+    .btn {
+      padding: 6px 14px;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .btn-assume {
+      background: oklch(76% 0.16 75 / 0.15);
+      color: var(--assumed);
+      border: 1px solid oklch(76% 0.16 75 / 0.3);
+    }
+    .btn-assume:hover { background: oklch(76% 0.16 75 / 0.25); }
+
+    /* ── Goal Bar ── */
+    .goal-bar {
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 14px 20px;
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .goal-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .goal-text { font-size: 14px; font-weight: 500; color: var(--fg); flex: 1; }
+    .goal-progress { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .progress-track { width: 120px; height: 4px; background: var(--border-subtle); border-radius: 99px; overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--running); border-radius: 99px; }
+    .progress-label { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); }
+    .goal-step-label { font-size: 11px; color: var(--running); font-weight: 500; }
+
+    /* ── Main layout ── */
+    .main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      overflow: hidden;
+    }
+
+    /* ── Thread Panel ── */
+    .thread-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-right: 1px solid var(--border-subtle);
+    }
+
+    /* View toggle */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 0 20px;
+      background: var(--bg);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      padding: 10px 16px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .view-tab:hover { color: var(--fg); }
+    .view-tab.active { color: var(--fg); border-bottom-color: var(--fg); }
+    .view-tab svg { width: 13px; height: 13px; }
+
+    /* Thread body */
+    .thread-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Step card */
+    .step-card {
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .step-card.completed { opacity: 0.7; }
+    .step-card.current { border-color: oklch(72% 0.16 155 / 0.4); box-shadow: 0 0 0 1px oklch(72% 0.16 155 / 0.1); }
+    .step-card.current::before {
+      content: '';
+      display: block;
+      height: 2px;
+      background: linear-gradient(90deg, var(--running), transparent);
+    }
+
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+    }
+    .step-num {
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .step-num.done { background: oklch(72% 0.16 155 / 0.2); color: var(--running); }
+    .step-num.active { background: var(--running); color: var(--bg); }
+    .step-num.pending { background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-subtle); }
+    .step-title { font-size: 13px; font-weight: 500; flex: 1; }
+    .step-badge {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 99px;
+      font-weight: 500;
+    }
+    .badge-thinking { background: oklch(68% 0.12 235 / 0.15); color: var(--info); }
+    .badge-writing { background: oklch(72% 0.16 155 / 0.15); color: var(--running); }
+    .badge-review { background: oklch(70% 0.14 65 / 0.15); color: var(--blocked); }
+
+    .step-body { padding: 0 14px 14px; }
+    .step-content {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.6;
+      background: var(--bg);
+      border: 1px solid var(--border-subtle);
+      border-radius: 7px;
+      padding: 10px 12px;
+    }
+    .step-content code {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      background: var(--surface-raised);
+      padding: 1px 5px;
+      border-radius: 4px;
+      color: var(--fg);
+    }
+    .step-content pre {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      background: var(--surface-raised);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 10px;
+      margin-top: 8px;
+      overflow-x: auto;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .diff-add { color: var(--running); }
+    .diff-remove { color: var(--blocked); }
+
+    .step-tool-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .tool-call {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      background: var(--surface-raised);
+      border: 1px solid var(--border-subtle);
+      padding: 2px 7px;
+      border-radius: 4px;
+      color: var(--fg);
+    }
+
+    /* ── Context Sidebar ── */
+    .context-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--surface);
+    }
+    .context-header {
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .context-body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+
+    .context-section-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .file-tree { display: flex; flex-direction: column; gap: 1px; }
+    .file-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 5px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .file-item:hover { background: var(--surface-raised); }
+    .file-item.active { background: oklch(68% 0.12 235 / 0.12); }
+    .file-item.modified { color: var(--running); }
+    .file-item svg { width: 11px; height: 11px; flex-shrink: 0; }
+    .file-item span { flex: 1; }
+    .file-dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+    }
+    .file-dot.added { background: var(--running); }
+    .file-dot.modified { background: var(--assumed); }
+
+    .context-card {
+      background: var(--bg);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .context-card-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--fg);
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .context-card-body { font-size: 11px; color: var(--muted); line-height: 1.5; }
+    .context-card-body code { font-family: 'DM Mono', monospace; font-size: 10px; background: var(--surface-raised); padding: 1px 4px; border-radius: 3px; color: var(--fg); }
+
+    .token-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .token-track { flex: 1; height: 4px; background: var(--border-subtle); border-radius: 99px; overflow: hidden; }
+    .token-fill { height: 100%; background: var(--info); border-radius: 99px; }
+    .token-label { font-family: 'DM Mono', monospace; font-size: 10px; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <button class="back-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <div class="agent-identity">
+      <div class="status-pip running"></div>
+      <span class="agent-sid">cli-a7f2</span>
+    </div>
+    <div class="breadcrumb">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      api-service
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      auth middleware
+    </div>
+    <span class="breadcrumb-current">Refactor OAuth 2.0 PKCE flow</span>
+    <div class="header-right">
+      <div class="header-stats">
+        <div class="header-stat">
+          <span>Uptime</span>
+          <span class="header-stat-val">12m 34s</span>
+        </div>
+        <div class="stat-sep"></div>
+        <div class="header-stat">
+          <span>Tokens</span>
+          <span class="header-stat-val">1,247</span>
+        </div>
+        <div class="stat-sep"></div>
+        <div class="header-stat">
+          <span>Est. cost</span>
+          <span class="header-stat-val" style="color: var(--assumed);">$0.012</span>
+        </div>
+      </div>
+      <button class="btn btn-assume">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>
+        Assume control
+      </button>
+    </div>
+  </div>
+
+  <!-- Goal Bar -->
+  <div class="goal-bar">
+    <span class="goal-label">Goal</span>
+    <span class="goal-text">Refactor auth middleware to support OAuth 2.0 PKCE flow</span>
+    <div class="goal-progress">
+      <span class="goal-step-label">Step 3 / 5</span>
+      <div class="progress-track">
+        <div class="progress-fill" style="width: 60%;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- Thread Panel -->
+    <div class="thread-panel">
+
+      <!-- View Toggle -->
+      <div class="view-tabs">
+        <div class="view-tab active">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Progress
+        </div>
+        <div class="view-tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          Stream
+        </div>
+      </div>
+
+      <!-- Progress Thread -->
+      <div class="thread-body">
+
+        <!-- Step 1 — completed -->
+        <div class="step-card completed">
+          <div class="step-header">
+            <div class="step-num done">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <span class="step-title">Audit existing auth middleware</span>
+          </div>
+          <div class="step-body">
+            <div class="step-content">
+              Found 3 auth handlers: <code>BasicAuth</code>, <code>TokenAuth</code>, <code>OAuth2</code>. PKCE support is missing entirely — need to extend the <code>OAuth2</code> handler.
+            </div>
+            <div class="step-tool-row">
+              <span class="tool-call">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                grep -r "OAuth2"
+              </span>
+              <span>3 files examined · 12m 04s</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2 — completed -->
+        <div class="step-card completed">
+          <div class="step-header">
+            <div class="step-num done">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <span class="step-title">Design PKCE struct and interfaces</span>
+          </div>
+          <div class="step-body">
+            <div class="step-content">
+              Defined <code>PKCEChallenge</code> struct with <code>code_verifier</code>, <code>code_challenge</code>, and <code>method</code> (S256). Updated <code>OAuth2Config</code> to include PKCE flags.
+            </div>
+            <div class="step-tool-row">
+              <span class="tool-call">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                src/middleware/pkce.go
+              </span>
+              <span>Created · 12m 14s</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3 — current / active -->
+        <div class="step-card current">
+          <div class="step-header">
+            <div class="step-num active">3</div>
+            <span class="step-title">Integrate PKCE into OAuth2 handler</span>
+            <span class="step-badge badge-writing">writing</span>
+          </div>
+          <div class="step-body">
+            <div class="step-content">
+              Modifying <code>OAuth2Handler</code> to validate PKCE challenges on callback. Adding S256 method validation, storing <code>code_verifier</code> in session between auth request and callback.
+            </div>
+            <pre><span class="diff-remove">- // OAuth2Config holds the OAuth2 settings</span>
+<span class="diff-remove">- type OAuth2Config struct {</span>
+<span class="diff-add">+ // PKCEConfig holds PKCE challenge parameters</span>
+<span class="diff-add">+ type PKCEConfig struct {</span>
+<span class="diff-add">+   CodeVerifier  string</span>
+<span class="diff-add">+   CodeChallenge string</span>
+<span class="diff-add">+   Method        string // "S256" or "plain"</span>
+<span class="diff-add">+ }</span>
+<span class="diff-add">+</span>
+<span class="diff-add">+ type OAuth2Config struct {</span>
+<span class="diff-add">+   PKCE bool</span>
+<span class="diff-add">+   PKCEConfig</span></pre>
+            <div class="step-tool-row">
+              <span class="tool-call">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                src/middleware/auth.go
+              </span>
+              <span>In progress…</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4 — pending -->
+        <div class="step-card">
+          <div class="step-header">
+            <div class="step-num pending">4</div>
+            <span class="step-title">Add integration tests for PKCE flow</span>
+          </div>
+          <div class="step-body">
+            <div class="step-content" style="color: var(--muted); font-style: italic;">
+              Not started — waiting for step 3 to complete
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 5 — pending -->
+        <div class="step-card">
+          <div class="step-header">
+            <div class="step-num pending">5</div>
+            <span class="step-title">Update auth middleware docs</span>
+          </div>
+          <div class="step-body">
+            <div class="step-content" style="color: var(--muted); font-style: italic;">
+              Not started
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Context Sidebar -->
+    <div class="context-panel">
+      <div class="context-header">
+        <span>Context</span>
+        <span style="font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0;">auto-updating</span>
+      </div>
+      <div class="context-body">
+
+        <div class="context-section-label">Files in scope</div>
+        <div class="file-tree">
+          <div class="file-item modified">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span>src/middleware/auth.go</span>
+            <div class="file-dot modified"></div>
+          </div>
+          <div class="file-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span>src/middleware/pkce.go</span>
+            <div class="file-dot added"></div>
+          </div>
+          <div class="file-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span>src/middleware/oauth2_test.go</span>
+          </div>
+          <div class="file-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span>docs/auth.md</span>
+          </div>
+        </div>
+
+        <div class="context-section-label" style="margin-top: 6px;">Current thinking</div>
+        <div class="context-card">
+          <div class="context-card-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--info)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            open question
+          </div>
+          <div class="context-card-body">
+            Should <code>code_verifier</code> be stored in encrypted cookie or server-side session? Current impl uses session — may need to add <code>SecureCookie</code> flag.
+          </div>
+        </div>
+
+        <div class="context-section-label" style="margin-top: 6px;">Recent tool calls</div>
+        <div style="display: flex; flex-direction: column; gap: 3px;">
+          <div style="display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); padding: 4px 0;">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--running)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            <span class="mono" style="font-size: 10px;">WriteFile</span>
+            <span>pkce.go</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); padding: 4px 0;">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--running)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            <span class="mono" style="font-size: 10px;">Grep</span>
+            <span>OAuth2Handler</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); padding: 4px 0;">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--running)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            <span class="mono" style="font-size: 10px;">ReadFile</span>
+            <span>auth.go</span>
+          </div>
+        </div>
+
+        <div class="context-section-label" style="margin-top: 6px;">Session usage</div>
+        <div class="context-card">
+          <div class="token-bar">
+            <span>Tokens</span>
+            <div class="token-track">
+              <div class="token-fill" style="width: 31%;"></div>
+            </div>
+            <span class="token-label">1,247 / 4k</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+</body>
+</html>

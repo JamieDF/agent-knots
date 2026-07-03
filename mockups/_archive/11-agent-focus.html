@@ -1,0 +1,1161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>agentjam — Agent Focus</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: oklch(9% 0.005 260);
+      --surface: oklch(14% 0.006 260);
+      --surface-raised: oklch(18% 0.008 260);
+      --fg: oklch(92% 0.003 260);
+      --muted: oklch(58% 0.012 260);
+      --border: oklch(22% 0.006 260);
+      --border-subtle: oklch(16% 0.004 260);
+      --running: oklch(72% 0.16 155);
+      --blocked: oklch(70% 0.14 65);
+      --assumed: oklch(76% 0.16 75);
+      --info: oklch(68% 0.12 235);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'DM Sans', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .mono { font-family: 'DM Mono', monospace; }
+
+    /* ══════════ HEADER ══════════ */
+    .focus-header {
+      height: 52px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 14px;
+      background: var(--bg);
+      flex-shrink: 0;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    body[data-driving="true"] .focus-header {
+      background: oklch(76% 0.16 75 / 0.05);
+      border-bottom-color: oklch(76% 0.16 75 / 0.18);
+    }
+    .back-btn {
+      width: 30px; height: 30px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 6px;
+      color: var(--muted);
+      cursor: pointer;
+      border: 1px solid var(--border-subtle);
+      background: none;
+      transition: all 0.12s;
+    }
+    .back-btn:hover { background: var(--surface); color: var(--fg); }
+    .back-btn svg { width: 14px; height: 14px; }
+
+    .agent-identity {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .status-pip {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-pip.running { background: var(--running); box-shadow: 0 0 10px var(--running); animation: glow 2s ease-in-out infinite; }
+    .status-pip.assumed { background: var(--assumed); }
+    @keyframes glow { 0%,100% { opacity: 1; box-shadow: 0 0 10px var(--running); } 50% { opacity: 0.6; box-shadow: 0 0 4px var(--running); } }
+
+    .agent-sid { font-size: 14px; font-weight: 600; font-family: 'DM Mono', monospace; }
+
+    /* Mode pill — compact "Watching" / "Driving" indicator */
+    .mode-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px 3px 7px;
+      border-radius: 99px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      border: 1px solid var(--border-subtle);
+      background: var(--surface);
+      color: var(--muted);
+    }
+    .mode-pill .pill-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--running);
+      box-shadow: 0 0 6px var(--running);
+    }
+    body[data-driving="true"] .mode-pill {
+      background: oklch(76% 0.16 75 / 0.1);
+      border-color: oklch(76% 0.16 75 / 0.3);
+      color: var(--assumed);
+    }
+    body[data-driving="true"] .mode-pill .pill-dot {
+      background: var(--assumed);
+      box-shadow: 0 0 6px var(--assumed);
+      animation: none;
+    }
+
+    .breadcrumb { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 6px; }
+    .breadcrumb svg { width: 12px; height: 12px; }
+    .breadcrumb-current { color: var(--fg); font-size: 13px; }
+
+    .header-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+    .header-stats { display: flex; gap: 16px; font-size: 12px; color: var(--muted); }
+    .header-stat { display: flex; align-items: center; gap: 5px; }
+    .header-stat-val { color: var(--fg); font-weight: 500; font-family: 'DM Mono', monospace; font-size: 12px; }
+    .stat-sep { width: 1px; height: 16px; background: var(--border-subtle); }
+
+    .btn {
+      padding: 6px 14px;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .btn svg { width: 13px; height: 13px; }
+    .btn-assume {
+      background: oklch(76% 0.16 75 / 0.15);
+      color: var(--assumed);
+      border: 1px solid oklch(76% 0.16 75 / 0.3);
+    }
+    .btn-assume:hover { background: oklch(76% 0.16 75 / 0.25); }
+    .btn-relinquish {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border-subtle);
+    }
+    .btn-relinquish:hover { background: var(--surface); color: var(--fg); }
+
+    /* ══════════ GOAL BAR ══════════ */
+    .goal-bar {
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 12px 20px;
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    body[data-driving="true"] .goal-bar {
+      background: oklch(76% 0.16 75 / 0.04);
+      border-bottom-color: oklch(76% 0.16 75 / 0.15);
+    }
+    .goal-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .goal-text { font-size: 13px; font-weight: 500; color: var(--fg); flex: 1; }
+    .goal-mode-hint {
+      font-size: 10px;
+      color: var(--assumed);
+      padding: 2px 8px;
+      border-radius: 99px;
+      background: oklch(76% 0.16 75 / 0.1);
+      border: 1px solid oklch(76% 0.16 75 / 0.2);
+      display: none;
+      flex-shrink: 0;
+    }
+    body[data-driving="true"] .goal-mode-hint { display: inline-block; }
+    .goal-progress { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .progress-track { width: 110px; height: 4px; background: var(--border-subtle); border-radius: 99px; overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--running); border-radius: 99px; }
+    .goal-step-label { font-size: 11px; color: var(--running); font-weight: 500; }
+
+    /* ══════════ MAIN LAYOUT ══════════ */
+    .focus-main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 260px 1fr 320px;
+      overflow: hidden;
+    }
+
+    /* ── Agent Context (left) ── */
+    .agent-context {
+      border-right: 1px solid var(--border-subtle);
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+    .context-section {
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .context-section-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .status-pip.paused { background: var(--assumed); animation: blink 1.8s ease-in-out infinite; }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .status-text { font-weight: 500; }
+    body[data-driving="false"] .status-text { color: var(--running); }
+    body[data-driving="true"] .status-text { color: var(--assumed); }
+    .status-helper {
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .context-item {
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+    .context-item:last-child { margin-bottom: 0; }
+    .context-item-label { color: var(--muted); margin-bottom: 3px; font-size: 11px; }
+    .context-item-value { color: var(--fg); line-height: 1.4; }
+    .context-item-value code {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      background: var(--surface-raised);
+      padding: 1px 4px;
+      border-radius: 3px;
+      color: var(--fg);
+    }
+
+    .thinking-chain { padding: 12px 14px; }
+    .thought-bubble {
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+    .thought-bubble:last-child { margin-bottom: 0; }
+    .thought-bubble.active {
+      border-color: oklch(76% 0.16 75 / 0.3);
+      background: oklch(76% 0.16 75 / 0.06);
+    }
+    .thought-label {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--info);
+      margin-bottom: 4px;
+    }
+    .thought-bubble.active .thought-label { color: var(--assumed); }
+    .thought-bubble code {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      background: var(--surface-raised);
+      padding: 1px 4px;
+      border-radius: 3px;
+      color: var(--fg);
+    }
+
+    /* ══════════ CHAT (center) ══════════ */
+    .operator-chat {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .chat-header {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    .chat-title { font-size: 13px; font-weight: 600; }
+    .chat-subtitle {
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .chat-subtitle .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--running);
+      box-shadow: 0 0 5px var(--running);
+    }
+    body[data-driving="true"] .chat-subtitle .dot {
+      background: var(--assumed);
+      box-shadow: 0 0 5px var(--assumed);
+      animation: blink 1.8s ease-in-out infinite;
+    }
+    .chat-mode-toggle {
+      margin-left: auto;
+      display: flex;
+      background: var(--surface);
+      border-radius: 7px;
+      padding: 2px;
+      gap: 2px;
+    }
+    .chat-mode-btn {
+      padding: 4px 10px;
+      font-size: 11px;
+      border-radius: 5px;
+      cursor: pointer;
+      color: var(--muted);
+      border: none;
+      background: none;
+      font-weight: 500;
+    }
+    .chat-mode-btn.active { background: var(--surface-raised); color: var(--fg); }
+
+    /* Body holds step cards + messages */
+    .chat-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    /* Step card (in stream) */
+    .step-card {
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .step-card.completed { opacity: 0.7; }
+    .step-card.current {
+      border-color: oklch(72% 0.16 155 / 0.4);
+      box-shadow: 0 0 0 1px oklch(72% 0.16 155 / 0.1);
+    }
+    .step-card.current::before {
+      content: '';
+      display: block;
+      height: 2px;
+      background: linear-gradient(90deg, var(--running), transparent);
+    }
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+    }
+    .step-num {
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .step-num.done { background: oklch(72% 0.16 155 / 0.2); color: var(--running); }
+    .step-num.active { background: var(--running); color: var(--bg); }
+    .step-num.pending { background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-subtle); }
+    .step-title { font-size: 13px; font-weight: 500; flex: 1; }
+    .step-time {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: var(--muted);
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .step-card.completed .step-time { opacity: 0.7; }
+    .step-badge {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 99px;
+      font-weight: 500;
+    }
+    .badge-writing { background: oklch(72% 0.16 155 / 0.15); color: var(--running); }
+    .step-body { padding: 0 14px 14px; }
+    .step-content {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.6;
+      background: var(--bg);
+      border: 1px solid var(--border-subtle);
+      border-radius: 7px;
+      padding: 10px 12px;
+    }
+    .step-content code {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      background: var(--surface-raised);
+      padding: 1px 5px;
+      border-radius: 4px;
+      color: var(--fg);
+    }
+    .step-content pre {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      background: var(--surface-raised);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 10px;
+      margin-top: 8px;
+      overflow-x: auto;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .diff-add { color: var(--running); }
+    .diff-remove { color: var(--blocked); }
+    .step-tool-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .tool-call {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      background: var(--surface-raised);
+      border: 1px solid var(--border-subtle);
+      padding: 2px 7px;
+      border-radius: 4px;
+      color: var(--fg);
+    }
+
+    /* Chat messages */
+    .msg { display: flex; gap: 10px; }
+    .msg.you { flex-direction: row-reverse; }
+    .msg-avatar {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .msg-avatar.you { background: oklch(76% 0.16 75 / 0.2); color: var(--assumed); }
+    .msg-avatar.agent { background: oklch(68% 0.12 235 / 0.2); color: var(--info); }
+    .msg-bubble-wrap { display: flex; flex-direction: column; gap: 3px; max-width: 75%; }
+    .msg.you .msg-bubble-wrap { align-items: flex-end; }
+    .msg-label { font-size: 10px; color: var(--muted); }
+    .msg-bubble {
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .msg.you .msg-bubble {
+      background: oklch(76% 0.16 75 / 0.12);
+      border: 1px solid oklch(76% 0.16 75 / 0.2);
+      color: var(--fg);
+      border-radius: 12px 12px 4px 12px;
+    }
+    .msg.agent .msg-bubble {
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      color: var(--fg);
+      border-radius: 12px 12px 12px 4px;
+    }
+    .msg-bubble code {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      background: var(--surface-raised);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
+    /* Chat input — always present, blocked when watching */
+    .chat-input-area {
+      border-top: 1px solid var(--border-subtle);
+      padding: 12px 16px;
+      flex-shrink: 0;
+      position: relative;
+    }
+    .input-hint {
+      font-size: 10px;
+      color: var(--muted);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .input-hint code {
+      font-family: 'DM Mono', monospace;
+      background: var(--surface-raised);
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 10px;
+    }
+    body[data-driving="true"] .input-hint .hint-watch { display: none; }
+    body[data-driving="false"] .input-hint .hint-drive { display: none; }
+
+    .input-row { display: flex; gap: 8px; align-items: flex-end; position: relative; }
+    .chat-input {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: var(--fg);
+      font-family: 'DM Sans', system-ui, sans-serif;
+      font-size: 13px;
+      resize: none;
+      min-height: 42px;
+      max-height: 120px;
+      outline: none;
+      transition: border-color 0.15s, opacity 0.15s;
+    }
+    body[data-driving="true"] .chat-input:focus { border-color: oklch(76% 0.16 75 / 0.4); }
+    .chat-input::placeholder { color: var(--muted); }
+    body[data-driving="false"] .chat-input {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .send-btn {
+      width: 38px; height: 38px;
+      border-radius: 9px;
+      background: oklch(76% 0.16 75 / 0.15);
+      border: 1px solid oklch(76% 0.16 75 / 0.3);
+      color: var(--assumed);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.15s, opacity 0.15s;
+    }
+    body[data-driving="true"] .send-btn:hover { background: oklch(76% 0.16 75 / 0.25); }
+    body[data-driving="false"] .send-btn {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .send-btn svg { width: 15px; height: 15px; }
+
+    /* Blocked overlay — sits over the input row, clickable to assume */
+    .input-blocked-overlay {
+      position: absolute;
+      inset: 28px 16px 12px 16px;
+      border-radius: 10px;
+      background: oklch(9% 0.005 260 / 0.72);
+      backdrop-filter: blur(2px);
+      border: 1px dashed oklch(76% 0.16 75 / 0.35);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+      z-index: 2;
+    }
+    .input-blocked-overlay:hover {
+      background: oklch(76% 0.16 75 / 0.08);
+      border-color: oklch(76% 0.16 75 / 0.55);
+    }
+    body[data-driving="false"] .input-blocked-overlay { display: flex; }
+    body[data-driving="true"] .input-blocked-overlay { display: none; }
+    .overlay-icon {
+      width: 26px; height: 26px;
+      border-radius: 50%;
+      background: oklch(76% 0.16 75 / 0.15);
+      border: 1px solid oklch(76% 0.16 75 / 0.3);
+      color: var(--assumed);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .overlay-icon svg { width: 13px; height: 13px; }
+    .overlay-text {
+      font-size: 12px;
+      color: var(--fg);
+      font-weight: 500;
+    }
+    .overlay-text .accent {
+      color: var(--assumed);
+      font-weight: 600;
+    }
+    .overlay-shortcut {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: var(--muted);
+      background: var(--surface-raised);
+      border: 1px solid var(--border-subtle);
+      padding: 1px 6px;
+      border-radius: 4px;
+      margin-left: 4px;
+    }
+
+    /* ══════════ WORKING CONTEXT (right) ══════════ */
+    .working-context {
+      border-left: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: var(--surface);
+    }
+    .wc-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .wc-tab {
+      padding: 3px 10px;
+      font-size: 11px;
+      border-radius: 5px;
+      cursor: pointer;
+      color: var(--muted);
+      font-weight: 500;
+      transition: all 0.12s;
+    }
+    .wc-tab:hover { color: var(--fg); }
+    .wc-tab.active { background: var(--surface-raised); color: var(--fg); }
+
+    .wc-body {
+      flex: 1;
+      overflow: auto;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+    .file-header {
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--surface);
+      position: sticky;
+      top: 0;
+    }
+    .file-path { font-size: 11px; color: var(--fg); flex: 1; }
+    .file-badge {
+      font-size: 9px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      background: oklch(70% 0.14 65 / 0.15);
+      color: var(--blocked);
+    }
+    .file-code {
+      padding: 12px 14px;
+      color: var(--muted);
+      white-space: pre;
+    }
+    .line-num { color: var(--border-subtle); user-select: none; width: 30px; display: inline-block; text-align: right; margin-right: 12px; }
+    .code-line { display: block; }
+    .code-line.highlight { background: oklch(76% 0.16 75 / 0.06); }
+    .kw { color: oklch(72% 0.16 155); }
+    .fn { color: oklch(68% 0.12 235); }
+    .str { color: oklch(70% 0.14 65); }
+    .comment { color: oklch(50% 0.01 260); font-style: italic; }
+    .cursor {
+      display: inline-block;
+      width: 2px; height: 14px;
+      background: var(--assumed);
+      vertical-align: middle;
+      animation: blink-cursor 1s step-end infinite;
+    }
+    @keyframes blink-cursor { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
+</head>
+<body data-driving="false">
+
+  <!-- ══════════ HEADER ══════════ -->
+  <header class="focus-header">
+    <a href="10-overview.html" class="back-btn" aria-label="Back to overview" data-od-id="back-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </a>
+    <div class="agent-identity" data-od-id="agent-identity">
+      <div class="status-pip running" id="agent-pip"></div>
+      <span class="agent-sid">cli-a7f2</span>
+    </div>
+    <div class="mode-pill" data-od-id="mode-pill" title="Your current mode of engagement with this agent">
+      <span class="pill-dot"></span>
+      <span id="mode-pill-label">Watching</span>
+    </div>
+    <div class="breadcrumb" data-od-id="breadcrumb">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      api-service
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      auth middleware
+    </div>
+    <span class="breadcrumb-current">Refactor OAuth 2.0 PKCE flow</span>
+
+    <div class="header-right">
+      <div class="header-stats">
+        <div class="header-stat">
+          <span>Uptime</span>
+          <span class="header-stat-val">12m 34s</span>
+        </div>
+        <div class="stat-sep"></div>
+        <div class="header-stat">
+          <span>Tokens</span>
+          <span class="header-stat-val">1,247</span>
+        </div>
+        <div class="stat-sep"></div>
+        <div class="header-stat">
+          <span>Est. cost</span>
+          <span class="header-stat-val" style="color: var(--assumed);">$0.012</span>
+        </div>
+      </div>
+
+      <button class="btn btn-assume" id="action-btn" data-od-id="action-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>
+        <span id="action-label">Assume control</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ══════════ GOAL BAR ══════════ -->
+  <div class="goal-bar" data-od-id="goal-bar">
+    <span class="goal-label">Goal</span>
+    <span class="goal-text" id="goal-text">Refactor auth middleware to support OAuth 2.0 PKCE flow</span>
+    <span class="goal-mode-hint">paused — waiting for your input</span>
+    <div class="goal-progress">
+      <span class="goal-step-label">Step 3 / 5</span>
+      <div class="progress-track">
+        <div class="progress-fill" style="width: 60%;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ MAIN ══════════ -->
+  <div class="focus-main">
+
+    <!-- ── Agent Context (left) ── -->
+    <aside class="agent-context" data-od-id="agent-context">
+      <div class="context-section">
+        <div class="context-section-label">Agent status</div>
+        <div class="status-row">
+          <div class="status-pip paused" id="agent-context-pip"></div>
+          <span class="status-text" id="agent-context-status">Running autonomously</span>
+        </div>
+        <div class="status-helper" id="agent-context-helper">
+          The agent is working through its plan. You'll see updates here as it makes progress.
+        </div>
+      </div>
+
+      <div class="context-section">
+        <div class="context-section-label">Goal</div>
+        <div class="context-item">
+          <div class="context-item-value">Refactor auth middleware to support OAuth 2.0 PKCE flow</div>
+        </div>
+        <div class="context-item">
+          <div class="context-item-label">Progress</div>
+          <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+            <div style="flex: 1; height: 4px; background: var(--border-subtle); border-radius: 99px; overflow: hidden;">
+              <div style="width: 60%; height: 100%; background: var(--running); border-radius: 99px;"></div>
+            </div>
+            <span class="mono" style="font-size: 10px; color: var(--muted);">3 / 5</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="thinking-chain">
+        <div class="context-section-label">Recent reasoning</div>
+        <div class="thought-bubble">
+          <div class="thought-label">Reasoning</div>
+          Adding S256 method validation. <code>code_verifier</code> needs to survive the redirect roundtrip — checking what session middleware is wired up.
+        </div>
+        <div class="thought-bubble active">
+          <div class="thought-label">Blocked at</div>
+          Where should <code>code_verifier</code> live across the redirect — encrypted cookie or server-side session? Both work; need operator's call before continuing.
+        </div>
+      </div>
+
+      <div class="context-section">
+        <div class="context-section-label">Recent tool calls</div>
+        <div style="display: flex; flex-direction: column; gap: 3px;">
+          <div style="display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); padding: 4px 0;">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--running)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            <span class="mono" style="font-size: 10px;">WriteFile</span>
+            <span>pkce.go</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); padding: 4px 0;">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--running)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            <span class="mono" style="font-size: 10px;">Grep</span>
+            <span>OAuth2Handler</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); padding: 4px 0;">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--running)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+            <span class="mono" style="font-size: 10px;">ReadFile</span>
+            <span>auth.go</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="context-section">
+        <div class="context-section-label">Session usage</div>
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted);">
+          <span>Tokens</span>
+          <div style="flex: 1; height: 4px; background: var(--border-subtle); border-radius: 99px; overflow: hidden;">
+            <div style="width: 31%; height: 100%; background: var(--info); border-radius: 99px;"></div>
+          </div>
+          <span class="mono" style="font-size: 10px;">1,247 / 4k</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── Chat / Stream (center) ── -->
+    <section class="operator-chat" data-od-id="operator-chat">
+      <div class="chat-header">
+        <span class="chat-title">Agent thread</span>
+        <span class="chat-subtitle">
+          <span class="dot"></span>
+          <span id="chat-subtitle-text">Agent is working on step 3</span>
+        </span>
+        <div class="chat-mode-toggle" role="tablist">
+          <button class="chat-mode-btn active">Chat</button>
+          <button class="chat-mode-btn">Command</button>
+          <button class="chat-mode-btn">Review</button>
+        </div>
+      </div>
+
+      <div class="chat-body" data-od-id="chat-body">
+
+        <!-- Step 1 — completed -->
+        <div class="step-card completed" data-od-id="step-1">
+          <div class="step-header">
+            <div class="step-num done">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <span class="step-title">Audit existing auth middleware</span>
+            <span class="step-time">12:32:10</span>
+          </div>
+          <div class="step-body">
+            <div class="step-content">
+              Found 3 auth handlers: <code>BasicAuth</code>, <code>TokenAuth</code>, <code>OAuth2</code>. PKCE support is missing entirely — need to extend the <code>OAuth2</code> handler.
+            </div>
+            <div class="step-tool-row">
+              <span class="tool-call">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                grep -r "OAuth2"
+              </span>
+              <span>3 files examined · 12m 04s</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2 — completed -->
+        <div class="step-card completed" data-od-id="step-2">
+          <div class="step-header">
+            <div class="step-num done">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <span class="step-title">Design PKCE struct and interfaces</span>
+            <span class="step-time">12:32:50</span>
+          </div>
+          <div class="step-body">
+            <div class="step-content">
+              Defined <code>PKCEChallenge</code> struct with <code>code_verifier</code>, <code>code_challenge</code>, and <code>method</code> (S256). Updated <code>OAuth2Config</code> to include PKCE flags.
+            </div>
+            <div class="step-tool-row">
+              <span class="tool-call">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                src/middleware/pkce.go
+              </span>
+              <span>Created · 12m 14s</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Agent asks about storage — 12:33:44, between step 2 and step 3 -->
+        <div class="msg agent" data-od-id="agent-ask-storage">
+          <div class="msg-avatar agent">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+          <div class="msg-bubble-wrap">
+            <span class="msg-label">agent — 12:33:44</span>
+            <div class="msg-bubble">
+              I've finished steps 1 and 2 (audit + struct design). Before I wire PKCE into the OAuth2 handler, I need a call on storage:
+              <br><br>
+              <code>encrypted cookie</code> — stateless, simpler, ~150-byte payload
+              <br><br>
+              <code>server-side session</code> — easier to revoke, but ties us to a session store
+              <br><br>
+              Which way for the auth middleware?
+            </div>
+          </div>
+        </div>
+
+        <!-- You reply — 12:34:02, unblocks step 3 -->
+        <div class="msg you" id="you-msg" data-od-id="you-msg">
+          <div class="msg-avatar you">Y</div>
+          <div class="msg-bubble-wrap">
+            <span class="msg-label">you — 12:34:02</span>
+            <div class="msg-bubble">
+              Server-side session — we already have redis wired up, and I want to be able to revoke mid-flow if a token looks suspicious.
+              <br><br>
+              Add a TTL of 10 minutes on the verifier entry.
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3 — current -->
+        <div class="step-card current" data-od-id="step-3">
+          <div class="step-header">
+            <div class="step-num active">3</div>
+            <span class="step-title">Integrate PKCE into OAuth2 handler</span>
+            <span class="step-badge badge-writing">writing</span>
+            <span class="step-time">12:34:08</span>
+          </div>
+          <div class="step-body">
+            <div class="step-content">
+              Modifying <code>OAuth2Handler</code> to validate PKCE challenges on callback. Adding S256 method validation, storing <code>code_verifier</code> in session between auth request and callback (per your call: server-side, 10-minute TTL).
+            </div>
+            <pre><span class="diff-remove">- // OAuth2Config holds the OAuth2 settings</span>
+<span class="diff-remove">- type OAuth2Config struct {</span>
+<span class="diff-add">+ // PKCEConfig holds PKCE challenge parameters</span>
+<span class="diff-add">+ type PKCEConfig struct {</span>
+<span class="diff-add">+   CodeVerifier  string</span>
+<span class="diff-add">+   CodeChallenge string</span>
+<span class="diff-add">+   Method        string // "S256" or "plain"</span>
+<span class="diff-add">+ }</span>
+<span class="diff-add">+</span>
+<span class="diff-add">+ type OAuth2Config struct {</span>
+<span class="diff-add">+   PKCE bool</span>
+<span class="diff-add">+   PKCEConfig</span></pre>
+            <div class="step-tool-row">
+              <span class="tool-call">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                src/middleware/auth.go
+              </span>
+              <span>In progress…</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4 — pending -->
+        <div class="step-card" data-od-id="step-4">
+          <div class="step-header">
+            <div class="step-num pending">4</div>
+            <span class="step-title">Add integration tests for PKCE flow</span>
+            <span class="step-time">—</span>
+          </div>
+          <div class="step-body">
+            <div class="step-content" style="color: var(--muted); font-style: italic;">
+              Not started — waiting for step 3 to complete
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 5 — pending -->
+        <div class="step-card" data-od-id="step-5">
+          <div class="step-header">
+            <div class="step-num pending">5</div>
+            <span class="step-title">Update auth middleware docs</span>
+            <span class="step-time">—</span>
+          </div>
+          <div class="step-body">
+            <div class="step-content" style="color: var(--muted); font-style: italic;">
+              Not started
+            </div>
+          </div>
+        </div>
+
+        </div>
+
+      <div class="chat-input-area" data-od-id="chat-input-area">
+        <div class="input-hint">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/></svg>
+          <span class="hint-watch">Agent is running. You can keep watching, or step in.</span>
+          <span class="hint-drive">Agent is paused. Press <code>Tab</code> to switch to command mode.</span>
+        </div>
+        <div class="input-row">
+          <textarea class="chat-input" id="chat-input" placeholder="Tell the agent what to do next…" rows="1"></textarea>
+          <button class="send-btn" id="send-btn" aria-label="Send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+          <div class="input-blocked-overlay" id="blocked-overlay" role="button" tabindex="0" data-od-id="blocked-overlay">
+            <div class="overlay-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/><path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>
+            </div>
+            <div class="overlay-text">
+              Click to <span class="accent">assume control</span> and direct the agent
+            </div>
+            <span class="overlay-shortcut">A</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Working Context (right) ── -->
+    <aside class="working-context" data-od-id="working-context">
+      <div class="wc-header">
+        <span style="font-size: 11px; font-weight: 600;">Working context</span>
+        <div style="margin-left: 8px; display: flex; gap: 4px;">
+          <div class="wc-tab active">File</div>
+          <div class="wc-tab">Terminal</div>
+          <div class="wc-tab">Diff</div>
+        </div>
+      </div>
+      <div class="wc-body">
+        <div class="file-header">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span class="file-path">src/middleware/auth.go</span>
+          <span class="file-badge">modified</span>
+        </div>
+        <div class="file-code">
+<span class="code-line"><span class="line-num"> 1</span><span class="comment">// OAuth2 + PKCE auth handler</span></span>
+<span class="code-line"><span class="line-num"> 2</span></span>
+<span class="code-line"><span class="line-num"> 3</span><span class="kw">type</span> OAuth2Config <span class="kw">struct</span> {</span>
+<span class="code-line"><span class="line-num"> 4</span>  PKCE         <span class="kw">bool</span></span>
+<span class="code-line"><span class="line-num"> 5</span>  PKCEConfig</span>
+<span class="code-line"><span class="line-num"> 6</span>  SessionStore SessionBackend</span>
+<span class="code-line"><span class="line-num"> 7</span>  VerifierTTL  time.Duration</span>
+<span class="code-line"><span class="line-num"> 8</span>}</span>
+<span class="code-line"><span class="line-num"> 9</span></span>
+<span class="code-line"><span class="line-num">10</span><span class="kw">func</span> (h *OAuth2Handler) Authorize(w, r) {</span>
+<span class="code-line"><span class="line-num">11</span>  verifier := generateVerifier()</span>
+<span class="code-line"><span class="line-num">12</span>  challenge := sha256(verifier)</span>
+<span class="code-line"><span class="line-num">13</span>  h.SessionStore.Set(verifier, ttl=<span class="str">10m</span>)</span>
+<span class="code-line"><span class="line-num">14</span>  redirect(challenge)</span>
+<span class="code-line"><span class="line-num">15</span>}</span>
+<span class="code-line"><span class="line-num">16</span></span>
+<span class="code-line"><span class="line-num">17</span><span class="kw">func</span> (h *OAuth2Handler) Callback(w, r) {</span>
+<span class="code-line"><span class="line-num">18</span>  <span class="comment">// TODO: validate verifier against session</span><span class="cursor"></span></span>
+<span class="code-line"><span class="line-num">19</span>}</span>
+        </div>
+      </div>
+    </aside>
+
+  </div>
+
+  <script>
+    (function() {
+      const STORAGE_KEY = 'agent-focus-driving';
+      const body = document.body;
+      const actionBtn = document.getElementById('action-btn');
+      const actionLabel = document.getElementById('action-label');
+      const modePillLabel = document.getElementById('mode-pill-label');
+      const agentPip = document.getElementById('agent-pip');
+      const agentContextPip = document.getElementById('agent-context-pip');
+      const agentContextStatus = document.getElementById('agent-context-status');
+      const agentContextHelper = document.getElementById('agent-context-helper');
+      const chatSubtitle = document.getElementById('chat-subtitle-text');
+      const chatInput = document.getElementById('chat-input');
+      const sendBtn = document.getElementById('send-btn');
+      const blockedOverlay = document.getElementById('blocked-overlay');
+      const wcTabs = document.querySelectorAll('.wc-tab');
+      const chatModes = document.querySelectorAll('.chat-mode-btn');
+
+      function isDriving() { return body.dataset.driving === 'true'; }
+
+      function setDriving(driving, persist) {
+        body.dataset.driving = driving ? 'true' : 'false';
+
+        modePillLabel.textContent = driving ? 'Driving' : 'Watching';
+        actionLabel.textContent = driving ? 'Relinquish' : 'Assume control';
+        actionBtn.classList.toggle('btn-assume', !driving);
+        actionBtn.classList.toggle('btn-relinquish', driving);
+
+        agentPip.classList.toggle('running', !driving);
+        agentPip.classList.toggle('assumed', driving);
+
+        agentContextPip.classList.toggle('running', !driving);
+        agentContextPip.classList.toggle('assumed', driving);
+        agentContextStatus.textContent = driving
+          ? 'Paused — waiting for your input'
+          : 'Running autonomously';
+        agentContextHelper.textContent = driving
+          ? "You'll drive until you relinquish. Agent won't act without your direction."
+          : "The agent is working through its plan. You'll see updates here as it makes progress.";
+
+        chatSubtitle.textContent = driving
+          ? 'Agent is paused — waiting for your input'
+          : 'Agent is working on step 3';
+
+        chatInput.disabled = !driving;
+        sendBtn.disabled = !driving;
+
+        if (driving) {
+          setTimeout(() => chatInput.focus(), 50);
+        }
+
+        if (persist) {
+          try { localStorage.setItem(STORAGE_KEY, String(driving)); } catch (e) {}
+          history.replaceState(null, '', driving ? '#drive' : '#watch');
+        }
+      }
+
+      function restore() {
+        let driving = false;
+        const hash = (location.hash || '').replace('#', '');
+        if (hash === 'drive' || hash === 'watch') {
+          driving = hash === 'drive';
+        } else {
+          try {
+            const stored = localStorage.getItem(STORAGE_KEY);
+            if (stored === 'true') driving = true;
+          } catch (e) {}
+        }
+        setDriving(driving, false);
+      }
+
+      // Assume button toggles
+      actionBtn.addEventListener('click', () => setDriving(!isDriving(), true));
+
+      // Click the overlay → assume
+      blockedOverlay.addEventListener('click', () => setDriving(true, true));
+      blockedOverlay.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          setDriving(true, true);
+        }
+      });
+
+      // Keyboard: A to toggle assume, Esc to relinquish (when not in input)
+      document.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+        if (e.key === 'a' || e.key === 'A') {
+          if (e.metaKey || e.ctrlKey || e.altKey) return;
+          setDriving(true, true);
+        } else if (e.key === 'Escape') {
+          setDriving(false, true);
+        }
+      });
+
+      // Tabs
+      wcTabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          wcTabs.forEach(t => t.classList.remove('active'));
+          tab.classList.add('active');
+        });
+      });
+      chatModes.forEach(btn => {
+        btn.addEventListener('click', () => {
+          chatModes.forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+      });
+
+      restore();
+    })();
+  </script>
+</body>
+</html>

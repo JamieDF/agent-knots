@@ -1,8 +1,8 @@
 // Command agentjam is the entry point for the agentjam CLI.
 //
 // agentjam is a local-first orchestrator for AI coding agents. It manages
-// projects, tasks, a credential vault, and runs agents (via OpenCode) in
-// interactive or autonomous modes.
+// projects, tasks, a credential vault, and runs agents (via Pi, OpenCode,
+// or mock drivers) in interactive or autonomous modes.
 //
 // See the README for a quickstart or docs/architecture.md for design.
 package main
@@ -13,8 +13,31 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/JamieDF/agentjam/internal/agent/driver"
+	"github.com/JamieDF/agentjam/internal/agent/driver/mock"
+	"github.com/JamieDF/agentjam/internal/agent/driver/opencode"
 	"github.com/JamieDF/agentjam/internal/config"
 )
+
+func init() {
+	// Register all known driver backends with the default registry.
+	// When Pi is ready, register it here too.
+	// Pi is registered separately once the package exists.
+	driver.Default.Register("mock", func(opts driver.FactoryOptions) (driver.Driver, error) {
+		d := mock.New(mock.Options{
+			ID:     opts.ID,
+			TaskID: opts.TaskID,
+		})
+		return d, nil
+	})
+	driver.Default.Register("opencode", func(opts driver.FactoryOptions) (driver.Driver, error) {
+		return opencode.New(opencode.Options{
+			ID:        opts.ID,
+			Directory: opts.Workdir,
+			Title:     "agentjam-session-" + opts.ID,
+		})
+	})
+}
 
 var (
 	// Version is set at build time via -ldflags.
@@ -57,6 +80,7 @@ Run 'agentjam <command> --help' for details on any subcommand.`,
 		agentCmd(),
 		sessionCmd(),
 		cockpitCmd(),
+		settingsCmd(),
 		versionCmd(),
 	)
 

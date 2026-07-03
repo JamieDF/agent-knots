@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "mockups/01-dashboard.html",
+  "entry": "mockups/01-dashboard.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-07-02T15:59:56.040Z",
+  "updatedAt": "2026-07-02T15:59:56.040Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}

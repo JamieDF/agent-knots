@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "mockups/04-session-canvas.html",
+  "entry": "mockups/04-session-canvas.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-07-02T13:03:06.226Z",
+  "updatedAt": "2026-07-02T13:03:06.226Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}

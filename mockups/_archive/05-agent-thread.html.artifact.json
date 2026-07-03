@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "mockups/05-agent-thread.html",
+  "entry": "mockups/05-agent-thread.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-07-02T13:04:52.811Z",
+  "updatedAt": "2026-07-02T13:04:52.811Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}
