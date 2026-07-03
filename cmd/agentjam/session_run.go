@@ -171,7 +171,7 @@ func sessionRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&containerFlag, "container", false, "Run in container")
 	cmd.Flags().StringVar(&image, "image", "", "Container image override")
 	cmd.Flags().BoolVar(&privilegedDebug, "privileged-debug", false, "Debug mode")
-	cmd.Flags().StringVar(&driverKind, "driver", "opencode", "Driver kind")
+	cmd.Flags().StringVar(&driverKind, "driver", "pi", "Driver kind (pi, mock, opencode)")
 	cmd.Flags().BoolVar(&worktree, "worktree", false, "Create git worktree")
 
 	return cmd

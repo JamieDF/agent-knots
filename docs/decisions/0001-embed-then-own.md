@@ -1,79 +1,110 @@
-> **Note:** Captured under the prior project name "harness"; see CHANGELOG for the rename.
+# ADR 0001: Pi via subprocess RPC as the v1 default agent backend
 
-# ADR 0001: Embed-then-Own for the agent driver
-
-**Status:** Accepted
-**Date:** 2026-06-30
+**Status:** Accepted (revised 2026-07-03)
+**Date:** 2026-06-30 (original), 2026-07-03 (revision)
 
 ## Context
 
 agentjam needs to drive an AI coding agent. The orchestrator is the
 interesting part (multi-agent, vault, tasks, projects) — the agent loop
-itself is well-trodden ground. We need to choose how to integrate an
-agent engine.
-
-## Options considered
-
-1. **Build from scratch.** Own every line. Maximum control. Months of
-   work to reach parity with existing tools.
-2. **Wrap an external CLI as a subprocess.** Use Pi, OpenCode, Claude
-   Code, etc. via stdin/stdout. Fast to ship, but IPC is fragile and
-   you inherit the wrapped tool's bugs and API churn.
-3. **Embed via library.** Use a Go-native library that exposes an
-   SDK. Tighter integration than subprocess, more flexibility than
-   wrapping. Requires the upstream library to be Go.
-4. **Adopt a wrapper framework.** Use something like LangChain or
-   eino. Heavy, opinionated, brings its own conventions.
+itself is well-trodden ground. We need a reliable, well-tested agent
+backend that integrates cleanly with our Go orchestrator.
 
 ## Decision
 
-We chose **option 3**: embed a Go-native SDK. Specifically,
-[OpenCode's Go SDK](https://github.com/sst/opencode-sdk-go).
+**Use Pi (github.com/earendil-works/pi) via its RPC mode as the v1
+default agent backend.**
 
-Reasons:
+Pi is launched as a subprocess (`pi --mode rpc`) and communicates via
+bidirectional JSONL over stdin/stdout. Our session subprocess reads
+JSONL events from Pi's stdout, translates them into `driver.Event`, and
+broadcasts them on the host's UNIX event socket. Control messages from
+the cockpit (assume, relinquish, send) flow back through Pi's stdin as
+RPC commands.
 
-- **Native Go integration.** No subprocess, no IPC bridge, no type
-  translation. The orchestrator imports the SDK directly.
-- **Single language.** Same Go codebase for orchestrator + agent
-  engine. Easier refactoring, shared types, shared tests.
-- **Mature upstream.** OpenCode is SST-backed, MIT-licensed, ~158k
-  stars on GitHub.
-- **Already proven in orchestrators.** [Nango used OpenCode for
-  200+ API integrations](https://nango.dev/blog/learned-building-200-api-integrations-with-opencode/).
-- **Multi-provider.** OpenCode supports 75+ providers including the
-  ones we care about (OpenAI, Anthropic, MiniMax, GLM, Ollama).
+## Why Pi
 
-## Embed-then-Own
+1. **First-class RPC mode.** Pi ships a purpose-built headless mode
+   (`--mode rpc`) with structured JSONL events, streaming deltas, and
+   synchronous commands (prompt, abort, set_thinking_level, get_state,
+   get_session_stats). Not an afterthought — designed for embedding.
 
-We adopt the "embed-then-own" pattern:
+2. **Already proven.** We use Pi via Open Design for UI mockups.
+   Pi generates correct, production-quality HTML with tool calls and
+   reasoning. The RPC protocol is well-documented and stable.
 
-- **v1:** Use the OpenCode SDK directly.
-- **v2 (if needed):** Write our own thin driver when OpenCode gets
-  annoying, behind the same `AgentDriver` interface.
+3. **Real token tracking.** Pi's `get_session_stats` returns actual
+   input/output/cache token counts and cost. Our mock driver was
+   estimating ~70 tokens/event. With Pi, we get provider-exact numbers —
+   unblocking cost caps and budget alerts.
 
-The interface (`internal/agent/driver.Driver`) is the contract. The
-implementation is replaceable. The orchestrator code doesn't change.
+4. **Native compaction.** Pi handles context compaction automatically
+   when approaching token limits. Our cockpits surface compaction events
+   as progress messages so the user sees context being managed.
 
-## Why not Pi?
+5. **Simple integration.** `driver.Driver` maps cleanly to Pi's RPC
+   commands: Start → spawn subprocess, Send → prompt, SetMode →
+   set_thinking_level + extension command, Snapshot → get_state +
+   get_session_stats. No SDK dependency, no Go-to-TypeScript bridge
+   complexity.
 
-Pi's SDK is TypeScript-only. With Go orchestrator, we'd bridge to Pi
-via subprocess or HTTP — extra complexity for no gain over OpenCode.
-Pi's minimalism is great when starting in TS, but with Go + OpenCode's
-Go SDK, the calculus flips.
+## Why not OpenCode
 
-## Consequences
+The original ADR chose OpenCode via its Go SDK. We wrote a 327 LOC
+adapter (`internal/agent/driver/opencode/opencode.go`) but never tested
+it against a live `opencode serve` instance. The SDK shape risk (typed
+parameters may differ from reality) remained unvalidated. OpenCode's
+Go SDK is maintained separately from the server — if either changes
+shape, our driver breaks silently.
 
-Positive:
-- Faster time-to-first-agent.
-- Single-language build.
-- No subprocess management in the orchestrator.
+OpenCode is kept as `--driver opencode` for backward compatibility and
+as a future option, but it is no longer the default.
 
-Negative:
-- Coupled to OpenCode's API surface.
-- When we want features OpenCode doesn't support, we either wait for
-  upstream or write a parallel driver.
+## Architecture
 
-Mitigations:
-- The `AgentDriver` interface is narrow and stable.
-- A custom driver is ~few hundred lines of Go (the agent loop).
-- The interface can be reimplemented without touching the orchestrator.
+```
+AgentJam session subprocess (host)
+  ├── Spawns: pi --mode rpc [args]
+  ├── readLoop: reads Pi stdout → translates JSONL → driver.Events
+  ├── writeCmd: writes Pi stdin ← cockpit control messages
+  └── Snapshot: synchronous get_state + get_session_stats
+```
+
+The `driver.Driver` interface is unchanged. Pi, OpenCode, mock, and
+future backends all satisfy the same contract. The registry pattern
+(`driver.Default.Build(kind, opts)`) makes adding Claude Code or a
+custom agent a package import + one registration line.
+
+## Container mode
+
+For containerized sessions, the Pi driver runs inside a podman
+container. The container mounts the worktree and extensions, and pipes
+stdin/stdout to the host. Egress filtering, private network namespace,
+and resource caps apply as before. The container image (`agentjam-agent-node:20`)
+is built from `containers/agent/Dockerfile` and includes Node 20 + Pi.
+
+## Tradeoffs
+
+- **Subprocess overhead.** Each session spawns a Node process for Pi.
+  Acceptable — our session subprocess manages the lifecycle.
+
+- **System prompt at startup only (without extension).** Without the
+  agentjam-switch Pi extension, mode swap changes only thinking level.
+  With the extension (shipped in `extensions/pi-mode-swap/`), full
+  persona swap is supported at runtime.
+
+- **Pi must be installed.** `npm install -g @earendil-works/pi-coding-agent`
+  or run the install script. Container mode bundles Pi in the image.
+
+- **Local-first, no cloud dependency.** Pi calls LLM APIs directly.
+  No intermediary service. API keys from environment or vault.
+
+## Future
+
+The registry pattern makes adding backends trivial:
+- `driver.Default.Register("claude-code", ...)` — Anthropic Claude Code
+- `driver.Default.Register("opencode", ...)` — already registered
+- `driver.Default.Register("custom-loop", ...)` — our own agent loop
+
+Each new backend is a package implementing `driver.Driver`. The
+orchestrator, cockpits, and session lifecycle don't change.
