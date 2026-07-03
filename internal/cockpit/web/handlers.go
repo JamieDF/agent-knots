@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -65,24 +64,20 @@ func (s *Server) loadSessionInfo(ls *live.Session) sessionInfo {
 	return info
 }
 
-// handleIndex renders the agent list page.
+// handleIndex renders the cockpit SPA. The SPA handles routing internally via hash fragments.
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, indexHTML)
+	fmt.Fprint(w, cockpitHTML)
 }
 
-// handleAgentPage renders the single-agent detail page with SSE client.
+// handleAgentPage renders the cockpit SPA. The SPA handles routing internally via hash fragments.
 func (s *Server) handleAgentPage(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	tmpl := template.Must(template.New("agent").Parse(agentHTML))
-	if err := tmpl.Execute(w, map[string]string{"ID": id}); err != nil {
-		http.Error(w, "render error", http.StatusInternalServerError)
-	}
+	fmt.Fprint(w, cockpitHTML)
 }
 
 // handleAgentsFragment returns an HTML fragment of agent cards for HTMX.
@@ -107,8 +102,11 @@ func (s *Server) handleAgentsFragment(w http.ResponseWriter, r *http.Request) {
 	for _, ls := range sessions {
 		info := s.loadSessionInfo(ls)
 		statusClass := statusDotClass(info.Status)
-		modeBadge := modeBadgeHTML(info.Mode)
-		actionIcon, actionText := actionInfo(info)
+		modeClass := modePillClass(info.Mode)
+		modeLabel := info.Mode
+		if modeLabel == "" {
+			modeLabel = "agent"
+		}
 		tokenStr := formatTokens(info.Tokens)
 		if tokenStr == "—" {
 			tokenStr = "0"
@@ -118,27 +116,27 @@ func (s *Server) handleAgentsFragment(w http.ResponseWriter, r *http.Request) {
 			costStr = "$0.000"
 		}
 
-		fmt.Fprintf(w, `<a href="/agent/%s" class="card" data-tokens="%d" data-cost="%.6f">
-	<div class="card-row">
-		<div style="display:flex;align-items:center;gap:8px">
-			<span class="dot %s"></span>
-			<span class="card-id">%s</span>
+		fmt.Fprintf(w, `<div class="agent-card" onclick="location.href='#agent/%s'" data-tokens="%d" data-cost="%.6f">
+	<div class="agent-card-head">
+		<div class="agent-card-id">
+			<span class="status-pip %s"></span>
+			%s
 		</div>
-		<span class="badge %s">%s</span>
+		<span class="mode-pill %s"><span class="pill-dot"></span>%s</span>
 	</div>
-	<div class="card-meta">
+	<div class="agent-card-meta">
 		<span>Status<span class="val">%s</span></span>
-		<span>Uptime<span class="val mono">%s</span></span>
-		<span>Tokens<span class="val mono">%s</span></span>
-		<span>Cost<span class="val mono">%s</span></span>
+		<span>Uptime<span class="val">%s</span></span>
+		<span>Tokens<span class="val">%s</span></span>
+		<span>Cost<span class="val">%s</span></span>
 	</div>
-	<div class="card-action">%s %s</div>
-</a>
+	<div class="agent-card-action">%s</div>
+</div>
 `, info.ID, info.Tokens, info.Cost,
 			statusClass, info.ID,
-			modeBadge, info.Mode,
+			modeClass, modeLabel,
 			info.Status, info.StartedAgo, tokenStr, costStr,
-			actionIcon, actionText)
+			statusText(info))
 	}
 }
 
@@ -279,100 +277,120 @@ func statusDotClass(status string) string {
 	}
 }
 
-// modeBadgeHTML returns badge HTML for a mode.
-func modeBadgeHTML(mode string) string {
+// modePillClass returns the CSS class for the mode pill.
+func modePillClass(mode string) string {
 	switch mode {
-	case "agent":
-		return "badge-agent"
 	case "assistant":
-		return "badge-assistant"
+		return "assumed"
 	default:
-		return "badge-stopped"
+		return ""
 	}
 }
 
-// actionIcon returns the icon HTML for the last action.
-func actionInfo(info sessionInfo) (string, string) {
+// statusText returns a human-readable status description.
+func statusText(info sessionInfo) string {
 	if !info.Alive {
-		return "&#9679;", "stopped"
+		return "stopped"
 	}
 	switch info.Status {
 	case "blocked":
-		return "&#9888;", "needs input"
+		return "needs input"
 	case "running", "starting":
-		return "&#9679;", "running"
+		return "active"
 	default:
-		return "&#9679;", info.Status
+		return info.Status
 	}
 }
 
-// formatEventHTML renders a driver.Event as an HTML fragment for SSE.
+// formatEventHTML renders a driver.Event as an HTML fragment matching the mockup style.
+// Events are rendered as prose rows (messages, thinking, state changes) or
+// tool cards (read_file, edit_file, bash, etc.).
 func formatEventHTML(ev driver.Event) template.HTML {
 	ts := ev.Timestamp.Format("15:04:05")
-	icon := "&#9679;"
-	cssClass := "event-message"
-	msg := ev.Message
 
 	switch ev.Type {
 	case driver.EventThinking:
-		icon = "&#9670;"
-		cssClass = "event-thinking"
-	case driver.EventToolCall:
-		icon = "&#9881;"
-		cssClass = "event-tool"
-		if ev.ToolCall != nil {
-			msg = fmt.Sprintf(`<span class="tool-name">%s</span> %s`, ev.ToolCall.Name, formatArgs(ev.ToolCall.Args))
-		}
-	case driver.EventToolResult:
-		icon = "&#10003;"
-		cssClass = "event-tool"
-	case driver.EventError:
-		icon = "&#9888;"
-		cssClass = "event-error"
-		if ev.Error != "" {
-			msg = ev.Error
-		}
+		return template.HTML(fmt.Sprintf(
+			`<div class="prose-row prose-thinking"><div class="prose-avatar thinking">T</div><div class="prose-content"><div class="prose-thinking-text">%s</div></div><div class="prose-ts">%s</div></div>`,
+			template.HTMLEscapeString(ev.Message), ts))
+
+	case driver.EventMessage:
+		return template.HTML(fmt.Sprintf(
+			`<div class="prose-row"><div class="prose-avatar agent">A</div><div class="prose-content"><div class="prose-text">%s</div></div><div class="prose-ts">%s</div></div>`,
+			template.HTMLEscapeString(ev.Message), ts))
+
 	case driver.EventStateChange:
-		icon = "&#9889;"
-		cssClass = "event-state"
+		return template.HTML(fmt.Sprintf(
+			`<div class="prose-row"><div class="prose-avatar thinking">⚡</div><div class="prose-content"><div class="prose-text">%s</div></div><div class="prose-ts">%s</div></div>`,
+			template.HTMLEscapeString(ev.Message), ts))
+
+	case driver.EventToolCall:
+		if ev.ToolCall != nil {
+			toolIcon, toolClass := toolIconClass(ev.ToolCall.Name)
+			args := formatToolArgs(ev.ToolCall.Args)
+			return template.HTML(fmt.Sprintf(
+				`<div class="tool-card"><div class="tool-card-head"><div class="tool-icon %s">%s</div><div class="tool-label">%s <span class="tool-sub">%s</span></div><div class="tool-ts">%s</div></div></div>`,
+				toolClass, toolIcon, ev.ToolCall.Name, args, ts))
+		}
+		return template.HTML(fmt.Sprintf(
+			`<div class="prose-row"><div class="prose-content"><div class="prose-text">Tool call</div></div><div class="prose-ts">%s</div></div>`, ts))
+
+	case driver.EventToolResult:
+		return template.HTML(fmt.Sprintf(
+			`<div class="prose-row"><div class="prose-avatar" style="color:var(--running);background:oklch(72%% 0.16 155 / 0.15);border:1px solid oklch(72%% 0.16 155 / 0.3);font-size:11px">✓</div><div class="prose-content"><div class="prose-text">Tool result</div></div><div class="prose-ts">%s</div></div>`, ts))
+
+	case driver.EventError:
+		errMsg := ev.Error
+		if errMsg == "" {
+			errMsg = ev.Message
+		}
+		return template.HTML(fmt.Sprintf(
+			`<div class="prose-row"><div class="prose-avatar" style="color:oklch(65%% 0.16 20);background:oklch(65%% 0.16 20 / 0.12);border:1px solid oklch(65%% 0.16 20 / 0.25)">!</div><div class="prose-content"><div class="prose-text" style="color:oklch(65%% 0.16 20)">%s</div></div><div class="prose-ts">%s</div></div>`,
+			template.HTMLEscapeString(errMsg), ts))
+
 	case driver.EventProgress:
-		icon = "&#9776;"
-		cssClass = "event-progress"
-	}
+		return template.HTML(fmt.Sprintf(
+			`<div class="prose-row"><div class="prose-content"><div class="prose-text" style="color:var(--muted);font-size:12px">%s</div></div><div class="prose-ts">%s</div></div>`,
+			template.HTMLEscapeString(ev.Message), ts))
 
-	if msg == "" && ev.Type == driver.EventMessage {
-		msg = ev.Message
+	default:
+		msg := ev.Message
+		if msg == "" {
+			msg = string(ev.Type)
+		}
+		return template.HTML(fmt.Sprintf(
+			`<div class="prose-row"><div class="prose-content"><div class="prose-text" style="color:var(--muted)">%s</div></div><div class="prose-ts">%s</div></div>`,
+			template.HTMLEscapeString(msg), ts))
 	}
-	if msg == "" && ev.Type != driver.EventToolCall && ev.Type != driver.EventToolResult {
-		msg = string(ev.Type)
-	}
-
-	return template.HTML(fmt.Sprintf(
-		`<span class="ts">%s</span><span class="icon %s">%s</span><span class="content %s">%s</span>`,
-		ts, cssClass, icon, cssClass, msg,
-	))
 }
 
-// formatArgs formats tool call arguments as a compact string.
-func formatArgs(args map[string]any) string {
+// toolIconClass returns the icon letter and CSS class for a tool name.
+func toolIconClass(name string) (string, string) {
+	switch name {
+	case "read_file", "read":
+		return "R", "read"
+	case "edit_file", "edit", "write_file", "write":
+		return "E", "edit"
+	case "bash", "shell", "run":
+		return "⌘", "run"
+	default:
+		return "●", "other"
+	}
+}
+
+// formatToolArgs formats tool call arguments for display.
+func formatToolArgs(args map[string]any) string {
 	if len(args) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(args))
-	for k, v := range args {
-		var s string
-		switch val := v.(type) {
-		case string:
-			if len(val) > 40 {
-				val = val[:37] + "..."
-			}
-			s = val
-		case float64:
-			s = fmt.Sprintf("%v", val)
-		default:
-			s = fmt.Sprintf("%v", val)
+	var first string
+	for _, v := range args {
+		s := fmt.Sprintf("%v", v)
+		if len(s) > 60 {
+			s = s[:57] + "..."
 		}
-		parts = append(parts, fmt.Sprintf("%s=%s", k, s))
+		first = s
+		break
 	}
-	return strings.Join(parts, ", ")
+	return "— " + first
 }
