@@ -110,7 +110,9 @@ func (l *LocalRuntime) Start(ctx context.Context, p *Prepared) error {
 
 	dir := p.WorkingDir
 	if dir == "" {
-		return errs.Wrap(errs.ErrInvalid, "local runtime: empty working dir")
+		// No project — use current directory. Valid for mock drivers
+		// and interactive sessions that don't need a workspace.
+		dir = "."
 	}
 
 	// Resolve mode file for drivers that need a system prompt (Pi, opencode).
