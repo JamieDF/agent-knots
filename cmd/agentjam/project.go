@@ -103,6 +103,9 @@ Example:
 			if name == "" {
 				name = id
 			}
+			if root == "" {
+				root, _ = os.Getwd()
+			}
 
 			p := &project.Project{
 				ID:            project.ID(id),
