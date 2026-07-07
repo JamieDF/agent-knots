@@ -89,11 +89,11 @@ test.describe('authenticated API', () => {
     expect(after.agent.default_model).toBe('openai/test-model')
     expect(after.configured).toBe(true)
 
-    // Restore original settings.
+    // Restore original settings — pass empty api_key to preserve existing.
     await page.request.put('/api/settings', {
       data: {
         default_model: before.agent.default_model,
-        api_key: before.agent.api_key,
+        api_key: '',  // empty = preserve existing key
         base_url: before.agent.base_url,
         default_mode: before.agent.default_mode,
       },

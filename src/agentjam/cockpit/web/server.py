@@ -226,7 +226,7 @@ def create_app(
         s.agent.default_mode = body.default_mode
 
         # Only update API key if a real value was provided (not masked).
-        if body.api_key and not body.api_key.startswith("****"):
+        if body.api_key and "..." not in body.api_key and not body.api_key.startswith("****"):
             s.agent.api_key = body.api_key
 
         settings.save(s)
