@@ -209,16 +209,25 @@ class SessionManager:
         ))
 
     async def send(self, session_id: str, message: str) -> None:
-        """Send a message to a running agent.
+        """Send a follow-up message to an agent session.
 
-        Creates a new invocation task. If the agent is already running,
-        the existing task continues; Strands handles concurrent invocations.
+        Awaits completion of any in-progress turn before starting a new one.
         """
         session = self._sessions.get(session_id)
         if session is None:
             raise ValueError(f"session {session_id!r} not found")
         if session._agent is None:
             raise RuntimeError("agent not initialised")
+
+        # Wait for previous turn to fully complete.
+        if session._task is not None and not session._task.done():
+            try:
+                await asyncio.wait_for(session._task, timeout=30.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+
+        # Yield to let the event loop process the task's final cleanup.
+        await asyncio.sleep(0)
 
         session._task = asyncio.create_task(
             self._run_agent(session, session._agent, message)
@@ -251,6 +260,7 @@ class SessionManager:
         prompt: str,
     ) -> None:
         """Run the agent with a prompt, pushing events to the session queue."""
+        finished = False
         try:
             await session._events.put(Event(
                 type=EventType.STATE_CHANGE,
@@ -258,10 +268,8 @@ class SessionManager:
                 message="Agent started.",
             ))
 
-            # Per-session state for deduplication.
             chunk_state: dict[str, Any] = {}
 
-            # Stream the agent's response.
             async for chunk in agent.stream_async(prompt):
                 if session._cancelled:
                     break
@@ -271,6 +279,7 @@ class SessionManager:
                     await session._events.put(event)
 
             if not session._cancelled:
+                finished = True
                 await session._events.put(Event(
                     type=EventType.STATE_CHANGE,
                     session_id=session.id,
@@ -278,11 +287,12 @@ class SessionManager:
                 ))
 
         except asyncio.CancelledError:
-            await session._events.put(Event(
-                type=EventType.STATE_CHANGE,
-                session_id=session.id,
-                message="Agent cancelled.",
-            ))
+            if not finished:
+                await session._events.put(Event(
+                    type=EventType.STATE_CHANGE,
+                    session_id=session.id,
+                    message="Agent cancelled.",
+                ))
         except Exception as exc:
             await session._events.put(Event(
                 type=EventType.ERROR,
@@ -290,6 +300,8 @@ class SessionManager:
                 error=str(exc),
                 message=f"Agent error: {exc}",
             ))
+        finally:
+            session._cancelled = False
 
     @staticmethod
     def _chunk_to_event(session_id: str, chunk: Any, _state: dict[str, Any] | None = None) -> Event | None:
