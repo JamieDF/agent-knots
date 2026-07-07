@@ -107,6 +107,8 @@ def start(
 
     typer.echo(f"Session started: {session.id}")
     typer.echo(f"Mode: {session.mode}")
+    if task:
+        typer.echo(f"Task: {task}")
 
     if session.running:
         typer.echo("Agent is running. Use 'agentjam cockpit' to monitor.")

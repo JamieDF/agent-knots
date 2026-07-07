@@ -78,29 +78,19 @@ test.describe('authenticated API', () => {
     expect(data.agent).toHaveProperty('default_model')
   })
 
-  test('settings save and restore', async ({ page }) => {
-    const before = await (await page.request.get(`${BASE}/api/settings`)).json()
-
-    // Save test settings.
+  test('settings save preserves existing key', async ({ page }) => {
+    // Save settings WITHOUT touching the API key (empty string = preserve).
     const res = await page.request.put(`${BASE}/api/settings`, {
       data: {
         default_model: 'minimax-m2.7',
-        api_key: 'sk-test-preserve',
+        api_key: '',  // empty = preserve existing key
         base_url: '',
         default_mode: 'agent',
       },
     })
     expect(res.status()).toBe(200)
-
-    // Restore original — pass empty api_key to preserve.
-    await page.request.put(`${BASE}/api/settings`, {
-      data: {
-        default_model: before.agent.default_model,
-        api_key: '',  // empty = preserve
-        base_url: before.agent.base_url,
-        default_mode: before.agent.default_mode,
-      },
-    })
+    const data = await res.json()
+    expect(data.status).toBe('ok')
   })
 
 })

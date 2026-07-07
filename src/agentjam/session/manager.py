@@ -111,13 +111,14 @@ class SessionManager:
             model: Model identifier. Empty = resolve from env/settings.
             api_key: API key. Empty = resolve from env/settings.
             base_url: Optional custom API base URL (MiniMax, local LLMs, etc.).
-            system_prompt: System prompt for the agent.
+            system_prompt: System prompt for the agent (appended to task context).
             task_description: Initial task/message to send.
             working_dir: Working directory to bind into the sandbox.
             mode: Agent mode (agent, assistant, reviewer, security).
-            task_id: Optional task ID reference.
+            task_id: Optional task ID. If set, task details are included in
+                     the system prompt so the agent knows what to work on.
             project_id: Optional project ID reference.
-            tools: Optional list of Strands tools.
+            tools: Optional list of Strands tools. Task tools are always included.
 
         Returns:
             The created Session.
@@ -144,6 +145,25 @@ class SessionManager:
             )
 
         session_id = uuid.uuid4().hex[:12]
+
+        # Resolve task context if a task_id was provided.
+        task_context = ""
+        if task_id:
+            from agentjam.task.store import TaskStore
+            from agentjam.config import tasks_dir as _tasks_dir
+            store = TaskStore(_tasks_dir())
+            task = store.get(task_id)
+            if task:
+                task_context = _build_task_prompt(task)
+                # Assign the task to this session.
+                store.assign(task_id, session_id)
+
+        # Build the full system prompt with task context.
+        full_prompt = _build_system_prompt(system_prompt, task_context, mode)
+
+        # Always include task tools.
+        from agentjam.task.tools import ALL_TASK_TOOLS
+        all_tools = list(tools or []) + ALL_TASK_TOOLS
 
         # Create the model. Strands expects a model instance, not a config dict.
         # For OpenAI-compatible providers, use OpenAIModel with client_args.
@@ -172,8 +192,8 @@ class SessionManager:
         # Create the agent.
         agent = Agent(
             model=model_instance,
-            tools=tools or [],
-            system_prompt=system_prompt,
+            tools=all_tools,
+            system_prompt=full_prompt,
             sandbox=sandbox,
             agent_id=session_id,
         )
@@ -325,10 +345,36 @@ class SessionManager:
             return None
 
         # Text delta from content block — skip these, we use data+delta instead.
-        # contentBlockDelta and data+delta overlap; data+delta gives us the
-        # accumulated text which we can diff to emit only new portions.
+        # But tool use events also come through 'event' — handle those.
         if 'event' in chunk:
+            evt = chunk['event']
+            # Tool use start.
+            if 'contentBlockStart' in evt:
+                start = evt['contentBlockStart'].get('start', {})
+                if 'toolUse' in start:
+                    tu = start['toolUse']
+                    return Event(
+                        type=EventType.TOOL_CALL,
+                        session_id=session_id,
+                        tool_call=ToolCall(id=tu.get('toolUseId', ''), name=tu.get('name', ''), args={}),
+                        timestamp=now,
+                    )
+            # Other events — skip.
             return None
+
+        # Tool use streaming — accumulate input args.
+        if chunk.get('type') == 'tool_use_stream':
+            current = chunk.get('current_tool_use', {})
+            return Event(
+                type=EventType.TOOL_CALL,
+                session_id=session_id,
+                tool_call=ToolCall(
+                    id=current.get('toolUseId', ''),
+                    name=current.get('name', ''),
+                    args=_parse_tool_input(current.get('input', '{}')),
+                ),
+                timestamp=now,
+            )
 
         # Accumulated text delta — only emit the new portion.
         if 'data' in chunk and 'delta' in chunk:
@@ -349,12 +395,28 @@ class SessionManager:
                     )
             return None
 
-        # Final message.
+        # Final message — check for tool results.
         if 'message' in chunk:
             msg = chunk['message']
             content = msg.get('content', '')
             if isinstance(content, list):
-                # Content blocks — extract text.
+                # Check for tool result.
+                for c in content:
+                    if isinstance(c, dict) and 'toolResult' in c:
+                        tr = c['toolResult']
+                        result_text = ''
+                        if isinstance(tr.get('content', []), list):
+                            result_text = ' '.join(
+                                ct.get('text', '') for ct in tr['content'] if isinstance(ct, dict)
+                            )
+                        return Event(
+                            type=EventType.TOOL_RESULT,
+                            session_id=session_id,
+                            message=result_text,
+                            data=tr,
+                            timestamp=now,
+                        )
+                # Regular content blocks — extract text.
                 text = ''.join(c.get('text', '') for c in content if isinstance(c, dict))
             else:
                 text = str(content)
@@ -401,3 +463,64 @@ class SessionManager:
 def _is_thinking(text: str) -> bool:
     """Heuristic: detect if text is inside a <think> block."""
     return '<think>' in text or text.strip().startswith('</think>')
+
+
+def _parse_tool_input(raw: str) -> dict:
+    """Parse a tool input JSON string, returning empty dict on failure."""
+    import json as _json
+    try:
+        return _json.loads(raw) if raw and raw != '{}' else {}
+    except (_json.JSONDecodeError, TypeError):
+        return {}
+
+
+def _build_task_prompt(task: Any) -> str:
+    """Build a task context block for the system prompt."""
+    from agentjam.task.models import Task as TaskModel
+    t: TaskModel = task
+    parts = [
+        "## Current Task",
+        f"Task ID: {t.id}",
+        f"Title: {t.title}",
+        f"Status: {t.status.value}",
+        f"Priority: {t.priority.value}",
+    ]
+    if t.description:
+        parts.append(f"\nDescription:\n{t.description}")
+    if t.acceptance_criteria:
+        parts.append("\nAcceptance Criteria:")
+        for c in t.acceptance_criteria:
+            parts.append(f"  - {c}")
+    if t.steps:
+        parts.append("\nSteps:")
+        for s in t.steps:
+            icon = "✓" if s.status.value == "done" else "○" if s.status.value == "draft" else "●"
+            parts.append(f"  {icon} {s.title} [{s.status.value}]")
+    if t.progress:
+        parts.append(f"\nProgress log ({len(t.progress)} entries, most recent last):")
+        for p in t.progress[-5:]:
+            parts.append(f"  [{p.status.value}] {p.entry}")
+    parts.append("\nUse the task tools (create_task, read_task, log_progress, update_task_status, add_step, list_tasks) to manage this task. Log progress after every meaningful action.")
+    return "\n".join(parts)
+
+
+def _build_system_prompt(base_prompt: str, task_context: str, mode: str) -> str:
+    """Assemble the full system prompt."""
+    parts = []
+
+    if base_prompt:
+        parts.append(base_prompt)
+
+    if mode == "agent":
+        parts.append("You are an autonomous coding agent. Work through tasks systematically. Log progress after every meaningful action using the task tools provided.")
+    elif mode == "assistant":
+        parts.append("You are a coding assistant working interactively with a user. Ask clarifying questions when needed. Log progress using the task tools provided.")
+    elif mode == "reviewer":
+        parts.append("You are a code reviewer. Focus on finding issues, suggesting improvements, and verifying correctness. Do not make changes unless asked.")
+    elif mode == "security":
+        parts.append("You are a security auditor. Focus on finding vulnerabilities, unsafe patterns, and security anti-patterns. Do not make changes unless asked.")
+
+    if task_context:
+        parts.append(task_context)
+
+    return "\n\n".join(parts)
