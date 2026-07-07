@@ -235,6 +235,12 @@ def create_app(
         await session_manager.send(agent_id, message)
         return {"status": "ok"}
 
+    @app.delete("/api/agent/{agent_id}")
+    async def agent_delete(agent_id: str):
+        """Stop and remove a session."""
+        await session_manager.stop(agent_id)
+        return {"status": "ok"}
+
     # ── settings API ─────────────────────────────────────────────────────
 
     @app.get("/api/settings")

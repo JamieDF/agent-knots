@@ -142,3 +142,6 @@ export async function deleteWorkspace(id: string): Promise<void> {
   const res = await fetch(`/api/workspaces/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('')
 }
+export async function deleteAgent(id: string): Promise<void> {
+  await fetch(`/api/agent/${id}`, { method: 'DELETE' })
+}

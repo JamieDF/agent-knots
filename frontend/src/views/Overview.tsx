@@ -93,7 +93,7 @@ function Overview() {
           )}
 
           {agents.map(agent => (
-            <AgentCard key={agent.id} agent={agent} />
+            <AgentCard key={agent.id} agent={agent} onDelete={() => setAgents(prev => prev.filter(a => a.id !== agent.id))} />
           ))}
         </div>
       )}

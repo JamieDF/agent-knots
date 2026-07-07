@@ -98,6 +98,7 @@ class OverviewScreen(Screen):
         ("k,up", "cursor_up", "Up"),
         ("enter,f", "focus_agent", "Focus"),
         ("t", "tools", "Tools"),
+        ("d", "delete_agent", "Delete"),
         ("q", "quit", "Quit"),
     ]
 
@@ -181,6 +182,16 @@ class OverviewScreen(Screen):
 
     def action_tools(self) -> None:
         self.app.push_screen(ToolsScreen(self.session_manager))
+
+    async def action_delete_agent(self) -> None:
+        table = self.query_one("#overview-table", DataTable)
+        row_key = table.cursor_row
+        row = table.get_row_at(row_key) if row_key is not None else None
+        if row is None:
+            return
+        agent_id = str(row[0])
+        await self.session_manager.stop(agent_id)
+        await self._refresh()
 
 
 # ── focus screen ─────────────────────────────────────────────────────────────

@@ -810,3 +810,28 @@ test.describe('workspaces', () => {
   })
 
 })
+
+test.describe('agent deletion', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('delete agent via API', async ({ page }) => {
+    // Create a session.
+    const res = await page.request.post(`${BASE}/api/sessions`, {
+      data: { prompt: 'Say hello', mode: 'agent' },
+    })
+    expect(res.status()).toBe(200)
+    const { id } = await res.json()
+
+    // Delete it.
+    const delRes = await page.request.delete(`${BASE}/api/agent/${id}`)
+    expect(delRes.status()).toBe(200)
+
+    // Verify gone from agent list.
+    const list = await (await page.request.get(`${BASE}/api/agents`)).json()
+    expect(list.agents.find((a: any) => a.id === id)).toBeUndefined()
+  })
+
+})
