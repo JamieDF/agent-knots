@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import AgentCard from '../components/AgentCard'
 import SetupWizard from '../components/SetupWizard'
-import NewSessionDialog from '../components/NewSessionDialog'
 import { fetchAgents, fetchSettings, createSession, type AgentInfo } from '../lib/api'
 import { getActiveWorkspace } from '../lib/workspace'
 
@@ -9,9 +9,10 @@ function Overview() {
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [configured, setConfigured] = useState<boolean | null>(null)
   const [showWizard, setShowWizard] = useState(false)
-  const [showNewSession, setShowNewSession] = useState(false)
+  const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const workspace = getActiveWorkspace()
+  const navigate = useNavigate()
 
   // Check if settings are configured.
   useEffect(() => {
@@ -51,9 +52,16 @@ function Overview() {
     setShowWizard(false)
   }, [])
 
-  const handleStartSession = useCallback(async (prompt: string, mode: string, project: string) => {
-    await createSession({ prompt, mode, project_id: project || undefined })
-  }, [])
+  const handleInstantStart = async () => {
+    setCreating(true)
+    try {
+      const session = await createSession({ prompt: '', mode: 'agent', project_id: workspace || undefined })
+      navigate(`/agent/${session.id}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to start')
+      setCreating(false)
+    }
+  }
 
   // Still loading settings.
   if (configured === null) return null
@@ -70,7 +78,8 @@ function Overview() {
           <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
             <button
               className="btn"
-              onClick={() => setShowNewSession(true)}
+              onClick={handleInstantStart}
+              disabled={creating}
               style={{
                 background: 'var(--info)',
                 color: 'var(--bg)',
@@ -102,14 +111,6 @@ function Overview() {
             <AgentCard key={agent.id} agent={agent} onDelete={() => setAgents(prev => prev.filter(a => a.id !== agent.id))} />
           ))}
         </div>
-      )}
-
-      {/* New session dialog */}
-      {showNewSession && (
-        <NewSessionDialog
-          onStart={handleStartSession}
-          onClose={() => setShowNewSession(false)}
-        />
       )}
     </>
   )
