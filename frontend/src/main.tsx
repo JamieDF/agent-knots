@@ -6,6 +6,7 @@ import Overview from './views/Overview'
 import AgentFocus from './views/AgentFocus'
 import Tasks from './views/Tasks'
 import TaskDetail from './views/TaskDetail'
+import ToolManager from './views/ToolManager'
 import './index.css'
 
 createRoot(document.getElementById('root')!).render(
@@ -17,6 +18,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="agent/:id" element={<AgentFocus />} />
           <Route path="tasks" element={<Tasks />} />
           <Route path="tasks/:id" element={<TaskDetail />} />
+          <Route path="tools" element={<ToolManager />} />
         </Route>
       </Routes>
     </HashRouter>

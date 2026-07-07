@@ -162,7 +162,7 @@ class SessionManager:
         full_prompt = _build_system_prompt(system_prompt, task_context, mode)
 
         # Always include default tools (coding + task management).
-        from agentjam.tools import DEFAULT_TOOLS, auto_approve_tools
+        from agentjam.tools.defaults import DEFAULT_TOOLS, auto_approve_tools
         all_tools = list(tools or []) + DEFAULT_TOOLS
 
         # Auto-approve tool confirmations — agents run non-interactively.

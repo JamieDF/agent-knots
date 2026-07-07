@@ -27,6 +27,7 @@ from agentjam.session.manager import Session, SessionManager
 from agentjam import settings
 from agentjam.task.store import TaskStore
 from agentjam.task.models import Task, TaskStatus, Priority, new_task_id
+from agentjam.tools.registry import ToolRegistry, CustomTool
 
 
 # ── request models (module-level so FastAPI can resolve them) ────────────────
@@ -368,6 +369,110 @@ def create_app(
         except ValueError:
             raise HTTPException(status_code=404, detail="Task not found")
         return {"status": "ok"}
+
+    # ── tool API ─────────────────────────────────────────────────────────
+
+    @app.get("/api/tools")
+    async def list_tools():
+        """List all tools (built-in + custom)."""
+        registry = ToolRegistry()
+        tools = registry.list_all()
+        return {
+            "tools": [
+                {
+                    "name": t.name,
+                    "description": t.description,
+                    "builtin": t.builtin,
+                    "enabled": t.enabled,
+                    "created_at": t.created_at,
+                }
+                for t in tools
+            ]
+        }
+
+    @app.get("/api/tools/{name}")
+    async def get_tool(name: str):
+        """Get a custom tool's full definition."""
+        registry = ToolRegistry()
+        ct = registry.get_custom(name)
+        if ct is None:
+            raise HTTPException(status_code=404, detail="Custom tool not found")
+        return {
+            "name": ct.name,
+            "description": ct.description,
+            "command": ct.command,
+            "parameters": ct.parameters,
+            "enabled": ct.enabled,
+            "created_at": ct.created_at,
+        }
+
+    class CreateToolRequest(BaseModel):
+        name: str
+        description: str = ""
+        command: str
+        parameters: list[dict] = []
+
+    @app.post("/api/tools")
+    async def create_tool(body: CreateToolRequest):
+        """Create a new custom tool."""
+        registry = ToolRegistry()
+        ct = CustomTool(
+            name=body.name,
+            description=body.description,
+            command=body.command,
+            parameters=body.parameters,
+        )
+        try:
+            registry.add_custom(ct)
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return {"status": "ok", "name": ct.name}
+
+    class UpdateToolRequest(BaseModel):
+        description: str | None = None
+        command: str | None = None
+        parameters: list[dict] | None = None
+
+    @app.patch("/api/tools/{name}")
+    async def update_tool(name: str, body: UpdateToolRequest):
+        """Update a custom tool."""
+        registry = ToolRegistry()
+        ct = registry.get_custom(name)
+        if ct is None:
+            raise HTTPException(status_code=404, detail="Custom tool not found")
+        if body.description is not None:
+            ct.description = body.description
+        if body.command is not None:
+            ct.command = body.command
+        if body.parameters is not None:
+            ct.parameters = body.parameters
+        registry.update_custom(ct)
+        return {"status": "ok"}
+
+    @app.delete("/api/tools/{name}")
+    async def delete_tool(name: str):
+        """Delete a custom tool."""
+        registry = ToolRegistry()
+        try:
+            registry.delete_custom(name)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Custom tool not found")
+        return {"status": "ok"}
+
+    @app.post("/api/tools/{name}/toggle")
+    async def toggle_tool(name: str):
+        """Toggle a tool's enabled state (built-in or custom)."""
+        registry = ToolRegistry()
+        # Try custom first, then built-in.
+        if registry.get_custom(name):
+            ct = registry.toggle_custom(name)
+            return {"enabled": ct.enabled}
+        # Check if it's a built-in.
+        builtins = {t.name for t in registry.list_builtin()}
+        if name in builtins:
+            info = registry.toggle_builtin(name)
+            return {"enabled": info.enabled}
+        raise HTTPException(status_code=404, detail="Tool not found")
 
     @app.get("/api/health")
     async def health():
