@@ -292,63 +292,98 @@ class SessionManager:
     def _chunk_to_event(session_id: str, chunk: Any) -> Event | None:
         """Translate a Strands stream chunk into an agentjam Event.
 
-        Strands stream_async yields various event types. We map them to
-        our simplified event model:
-          - str → message
-          - dict with "type": "tool_call" → tool_call
-          - dict with "type": "tool_result" → tool_result
-          - dict with "type": "thinking" → thinking
+        Strands stream_async yields various chunk types:
+          - {'event': {'contentBlockDelta': {'delta': {'text': '...'}}}} — text delta
+          - {'data': '...'} — accumulated text
+          - {'message': {...}} — final message
+          - {'result': AgentResult} — completion
+          - {'event': {'messageStart'}} / {'event': {'messageStop'}} — lifecycle
         """
         now = time.time()
 
-        if isinstance(chunk, str):
+        if not isinstance(chunk, dict):
+            return None
+
+        # Lifecycle bookmarks — skip, handled by state change events.
+        if any(k in chunk for k in ('init_event_loop', 'start', 'start_event_loop',
+                                       'force_stop', 'force_stop_reason')):
+            return None
+
+        # Text delta from content block.
+        if 'event' in chunk:
+            evt = chunk['event']
+            if 'contentBlockDelta' in evt:
+                text = evt['contentBlockDelta'].get('delta', {}).get('text', '')
+                if text:
+                    return Event(
+                        type=EventType.MESSAGE if not _is_thinking(text) else EventType.THINKING,
+                        session_id=session_id,
+                        message=text,
+                        timestamp=now,
+                    )
+            # Other events (messageStart, messageStop) — skip.
+            return None
+
+        # Accumulated text delta (contains the full text so far).
+        if 'data' in chunk and 'delta' in chunk:
+            delta = chunk['delta'].get('text', '')
+            if delta:
+                return Event(
+                    type=EventType.MESSAGE if not _is_thinking(delta) else EventType.THINKING,
+                    session_id=session_id,
+                    message=delta,
+                    timestamp=now,
+                )
+
+        # Final message.
+        if 'message' in chunk:
+            msg = chunk['message']
+            content = msg.get('content', '')
+            if isinstance(content, list):
+                # Content blocks — extract text.
+                text = ''.join(c.get('text', '') for c in content if isinstance(c, dict))
+            else:
+                text = str(content)
+            # Check if it's a thinking block.
+            if '<think>' in text:
+                # Extract thinking and response separately.
+                parts = text.split('</think>')
+                if len(parts) > 1:
+                    return Event(
+                        type=EventType.MESSAGE,
+                        session_id=session_id,
+                        message=parts[-1].strip(),
+                        timestamp=now,
+                    )
             return Event(
                 type=EventType.MESSAGE,
                 session_id=session_id,
-                message=chunk,
+                message=text,
                 timestamp=now,
             )
 
-        if isinstance(chunk, dict):
-            chunk_type = chunk.get("type", "")
-
-            if chunk_type == "tool_call":
-                tc = ToolCall(
-                    id=chunk.get("id", ""),
-                    name=chunk.get("name", ""),
-                    args=chunk.get("args", {}),
-                )
-                return Event(
-                    type=EventType.TOOL_CALL,
-                    session_id=session_id,
-                    tool_call=tc,
-                    timestamp=now,
-                )
-
-            if chunk_type == "tool_result":
-                return Event(
-                    type=EventType.TOOL_RESULT,
-                    session_id=session_id,
-                    message=chunk.get("output", ""),
-                    data=chunk,
-                    timestamp=now,
-                )
-
-            if chunk_type == "thinking":
-                return Event(
-                    type=EventType.THINKING,
-                    session_id=session_id,
-                    message=chunk.get("content", ""),
-                    timestamp=now,
-                )
-
-            # Fallback: pass through as a message.
+        # Result — final completion.
+        if 'result' in chunk:
             return Event(
-                type=EventType.MESSAGE,
+                type=EventType.STATE_CHANGE,
                 session_id=session_id,
-                message=str(chunk),
-                data=chunk,
+                message='Agent finished.',
                 timestamp=now,
             )
+
+        # Fallback — any dict with text-like content.
+        for key in ('text', 'content', 'output'):
+            if key in chunk:
+                return Event(
+                    type=EventType.MESSAGE,
+                    session_id=session_id,
+                    message=str(chunk[key]),
+                    timestamp=now,
+                )
 
         return None
+
+
+def _is_thinking(text: str) -> bool:
+    """Heuristic: detect if text is inside a <think> block."""
+    return '<think>' in text or text.strip().startswith('</think>')

@@ -7,7 +7,7 @@ interface Props {
 
 const PRESETS: Record<string, { model: string; base_url: string }> = {
   openai: { model: 'openai/gpt-4o-mini', base_url: '' },
-  minimax: { model: 'openai/minimax-m2.7', base_url: 'https://api.minimax.io/v1' },
+  minimax: { model: 'minimax-m2.7', base_url: 'https://api.minimax.io/v1' },
   anthropic: { model: 'anthropic/claude-sonnet-4-20250514', base_url: '' },
   ollama: { model: 'ollama/llama3', base_url: 'http://localhost:11434/v1' },
   custom: { model: '', base_url: '' },

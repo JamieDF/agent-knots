@@ -53,58 +53,71 @@ class TestSession:
 
 
 class TestChunkToEvent:
-    def test_string_chunk(self):
-        evt = SessionManager._chunk_to_event("sid", "hello")
+    def test_content_block_delta(self):
+        """Real Strands chunk: contentBlockDelta event."""
+        evt = SessionManager._chunk_to_event("sid", {
+            "event": {"contentBlockDelta": {"delta": {"text": "hello world"}}},
+        })
         assert evt is not None
         assert evt.type == EventType.MESSAGE
-        assert evt.message == "hello"
-        assert evt.session_id == "sid"
+        assert evt.message == "hello world"
 
-    def test_thinking_chunk(self):
-        evt = SessionManager._chunk_to_event("sid", {"type": "thinking", "content": "hmm..."})
-        assert evt is not None
-        assert evt.type == EventType.THINKING
-        assert evt.message == "hmm..."
-
-    def test_tool_call_chunk(self):
+    def test_data_delta(self):
+        """Real Strands chunk: data + delta."""
         evt = SessionManager._chunk_to_event("sid", {
-            "type": "tool_call",
-            "id": "tc1",
-            "name": "bash",
-            "args": {"command": "ls -la"},
+            "data": "accumulated text",
+            "delta": {"text": "new text"},
         })
         assert evt is not None
-        assert evt.type == EventType.TOOL_CALL
-        assert evt.tool_call is not None
-        assert evt.tool_call.name == "bash"
-        assert evt.tool_call.args == {"command": "ls -la"}
+        assert evt.type == EventType.MESSAGE
+        assert evt.message == "new text"
 
-    def test_tool_result_chunk(self):
+    def test_message_chunk(self):
+        """Real Strands chunk: final message."""
         evt = SessionManager._chunk_to_event("sid", {
-            "type": "tool_result",
-            "output": "file1.txt\nfile2.txt",
+            "message": {"role": "assistant", "content": [{"text": "final response"}]},
         })
         assert evt is not None
-        assert evt.type == EventType.TOOL_RESULT
-        assert evt.message == "file1.txt\nfile2.txt"
+        assert evt.type == EventType.MESSAGE
+        assert "final response" in evt.message
+
+    def test_message_with_think(self):
+        """MiniMax returns <think> tags in content."""
+        evt = SessionManager._chunk_to_event("sid", {
+            "message": {"role": "assistant", "content": [
+                {"text": "<think>\nreasoning here\n</think>\n\nactual answer"}
+            ]},
+        })
+        assert evt is not None
+        assert evt.type == EventType.MESSAGE
+        assert "actual answer" in evt.message
+        assert "reasoning" not in evt.message  # thinking stripped
+
+    def test_result_chunk(self):
+        """Real Strands chunk: result."""
+        evt = SessionManager._chunk_to_event("sid", {
+            "result": "AgentResult(...)",
+        })
+        assert evt is not None
+        assert evt.type == EventType.STATE_CHANGE
+        assert "finished" in evt.message.lower()
+
+    def test_lifecycle_skipped(self):
+        """Lifecycle bookmarks should be skipped."""
+        assert SessionManager._chunk_to_event("sid", {"init_event_loop": True}) is None
+        assert SessionManager._chunk_to_event("sid", {"start": True}) is None
+        assert SessionManager._chunk_to_event("sid", {"start_event_loop": True}) is None
 
     def test_none_chunk(self):
         assert SessionManager._chunk_to_event("sid", None) is None
 
-    def test_unknown_dict_chunk(self):
-        """Unknown dict types become MESSAGE events."""
-        evt = SessionManager._chunk_to_event("sid", {"something": "else"})
-        assert evt is not None
-        assert evt.type == EventType.MESSAGE
+    def test_string_chunk(self):
+        """Strings are not valid chunks."""
+        assert SessionManager._chunk_to_event("sid", "hello") is None
 
-    def test_tool_call_without_id(self):
-        evt = SessionManager._chunk_to_event("sid", {
-            "type": "tool_call",
-            "name": "read",
-        })
-        assert evt is not None
-        assert evt.tool_call is not None
-        assert evt.tool_call.id == ""
+    def test_empty_dict(self):
+        """Empty dicts produce no event."""
+        assert SessionManager._chunk_to_event("sid", {}) is None
 
 
 class TestSessionManager:
