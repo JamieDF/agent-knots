@@ -482,31 +482,54 @@ test.describe('task UI', () => {
 
 // ── agent task tools ────────────────────────────────────────────────────────
 
+/** Poll a task until the agent modifies it (progress or status change). */
+async function waitForAgentToModifyTask(page: any, taskId: string, maxSec = 120): Promise<any> {
+  const deadline = Date.now() + maxSec * 1000
+  while (Date.now() < deadline) {
+    const res = await page.request.get(`${BASE}/api/tasks/${taskId}`)
+    const task = await res.json()
+    if (task.progress.length > 0 || task.status !== 'open') {
+      return task
+    }
+    await new Promise(r => setTimeout(r, 3000))
+  }
+  // One final check.
+  const res = await page.request.get(`${BASE}/api/tasks/${taskId}`)
+  return res.json()
+}
+
 test.describe('agent task tools', () => {
 
   test.beforeEach(async ({ page }) => {
     await authPage(page)
   })
 
-  test('agent logs progress via tools', async ({ page }) => {
-    test.setTimeout(120000)
+  test('agent logs progress and updates task status', async ({ page }) => {
+    test.setTimeout(180000)
+
+    // Create task.
     const taskRes = await page.request.post(`${BASE}/api/tasks`, {
-      data: { title: 'Tool test', priority: 'medium' },
+      data: { title: 'Agent tool e2e test', description: 'Agent must log progress.', priority: 'medium' },
     })
     const task = await taskRes.json()
+    console.log(`Task: ${task.id}`)
 
+    // Start agent session.
     const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
       data: {
-        prompt: 'Use log_progress at least twice. Then update_task_status to done.',
+        prompt: 'Use log_progress to record that you started work. Then use update_task_status to mark the task in_progress.',
         mode: 'agent',
         task_id: task.id,
       },
     })
     expect(sessionRes.status()).toBe(200)
+    const session = await sessionRes.json()
+    console.log(`Session: ${session.id}`)
 
-    await page.waitForTimeout(60000)
+    // Poll until agent modifies the task (up to 2 min).
+    const updated = await waitForAgentToModifyTask(page, task.id, 120)
+    console.log(`Final: status=${updated.status}, progress=${updated.progress.length}`)
 
-    const updated = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
     expect(updated.progress.length).toBeGreaterThanOrEqual(1)
     await page.request.delete(`${BASE}/api/tasks/${task.id}`)
   })
@@ -522,23 +545,23 @@ test.describe('cockpit — agent task tools', () => {
   })
 
   test('watch agent use task tools in cockpit', async ({ page }) => {
-    test.setTimeout(120000)
+    test.setTimeout(180000)
 
-    // 1. Create a task via API.
+    // Create task.
     const taskRes = await page.request.post(`${BASE}/api/tasks`, {
       data: {
-        title: 'Cockpit tool test',
-        description: 'Agent should log progress and update status.',
+        title: 'Cockpit tool e2e test',
+        description: 'Agent should log progress.',
         priority: 'high',
-        acceptance_criteria: ['Agent logs progress', 'Agent updates status to done'],
+        acceptance_criteria: ['Agent logs progress'],
       },
     })
     const task = await taskRes.json()
 
-    // 2. Start a session with the task.
+    // Start session.
     const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
       data: {
-        prompt: 'Use log_progress at least once to record you started. Then use update_task_status to set the task to in_progress.',
+        prompt: 'Use log_progress to record you started. Then use update_task_status to set task to in_progress.',
         mode: 'agent',
         task_id: task.id,
       },
@@ -546,36 +569,25 @@ test.describe('cockpit — agent task tools', () => {
     expect(sessionRes.status()).toBe(200)
     const session = await sessionRes.json()
 
-    // 3. Navigate to overview and find the agent card.
+    // Navigate to cockpit and find the agent card.
     await page.goto(BASE)
     await page.waitForTimeout(3000)
-
     const card = page.locator(`text=${session.id}`)
     await expect(card).toBeVisible({ timeout: 10000 })
 
-    // 4. Click into the agent focus view.
+    // Click into focus view.
     await card.click()
     await page.waitForTimeout(2000)
 
-    // 5. Wait for tool events to appear in the SSE stream.
-    // Tool cards have class 'tool-card'.
-    await page.waitForTimeout(15000)
+    // Poll the task until the agent modifies it (checking via API in background).
+    const updated = await waitForAgentToModifyTask(page, task.id, 120)
+    console.log(`Agent finished: status=${updated.status}, progress=${updated.progress.length}`)
 
-    // Check for tool activity — either tool cards or the agent finishing.
+    // Check cockpit UI for any tool cards that appeared.
     const toolCards = await page.locator('.tool-card').count()
-    const finished = await page.locator('text=Session ended').count()
+    console.log(`Tool cards in UI: ${toolCards}`)
 
-    console.log(`Tool cards visible: ${toolCards}, finished: ${finished}`)
-
-    // 6. Verify the task was updated.
-    const updated = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
-    console.log(`Task status: ${updated.status}, progress: ${updated.progress.length}`)
-
-    // Task should have been modified by the agent.
-    const taskTouched = updated.status !== 'open' || updated.progress.length > 0
-    expect(taskTouched).toBe(true)
-
-    // Cleanup.
+    expect(updated.progress.length).toBeGreaterThanOrEqual(1)
     await page.request.delete(`${BASE}/api/tasks/${task.id}`)
   })
 
