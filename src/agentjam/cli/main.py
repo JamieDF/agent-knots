@@ -151,7 +151,8 @@ def _launch_web(host: str, port: int) -> None:
     mgr = SessionManager(sessions_dir())
 
     # Check for static build.
-    static_dir = Path(__file__).parent.parent.parent.parent.parent / "frontend" / "dist"
+    # __file__ is src/agentjam/cli/main.py → 4 parents up = project root.
+    static_dir = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
     if not static_dir.exists():
         typer.echo("Warning: frontend not built. Run: cd frontend && npm run build")
         typer.echo("Serving inline SPA shell instead.")

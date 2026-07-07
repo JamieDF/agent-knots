@@ -18,11 +18,13 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from agentjam.cockpit.web.auth import Auth, COOKIE_NAME, load_or_create_token
 from agentjam.config import cockpit_token_file
 from agentjam.events import Event, EventType
 from agentjam.session.manager import Session, SessionManager
+from agentjam import settings
 
 
 def create_app(
@@ -178,6 +180,77 @@ def create_app(
         """Send a message to an agent."""
         await session_manager.send(agent_id, message)
         return {"status": "ok"}
+
+    # ── settings API ─────────────────────────────────────────────────────
+
+    @app.get("/api/settings")
+    async def get_settings():
+        """Return current settings (API key masked)."""
+        s = settings.load()
+        return {
+            "configured": settings.is_configured(),
+            "agent": {
+                "default_model": s.agent.default_model,
+                "api_key": settings.mask_key(s.agent.api_key),
+                "base_url": s.agent.base_url,
+                "default_mode": s.agent.default_mode,
+            },
+        }
+
+    class SaveSettingsBody(BaseModel):
+        default_model: str = "openai/gpt-4o-mini"
+        api_key: str = ""
+        base_url: str = ""
+        default_mode: str = "agent"
+
+    @app.put("/api/settings")
+    async def save_settings(body: SaveSettingsBody):
+        """Save settings. If api_key is all asterisks, preserve existing key."""
+        s = settings.load()
+        s.agent.default_model = body.default_model
+        s.agent.base_url = body.base_url
+        s.agent.default_mode = body.default_mode
+
+        # Only update API key if a real value was provided (not masked).
+        if body.api_key and not body.api_key.startswith("****"):
+            s.agent.api_key = body.api_key
+
+        settings.save(s)
+        return {"status": "ok", "configured": settings.is_configured()}
+
+    # ── session management API ────────────────────────────────────────────
+
+    class CreateSessionBody(BaseModel):
+        prompt: str = ""
+        mode: str = "agent"
+        task_id: str | None = None
+        project_id: str | None = None
+
+    @app.post("/api/sessions")
+    async def create_session(body: CreateSessionBody):
+        """Start a new agent session in the background."""
+        if not settings.is_configured():
+            raise HTTPException(status_code=400, detail="Settings not configured. Run setup first.")
+
+        s = settings.load()
+        try:
+            session = await session_manager.start(
+                model=s.agent.default_model,
+                api_key=s.agent.api_key,
+                base_url=s.agent.base_url or None,
+                mode=body.mode,
+                task_id=body.task_id,
+                project_id=body.project_id,
+                task_description=body.prompt,
+            )
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+        return {
+            "id": session.id,
+            "mode": session.mode,
+            "running": session.running,
+        }
 
     # ── health ───────────────────────────────────────────────────────────
 

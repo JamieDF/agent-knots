@@ -20,11 +20,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
-
-import yaml
-
-from agentjam.config import settings_file
 
 
 @dataclass
@@ -86,20 +81,11 @@ def resolve_provider(
 
 def _load_settings() -> dict[str, str]:
     """Load the [agent] section from settings.yaml, if it exists."""
-    path = settings_file()
-    if not path.exists():
-        return {}
+    from agentjam.settings import load as load_settings
 
-    try:
-        data = yaml.safe_load(path.read_text()) or {}
-    except (yaml.YAMLError, OSError):
-        return {}
-
-    if not isinstance(data, dict):
-        return {}
-
-    agent_section = data.get("agent", {})
-    if not isinstance(agent_section, dict):
-        return {}
-
-    return agent_section
+    s = load_settings()
+    return {
+        "default_model": s.agent.default_model,
+        "api_key": s.agent.api_key,
+        "base_url": s.agent.base_url,
+    }
