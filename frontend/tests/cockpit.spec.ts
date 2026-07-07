@@ -931,3 +931,93 @@ test.describe('task modal editing', () => {
     await page.request.delete(`${BASE}/api/tasks/${id}`)
   })
 })
+
+// ── session-task assignment ─────────────────────────────────────────────────
+
+test.describe('session-task assignment', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('starting session on task moves it to in_progress', async ({ page }) => {
+    // Create a task.
+    const taskRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Assignment test task', priority: 'medium' },
+    })
+    const task = await taskRes.json()
+    expect(task.status).toBe('open')
+
+    // Start a session assigned to this task.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: { prompt: 'Say hello', mode: 'agent', task_id: task.id },
+    })
+    expect(sessionRes.status()).toBe(200)
+
+    // Wait briefly for session to start.
+    await page.waitForTimeout(3000)
+
+    // Verify task status changed to in_progress.
+    const updated = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+    expect(updated.status).toBe('in_progress')
+    expect(updated.assigned_to).toBeTruthy()
+
+    // Cleanup — stop the session and delete the task.
+    const session = await sessionRes.json()
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+  })
+
+  test('board start session button appears on expanded card', async ({ page }) => {
+    // Create a task.
+    const taskRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Board start test', priority: 'high' },
+    })
+    const task = await taskRes.json()
+
+    // Navigate to board.
+    await page.goto(`${BASE}/#/board`)
+    await page.waitForTimeout(2000)
+
+    // Find and expand the task card.
+    const card = page.locator(`text=${task.title}`)
+    await expect(card).toBeVisible({ timeout: 5000 })
+    await card.click()
+    await page.waitForTimeout(300)
+
+    // Should see the Start session button.
+    const startBtn = page.locator('text=Start session')
+    await expect(startBtn).toBeVisible({ timeout: 3000 })
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+  })
+
+  test('overview + button shows task picker', async ({ page }) => {
+    // Create some open tasks.
+    const t1 = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Picker task 1' } })
+    const t2 = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Picker task 2' } })
+    const id1 = (await t1.json()).id; const id2 = (await t2.json()).id
+
+    // Go to overview.
+    await page.goto(BASE)
+    await page.waitForTimeout(2000)
+
+    // Click + New Session.
+    const addBtn = page.locator('text=New Session')
+    await expect(addBtn).toBeVisible({ timeout: 5000 })
+    await addBtn.click()
+    await page.waitForTimeout(500)
+
+    // Task picker dropdown should show.
+    await expect(page.locator('text=Attach to task')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('text=Picker task 1')).toBeVisible()
+    await expect(page.locator('text=Picker task 2')).toBeVisible()
+    await expect(page.locator('text=No task — just start')).toBeVisible()
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${id1}`)
+    await page.request.delete(`${BASE}/api/tasks/${id2}`)
+  })
+
+})
