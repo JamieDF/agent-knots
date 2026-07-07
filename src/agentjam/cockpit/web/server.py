@@ -39,7 +39,8 @@ class SaveSettingsRequest(BaseModel):
     default_model: str = "openai/gpt-4o-mini"
     api_key: str = ""
     base_url: str = ""
-    default_mode: str = "agent"
+    default_mode: str = ""
+    runtime: str = ""
 
 
 class CreateSessionRequest(BaseModel):
@@ -543,6 +544,7 @@ def create_app(
         name: Optional[str] = None
         description: Optional[str] = None
         repository: Optional[str] = None
+        runtime: Optional[str] = None
         tags: Optional[list] = None
 
     @app.patch("/api/workspaces/{workspace_id}")

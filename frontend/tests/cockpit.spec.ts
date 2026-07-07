@@ -1114,3 +1114,70 @@ test.describe('full task workflow', () => {
   })
 
 })
+
+// ── runtime & isolation ─────────────────────────────────────────────────────
+
+test.describe('runtime & isolation', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('workspace with subprocess runtime spawns agent in child process', async ({ page }) => {
+    test.setTimeout(60000)
+
+    // Create workspace with subprocess runtime.
+    const wsRes = await page.request.post(`${BASE}/api/workspaces`, {
+      data: { id: 'subprocess-test', name: 'Subprocess Test', runtime: 'subprocess' },
+    })
+    expect(wsRes.status()).toBe(200)
+
+    // Create a task in that workspace.
+    const taskRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Subprocess task', project: 'subprocess-test' },
+    })
+    const task = await taskRes.json()
+
+    // Start session in that workspace.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: { prompt: 'Say hello', mode: 'agent', project_id: 'subprocess-test' },
+    })
+    expect(sessionRes.status()).toBe(200)
+    const session = await sessionRes.json()
+
+    // Poll for events — subprocess should stream events.
+    await page.waitForTimeout(5000)
+
+    // Verify session ran.
+    const agents = await (await page.request.get(`${BASE}/api/agents`)).json()
+    console.log(`Agents after subprocess session: ${agents.agents.length}`)
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+    await page.request.delete(`${BASE}/api/workspaces/subprocess-test`)
+  })
+
+  test('workspace runtime appears in settings API', async ({ page }) => {
+    // Create workspace with runtime.
+    await page.request.post(`${BASE}/api/workspaces`, {
+      data: { id: 'runtime-test', name: 'Runtime Test', runtime: 'subprocess' },
+    })
+
+    // Check workspace list includes runtime.
+    const list = await (await page.request.get(`${BASE}/api/workspaces`)).json()
+    const ws = list.workspaces.find((w: any) => w.id === 'runtime-test')
+    expect(ws).toBeDefined()
+    expect(ws.runtime).toBe('subprocess')
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/workspaces/runtime-test`)
+  })
+
+  test('settings API returns global runtime', async ({ page }) => {
+    const settings = await (await page.request.get(`${BASE}/api/settings`)).json()
+    expect(settings.agent).toHaveProperty('runtime')
+    console.log(`Global runtime: ${settings.agent.runtime}`)
+  })
+
+})

@@ -151,9 +151,11 @@ def _launch_web(host: str, port: int) -> None:
 
     from agentjam import settings
     from agentjam.session.runtime import set_runtime_type
+    from agentjam.cockpit.web.auth import load_or_create_token
+    from agentjam.cockpit.web.server import create_app
 
     s = settings.load()
-    set_runtime_type(s.agent.runtime)  # Apply runtime setting.
+    set_runtime_type(s.agent.runtime)
 
     mgr = SessionManager(sessions_dir())
 
