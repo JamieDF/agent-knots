@@ -237,11 +237,15 @@ def create_app(
 
     @app.put("/api/settings")
     async def save_settings(body: SaveSettingsRequest):
-        """Save settings. If api_key is all asterisks, preserve existing key."""
+        """Save settings. Empty fields preserve existing values."""
         s = settings.load()
-        s.agent.default_model = body.default_model
-        s.agent.base_url = body.base_url
-        s.agent.default_mode = body.default_mode
+
+        if body.default_model:
+            s.agent.default_model = body.default_model
+        if body.base_url:
+            s.agent.base_url = body.base_url
+        if body.default_mode:
+            s.agent.default_mode = body.default_mode
 
         # Only update API key if a real value was provided (not masked).
         if body.api_key and "..." not in body.api_key and not body.api_key.startswith("****"):

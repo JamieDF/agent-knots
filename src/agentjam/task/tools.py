@@ -144,6 +144,58 @@ def update_task_status(task_id: str, status: str) -> dict:
     }
 
 
+@tool(description="Update a task's details — title, description, priority, or acceptance criteria. Only pass the fields you want to change.")
+def update_task(
+    task_id: str,
+    title: str = "",
+    description: str = "",
+    priority: str = "",
+    acceptance_criteria: list[str] | None = None,
+) -> dict:
+    """Update a task's metadata fields in place.
+
+    Args:
+        task_id: The task ID.
+        title: New title (omit to keep current).
+        description: New description (omit to keep current).
+        priority: New priority (omit to keep current).
+        acceptance_criteria: New acceptance criteria list (omit to keep current).
+
+    Returns:
+        Updated task details.
+    """
+    store = _store()
+    task = store.get(task_id)
+    if task is None:
+        return {"error": f"Task {task_id!r} not found"}
+
+    changed = False
+    if title:
+        task.title = title
+        changed = True
+    if description:
+        task.description = description
+        changed = True
+    if priority:
+        task.priority = Priority(priority)
+        changed = True
+    if acceptance_criteria is not None:
+        task.acceptance_criteria = acceptance_criteria
+        changed = True
+
+    if changed:
+        store.update(task)
+
+    return {
+        "id": task.id,
+        "title": task.title,
+        "description": task.description,
+        "status": task.status.value,
+        "priority": task.priority.value,
+        "acceptance_criteria": task.acceptance_criteria,
+    }
+
+
 @tool(description="Log progress on a task. Call this after every meaningful action so progress survives context loss.")
 def log_progress(
     task_id: str,
@@ -214,6 +266,7 @@ ALL_TASK_TOOLS = [
     read_task,
     list_tasks,
     update_task_status,
+    update_task,
     log_progress,
     add_step,
 ]
