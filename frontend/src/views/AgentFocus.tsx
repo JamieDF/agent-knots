@@ -150,7 +150,7 @@ function AgentFocus() {
           ))}
           <div ref={eventsEndRef} />
         </div>
-        <ChatInput onSend={handleSend} disabled={!agent?.running} />
+        <ChatInput onSend={handleSend} disabled={!agent} />
       </div>
 
       {/* Right sidebar — stats */}
