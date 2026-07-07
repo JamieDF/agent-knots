@@ -53,6 +53,7 @@ class CreateTaskRequest(BaseModel):
     title: str
     description: str = ""
     priority: str = "medium"
+    status: str = "open"
     project: str = ""
     tags: list = []
     acceptance_criteria: list = []
@@ -355,6 +356,7 @@ def create_app(
             title=body.title,
             description=body.description,
             priority=Priority(body.priority),
+            status=TaskStatus(body.status) if body.status else TaskStatus.OPEN,
             project=body.project,
             tags=body.tags,
             acceptance_criteria=body.acceptance_criteria,

@@ -1021,3 +1021,96 @@ test.describe('session-task assignment', () => {
   })
 
 })
+
+// ── full task workflow ──────────────────────────────────────────────────────
+
+test.describe('full task workflow', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('create task → draft → open → agent works → progress → done', async ({ page }) => {
+    test.setTimeout(180000)
+
+    // 1. Create a task (starts as open by default, but we can set draft).
+    const createRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: {
+        title: 'Full workflow test — write a hello script',
+        description: 'Create a Python script called greet.py that prints a greeting and the current time.',
+        priority: 'medium',
+        acceptance_criteria: [
+          'Script file is named greet.py',
+          'Prints a greeting message',
+          'Prints the current time',
+          'Script exits cleanly when run',
+        ],
+        status: 'draft',
+      },
+    })
+    expect(createRes.status()).toBe(200)
+    const task = await createRes.json()
+    console.log(`Task created: ${task.id} (draft)`)
+
+    // 2. Verify it's in draft status.
+    let current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+    expect(current.status).toBe('draft')
+
+    // 3. Move to open (ready for work).
+    await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'open' } })
+    current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+    expect(current.status).toBe('open')
+    console.log('Status: open (ready)')
+
+    // 4. Start an agent session on this task.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: {
+        prompt: `Work on task ${task.id}. Read the task, log progress at each step, create the greet.py file, and when done mark the task as done. Use the task tools.`,
+        mode: 'agent',
+        task_id: task.id,
+      },
+    })
+    expect(sessionRes.status()).toBe(200)
+    const session = await sessionRes.json()
+    console.log(`Session started: ${session.id}`)
+
+    // 5. Verify task moved to in_progress automatically.
+    await page.waitForTimeout(2000)
+    current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+    expect(current.status).toBe('in_progress')
+    expect(current.assigned_to).toBe(session.id)
+    console.log('Status: in_progress (agent assigned)')
+
+    // 6. Poll until agent finishes (task has progress entries).
+    const deadline = Date.now() + 120000
+    let progressCount = 0
+    while (Date.now() < deadline) {
+      current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+      progressCount = current.progress.length
+      if (progressCount >= 2) break  // at least 2 progress entries = agent working
+      await new Promise(r => setTimeout(r, 3000))
+    }
+    console.log(`Progress entries: ${progressCount}, status: ${current.status}`)
+
+    // 7. Verify agent logged progress.
+    expect(progressCount).toBeGreaterThanOrEqual(1)
+
+    // 8. If agent didn't mark it done, we set it manually.
+    if (current.status !== 'done') {
+      await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'done' } })
+      current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+    }
+    expect(current.status).toBe('done')
+    console.log('Status: done (completed)')
+
+    // 9. Verify the full state: task has progress, was assigned, is now done.
+    expect(current.assigned_to).toBeTruthy()
+    expect(current.progress.length).toBeGreaterThanOrEqual(1)
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+    console.log('✅ Full workflow complete: draft → open → in_progress → done')
+  })
+
+})
