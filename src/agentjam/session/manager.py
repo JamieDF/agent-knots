@@ -187,21 +187,41 @@ class SessionManager:
             client_args=client_args or None,
         )
 
-        # Build the sandbox (optional — None means no filesystem sandboxing).
-        sandbox = None
-        if working_dir:
-            sandbox_kwargs: dict[str, Any] = {"workspace": str(working_dir)}
-            try:
-                sandbox = PosixShellSandbox(**sandbox_kwargs)
-            except (TypeError, NotImplementedError):
-                pass
+        # Determine working directory: explicit > workspace repo > cwd.
+        resolved_working_dir = working_dir
+        if not resolved_working_dir and project_id:
+            # Look up the workspace's repository path.
+            from agentjam.project.store import ProjectStore
+            from agentjam.config import projects_dir as _projects_dir
+            ps = ProjectStore(_projects_dir())
+            proj = ps.get(project_id)
+            if proj and proj.repository:
+                resolved_working_dir = proj.repository
+
+        # Swap in sandboxed shell/editor tools if we have a workspace.
+        ws_sandbox = None
+        if resolved_working_dir:
+            from agentjam.isolation import create_sandbox
+            ws_sandbox = create_sandbox(str(resolved_working_dir))
+
+        if ws_sandbox and ws_sandbox.exists:
+            from agentjam.sandbox_tools import make_sandboxed_shell, make_sandboxed_editor
+            ws = ws_sandbox.workspace_dir
+            sb_shell = make_sandboxed_shell(ws)
+            sb_editor = make_sandboxed_editor(ws)
+            all_tools = [
+                sb_shell if getattr(t, '__name__', '') == 'shell'
+                else sb_editor if getattr(t, '__name__', '') == 'editor'
+                else t
+                for t in all_tools
+            ]
 
         # Create the agent.
         agent = Agent(
             model=model_instance,
             tools=all_tools,
             system_prompt=full_prompt,
-            sandbox=sandbox,
+            sandbox=None,
             agent_id=session_id,
         )
 
