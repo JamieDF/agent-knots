@@ -50,7 +50,7 @@ export async function saveSettings(s: { default_model: string; api_key: string; 
   const res = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) })
   if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
 }
-export async function createSession(body: { prompt: string; mode?: string }) {
+export async function createSession(body: { prompt: string; mode?: string; project_id?: string; task_id?: string }) {
   const res = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   if (!res.ok) { const err = await res.json(); throw new Error(err.detail || `HTTP ${res.status}`) }
   return res.json()

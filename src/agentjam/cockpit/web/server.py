@@ -157,9 +157,11 @@ def create_app(
     # ── REST API ─────────────────────────────────────────────────────────
 
     @app.get("/api/agents")
-    async def list_agents():
-        """Return all active sessions as JSON."""
+    async def list_agents(project: str = Query("")):
+        """Return all active sessions, optionally filtered by workspace."""
         sessions = session_manager.active
+        if project:
+            sessions = [s for s in sessions if s.project_id == project]
         return {
             "agents": [
                 {

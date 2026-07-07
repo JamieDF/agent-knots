@@ -3,13 +3,15 @@ import AgentCard from '../components/AgentCard'
 import SetupWizard from '../components/SetupWizard'
 import NewSessionDialog from '../components/NewSessionDialog'
 import { fetchAgents, fetchSettings, createSession, type AgentInfo } from '../lib/api'
+import { getActiveWorkspace } from '../lib/workspace'
 
 function Overview() {
   const [agents, setAgents] = useState<AgentInfo[]>([])
-  const [configured, setConfigured] = useState<boolean | null>(null) // null = loading
+  const [configured, setConfigured] = useState<boolean | null>(null)
   const [showWizard, setShowWizard] = useState(false)
   const [showNewSession, setShowNewSession] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const workspace = getActiveWorkspace()
 
   // Check if settings are configured.
   useEffect(() => {
@@ -28,7 +30,11 @@ function Overview() {
       try {
         const data = await fetchAgents()
         if (mounted) {
-          setAgents(data.agents)
+          // Filter by active workspace.
+          const filtered = workspace
+            ? data.agents.filter(a => a.project_id === workspace)
+            : data.agents
+          setAgents(filtered)
           setError(null)
         }
       } catch (err) {
@@ -45,8 +51,8 @@ function Overview() {
     setShowWizard(false)
   }, [])
 
-  const handleStartSession = useCallback(async (prompt: string, mode: string) => {
-    await createSession({ prompt, mode })
+  const handleStartSession = useCallback(async (prompt: string, mode: string, project: string) => {
+    await createSession({ prompt, mode, project_id: project || undefined })
   }, [])
 
   // Still loading settings.
