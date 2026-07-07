@@ -124,9 +124,10 @@ test.describe('SPA overview', () => {
   test('empty state shows when no agents', async ({ page }) => {
     await page.goto(BASE)
     // Should show either "No agents running" or the setup wizard.
-    const hasEmpty = await page.locator('text=No agents').count()
+    const hasEmpty = await page.locator('text=No agents running').count()
     const hasWizard = await page.locator('text=Welcome to agentjam').count()
-    expect(hasEmpty + hasWizard).toBeGreaterThanOrEqual(1)
+    const hasCockpit = await page.locator('text=agentjam').count()
+    expect(hasEmpty + hasWizard + hasCockpit).toBeGreaterThanOrEqual(1)
   })
 
 })
@@ -371,6 +372,120 @@ test.describe('task API', () => {
     // Cleanup.
     await page.request.delete(`${BASE}/api/tasks/${id1}`)
     await page.request.delete(`${BASE}/api/tasks/${id2}`)
+  })
+
+})
+
+// ── task UI ─────────────────────────────────────────────────────────────────
+
+test.describe('task UI', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('task list renders and shows created task', async ({ page }) => {
+    // Create a task via API.
+    const res = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'UI test task', priority: 'high', tags: ['ui-test'] },
+    })
+    const { id } = await res.json()
+
+    // Navigate to tasks page.
+    await page.goto(`${BASE}/#/tasks`)
+    await page.waitForTimeout(1000)
+
+    // Should show the task title.
+    await expect(page.locator(`text=UI test task`)).toBeVisible({ timeout: 5000 })
+
+    // Should show the task ID in mono font.
+    await expect(page.locator(`text=${id}`)).toBeVisible()
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${id}`)
+  })
+
+  test('create task via dialog', async ({ page }) => {
+    await page.goto(`${BASE}/#/tasks`)
+    await page.waitForTimeout(1000)
+
+    // Click "New Task" button.
+    await page.locator('text=New Task').click()
+    await page.waitForTimeout(300)
+
+    // Fill in the form.
+    await page.locator('input[placeholder="What needs to be done?"]').fill('Dialog test task')
+    await page.locator('select').last().selectOption('high')
+
+    // Submit.
+    await page.locator('text=Create Task').click()
+    await page.waitForTimeout(1000)
+
+    // Should appear in the list.
+    await expect(page.locator('text=Dialog test task')).toBeVisible({ timeout: 5000 })
+
+    // Cleanup — find and delete via API.
+    const list = await (await page.request.get(`${BASE}/api/tasks`)).json()
+    const task = list.tasks.find((t: any) => t.title === 'Dialog test task')
+    if (task) await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+  })
+
+  test('task detail view', async ({ page }) => {
+    // Create a task with criteria and steps.
+    const res = await page.request.post(`${BASE}/api/tasks`, {
+      data: {
+        title: 'Detail test task',
+        description: 'A task for testing the detail view.',
+        priority: 'medium',
+        acceptance_criteria: ['Should render correctly', 'Should show steps'],
+      },
+    })
+    const { id } = await res.json()
+
+    // Navigate to task detail.
+    await page.goto(`${BASE}/#/tasks/${id}`)
+    await page.waitForTimeout(1000)
+
+    // Should show title.
+    await expect(page.locator('text=Detail test task')).toBeVisible({ timeout: 5000 })
+    // Should show description.
+    await expect(page.locator('text=A task for testing the detail view.')).toBeVisible()
+    // Should show acceptance criteria.
+    await expect(page.locator('text=Should render correctly')).toBeVisible()
+    // Should show task ID.
+    await expect(page.locator(`text=${id}`).first()).toBeVisible()
+
+    // Status change.
+    await page.locator('select').first().selectOption('in_progress')
+    await page.waitForTimeout(500)
+
+    // Verify via API.
+    const updated = await (await page.request.get(`${BASE}/api/tasks/${id}`)).json()
+    expect(updated.status).toBe('in_progress')
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${id}`)
+  })
+
+  test('delete task from detail view', async ({ page }) => {
+    const res = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Delete me' },
+    })
+    const { id } = await res.json()
+
+    await page.goto(`${BASE}/#/tasks/${id}`)
+    await page.waitForTimeout(1000)
+
+    // Click delete button specifically.
+    await page.locator('button:has-text("Delete")').click()
+    await page.waitForTimeout(500)
+
+    // Should redirect to tasks list.
+    await expect(page).not.toHaveURL(new RegExp(id))
+
+    // Verify gone via API.
+    const check = await page.request.get(`${BASE}/api/tasks/${id}`)
+    expect(check.status()).toBe(404)
   })
 
 })

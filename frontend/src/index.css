@@ -17,6 +17,8 @@
   --assumed: oklch(76% 0.16 75);
   --info: oklch(68% 0.12 235);
   --done: oklch(64% 0.06 155);
+  --blocked-bg: oklch(76% 0.14 65 / 0.06);
+  --blocked-bd: oklch(76% 0.14 65 / 0.22);
   --font: 'DM Sans', system-ui, sans-serif;
   --font-mono: 'DM Mono', monospace;
 }
