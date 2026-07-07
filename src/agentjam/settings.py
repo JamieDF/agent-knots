@@ -21,6 +21,7 @@ class AgentSettings:
     api_key: str = ""
     base_url: str = ""
     default_mode: str = "agent"
+    runtime: str = "inprocess"  # "inprocess" or "subprocess"
 
 
 @dataclass
@@ -48,6 +49,7 @@ def load() -> Settings:
         api_key=agent_data.get("api_key", ""),
         base_url=agent_data.get("base_url", ""),
         default_mode=agent_data.get("default_mode", "agent"),
+        runtime=agent_data.get("runtime", "inprocess"),
     )
 
     return Settings(agent=agent)

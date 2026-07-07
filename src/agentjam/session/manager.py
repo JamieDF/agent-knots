@@ -230,16 +230,32 @@ class SessionManager:
             mode=mode,
             task_id=task_id,
             project_id=project_id,
-            working_dir=working_dir,
+            working_dir=resolved_working_dir,
             _agent=agent,
         )
         self._sessions[session_id] = session
 
-        # Start the agent in the background.
-        if task_description:
-            session._task = asyncio.create_task(
-                self._run_agent(session, agent, task_description)
-            )
+        # Choose runtime based on global setting.
+        from agentjam.session.runtime import get_runtime_type, create_runtime
+
+        runtime_type = get_runtime_type()
+        if runtime_type == "subprocess":
+            # Subprocess runtime handles its own event streaming.
+            runtime = create_runtime()
+            await runtime.start(session, {
+                "model": provider.model,
+                "api_key": provider.api_key,
+                "base_url": provider.base_url or "",
+                "workspace_dir": resolved_working_dir or "",
+                "system_prompt": full_prompt,
+                "task_description": task_description or "",
+            })
+        else:
+            # In-process: fire up the agent in a background task.
+            if task_description:
+                session._task = asyncio.create_task(
+                    self._run_agent(session, agent, task_description)
+                )
 
         return session
 

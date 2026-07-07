@@ -257,6 +257,7 @@ def create_app(
                 "api_key": settings.mask_key(s.agent.api_key),
                 "base_url": s.agent.base_url,
                 "default_mode": s.agent.default_mode,
+                "runtime": s.agent.runtime,
             },
         }
 
@@ -271,6 +272,8 @@ def create_app(
             s.agent.base_url = body.base_url
         if body.default_mode:
             s.agent.default_mode = body.default_mode
+        if body.runtime:
+            s.agent.runtime = body.runtime
 
         # Only update API key if a real value was provided (not masked).
         if body.api_key and "..." not in body.api_key and not body.api_key.startswith("****"):
