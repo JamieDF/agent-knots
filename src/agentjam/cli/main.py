@@ -253,17 +253,30 @@ def status() -> None:
 @vault_app.command()
 def add(
     cred_id: str = typer.Argument(..., help="Credential ID (e.g. 'github/work')."),
-    value: str = typer.Option(..., "--value", help="The secret value.", prompt=True, hide_input=True),
+    value: str = typer.Option("", "--value", help="The secret value. If omitted, you'll be prompted."),
     description: str = typer.Option("", "--description", help="Human-readable note."),
     tag: list[str] = typer.Option([], "--tag", help="Tags for this credential (repeatable)."),
 ) -> None:
-    """Add a new credential to the vault."""
+    """Add a new credential to the vault.
+
+    Examples:
+        agentjam vault add github --value ghp_xxx --tag git
+        agentjam vault add openai --tag production   (prompts for value)
+    """
     from agentjam.vault.store import Credential
 
     store = _get_vault()
     if store.lock_state != LockState.UNLOCKED:
         typer.echo("Vault is locked. Use 'vault unlock' first.")
         raise typer.Exit(1)
+
+    # If no value given on CLI, prompt securely.
+    if not value:
+        value = typer.prompt("Credential value", hide_input=True)
+        confirm = typer.prompt("Confirm value", hide_input=True)
+        if value != confirm:
+            typer.echo("Values do not match.")
+            raise typer.Exit(1)
 
     try:
         store.add_credential(Credential(
