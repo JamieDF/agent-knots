@@ -1,12 +1,27 @@
 """agentjam CLI entry point.
 
-All subcommands are registered here. Each subcommand is a separate module
-in the cli/ package to keep things manageable as the command set grows.
+All subcommands are registered here. Commands are wired to the real
+implementations (VaultStore, SessionManager, cockpit) where ready,
+and print stubs where still in progress.
 """
 
 from __future__ import annotations
 
+import asyncio
+import sys
+from pathlib import Path
+
 import typer
+
+from agentjam.config import (
+    cockpit_token_file,
+    sessions_dir,
+    tasks_dir,
+    projects_dir,
+    vault_dir,
+)
+from agentjam.session.manager import SessionManager
+from agentjam.vault.store import LockState, VaultStore
 
 app = typer.Typer(
     name="agentjam",
@@ -23,7 +38,7 @@ def version() -> None:
     typer.echo(f"agentjam {__version__}")
 
 
-# ---- subcommand groups (stubs for now) ----
+# ── subcommand groups ────────────────────────────────────────────────────────
 
 session_app = typer.Typer(help="Manage agent sessions.", no_args_is_help=True)
 cockpit_app = typer.Typer(help="Launch monitoring surfaces.", no_args_is_help=True)
@@ -40,94 +55,267 @@ app.add_typer(task_app, name="task")
 app.add_typer(settings_app, name="settings")
 
 
-# ---- session commands ----
+# ── session commands ─────────────────────────────────────────────────────────
+
 
 @session_app.command()
 def start(
     task: str = typer.Option(None, "--task", help="Task ID to assign."),
     project: str = typer.Option(None, "--project", help="Project ID."),
-    mode: str = typer.Option("agent", "--mode", help="Agent mode (agent, assistant, reviewer, security)."),
-    detach: bool = typer.Option(False, "--detach", help="Run in background and return immediately."),
-    worktree: bool = typer.Option(False, "--worktree", help="Create a git worktree for this session."),
-    driver: str = typer.Option("strands", "--driver", help="Agent driver (strands)."),
+    mode: str = typer.Option("agent", "--mode", help="Agent mode (agent, assistant)."),
+    detach: bool = typer.Option(False, "--detach", help="Run in background."),
 ) -> None:
     """Start a new agent session."""
-    typer.echo(f"Starting session (task={task}, project={project}, mode={mode}, detach={detach})...")
-    typer.echo("Not yet implemented.")
+    if detach:
+        typer.echo("Detached mode not yet implemented.")
+        raise typer.Exit(1)
+
+    typer.echo(f"Starting session (mode={mode})...")
+    typer.echo("To start a session with a real LLM, set your API key and model:")
+    typer.echo("  export AGENTJAM_API_KEY=your-key")
+    typer.echo("  export AGENTJAM_MODEL=openai/gpt-4o-mini")
+    typer.echo("")
+    typer.echo("Full session start not yet implemented — Strands integration pending API key.")
 
 
 @session_app.command(name="list")
 def list_sessions() -> None:
-    """List all sessions."""
-    typer.echo("Not yet implemented.")
+    """List all active sessions."""
+    mgr = SessionManager(sessions_dir())
+    agents = mgr.active
+    if not agents:
+        typer.echo("No active sessions.")
+        return
+    for a in agents:
+        status = "running" if a.running else "idle"
+        typer.echo(f"  {a.id}  {a.mode:10s}  {status:8s}  {a.tokens_used:>6d} tok  ${a.cost_usd:.3f}")
 
 
-@session_app.command()
-def show(session_id: str = typer.Argument(..., help="Session ID.")) -> None:
-    """Show details for a session."""
-    typer.echo(f"Session: {session_id}")
-    typer.echo("Not yet implemented.")
+# ── cockpit commands ─────────────────────────────────────────────────────────
 
-
-@session_app.command()
-def stop(session_id: str = typer.Argument(..., help="Session ID.")) -> None:
-    """Stop a running session."""
-    typer.echo(f"Stopping session: {session_id}")
-    typer.echo("Not yet implemented.")
-
-
-@session_app.command()
-def logs(session_id: str = typer.Argument(..., help="Session ID.")) -> None:
-    """Stream logs from a running session."""
-    typer.echo(f"Streaming logs for: {session_id}")
-    typer.echo("Not yet implemented.")
-
-
-# ---- cockpit commands ----
 
 @cockpit_app.command()
 def launch(
     web: bool = typer.Option(False, "--web", help="Launch the web GUI instead of TUI."),
+    port: int = typer.Option(8080, "--port", help="Port for the web server."),
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
 ) -> None:
     """Launch the cockpit (TUI by default, --web for browser GUI)."""
     if web:
-        typer.echo("Launching web cockpit...")
-        typer.echo("Not yet implemented.")
+        _launch_web(host, port)
     else:
-        typer.echo("Launching TUI cockpit...")
-        typer.echo("Not yet implemented.")
+        _launch_tui()
 
 
-# ---- vault commands ----
+def _launch_web(host: str, port: int) -> None:
+    """Launch the FastAPI web cockpit."""
+    import uvicorn
+
+    from agentjam.cockpit.web.auth import load_or_create_token
+    from agentjam.cockpit.web.server import create_app
+
+    mgr = SessionManager(sessions_dir())
+
+    # Check for static build.
+    static_dir = Path(__file__).parent.parent.parent.parent.parent / "frontend" / "dist"
+    if not static_dir.exists():
+        typer.echo("Warning: frontend not built. Run: cd frontend && npm run build")
+        typer.echo("Serving inline SPA shell instead.")
+        static_dir = None
+
+    web_app = create_app(mgr, static_dir=static_dir)
+    token = load_or_create_token(cockpit_token_file())
+
+    typer.echo(f"⚡ agentjam cockpit (web): http://{host}:{port}/?token={token}")
+    typer.echo("Press Ctrl-C to stop.")
+
+    uvicorn.run(web_app, host=host, port=port, log_level="warning")
+
+
+def _launch_tui() -> None:
+    """Launch the Textual TUI cockpit."""
+    from agentjam.cockpit.tui.app import CockpitApp
+
+    mgr = SessionManager(sessions_dir())
+    app = CockpitApp(mgr)
+    app.run()
+
+
+# ── vault commands ───────────────────────────────────────────────────────────
+
+# Store a global reference so subcommands can access the same store.
+_vault_store: VaultStore | None = None
+
+
+def _get_vault() -> VaultStore:
+    global _vault_store
+    if _vault_store is None:
+        _vault_store = VaultStore(vault_dir())
+    return _vault_store
+
 
 @vault_app.command()
 def init() -> None:
-    """Initialize a new vault."""
-    typer.echo("Initializing vault...")
-    typer.echo("Not yet implemented.")
+    """Initialize a new vault with a passphrase."""
+    store = _get_vault()
+    if store.lock_state == LockState.UNLOCKED:
+        typer.echo("Vault is already initialized and unlocked.")
+        return
+    if store.lock_state == LockState.LOCKED:
+        typer.echo("Vault is already initialized but locked. Use 'vault unlock'.")
+        return
+
+    passphrase = typer.prompt("Choose a passphrase", hide_input=True)
+    confirm = typer.prompt("Confirm passphrase", hide_input=True)
+    if passphrase != confirm:
+        typer.echo("Passphrases do not match.")
+        raise typer.Exit(1)
+
+    store.unlock(passphrase)
+    typer.echo("Vault initialized and unlocked.")
 
 
 @vault_app.command()
 def unlock() -> None:
     """Unlock the vault with a passphrase."""
-    typer.echo("Unlocking vault...")
-    typer.echo("Not yet implemented.")
+    store = _get_vault()
+    if store.lock_state == LockState.UNLOCKED:
+        typer.echo("Vault is already unlocked.")
+        return
+    if store.lock_state == LockState.UNINITIALIZED:
+        typer.echo("Vault is not initialized. Use 'vault init' first.")
+        raise typer.Exit(1)
+
+    passphrase = typer.prompt("Passphrase", hide_input=True)
+    try:
+        store.unlock(passphrase)
+        typer.echo("Vault unlocked.")
+    except ValueError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(1)
 
 
 @vault_app.command()
 def lock() -> None:
     """Lock the vault."""
-    typer.echo("Locking vault...")
-    typer.echo("Not yet implemented.")
+    store = _get_vault()
+    if store.lock_state != LockState.UNLOCKED:
+        typer.echo("Vault is not unlocked.")
+        return
+    store.lock()
+    typer.echo("Vault locked.")
 
 
 @vault_app.command()
 def status() -> None:
-    """Show vault status (locked/unlocked, entry count)."""
-    typer.echo("Vault status not yet implemented.")
+    """Show vault status."""
+    store = _get_vault()
+    state = store.lock_state.value
+    count = len(store.list_credentials())
+    typer.echo(f"Status: {state}")
+    typer.echo(f"Credentials: {count}")
 
 
-# ---- project commands ----
+@vault_app.command()
+def add(
+    cred_id: str = typer.Argument(..., help="Credential ID (e.g. 'github/work')."),
+    value: str = typer.Option(..., "--value", help="The secret value.", prompt=True, hide_input=True),
+    description: str = typer.Option("", "--description", help="Human-readable note."),
+    tag: list[str] = typer.Option([], "--tag", help="Tags for this credential (repeatable)."),
+) -> None:
+    """Add a new credential to the vault."""
+    from agentjam.vault.store import Credential
+
+    store = _get_vault()
+    if store.lock_state != LockState.UNLOCKED:
+        typer.echo("Vault is locked. Use 'vault unlock' first.")
+        raise typer.Exit(1)
+
+    try:
+        store.add_credential(Credential(
+            id=cred_id,
+            value=value,
+            description=description,
+            tags=list(tag),
+        ))
+        typer.echo(f"Credential '{cred_id}' added.")
+    except ValueError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(1)
+
+
+@vault_app.command(name="list")
+def list_credentials() -> None:
+    """List all credentials in the vault (without values)."""
+    store = _get_vault()
+    creds = store.list_credentials()
+    if not creds:
+        typer.echo("No credentials stored.")
+        return
+    for c in creds:
+        tags = ", ".join(c.tags) if c.tags else ""
+        typer.echo(f"  {c.id:30s}  uses={c.uses_total:>4d}  {tags}")
+
+
+@vault_app.command()
+def show(cred_id: str = typer.Argument(..., help="Credential ID.")) -> None:
+    """Show a credential's value (requires unlocked vault)."""
+    store = _get_vault()
+    if store.lock_state != LockState.UNLOCKED:
+        typer.echo("Vault is locked. Use 'vault unlock' first.")
+        raise typer.Exit(1)
+
+    try:
+        value = store.use_credential(cred_id, caller="user")
+        typer.echo(value)
+    except ValueError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(1)
+
+
+@vault_app.command()
+def remove(cred_id: str = typer.Argument(..., help="Credential ID to remove.")) -> None:
+    """Remove a credential from the vault."""
+    store = _get_vault()
+    if store.lock_state != LockState.UNLOCKED:
+        typer.echo("Vault is locked. Use 'vault unlock' first.")
+        raise typer.Exit(1)
+
+    try:
+        store.remove_credential(cred_id)
+        typer.echo(f"Credential '{cred_id}' removed.")
+    except ValueError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(1)
+
+
+@vault_app.command()
+def audit(
+    cred_id: str = typer.Option("", "--credential", help="Filter by credential ID."),
+    limit: int = typer.Option(0, "--limit", help="Max entries to show."),
+) -> None:
+    """Show the audit log."""
+    from agentjam.vault.store import AuditOptions
+
+    store = _get_vault()
+    entries = store.audit_log(AuditOptions(credential=cred_id, limit=limit))
+    if not entries:
+        typer.echo("No audit entries.")
+        return
+    for e in entries:
+        status = "✓" if e.success else "✗"
+        ts = _format_ts(e.timestamp)
+        typer.echo(f"  {ts}  {status}  {e.credential:25s}  {e.caller:15s}  {e.template}")
+
+
+def _format_ts(ts: float) -> str:
+    import datetime
+    dt = datetime.datetime.fromtimestamp(ts)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ── project commands ─────────────────────────────────────────────────────────
+
 
 @project_app.command(name="list")
 def list_projects() -> None:
@@ -135,7 +323,8 @@ def list_projects() -> None:
     typer.echo("Not yet implemented.")
 
 
-# ---- task commands ----
+# ── task commands ────────────────────────────────────────────────────────────
+
 
 @task_app.command(name="list")
 def list_tasks() -> None:
@@ -143,7 +332,8 @@ def list_tasks() -> None:
     typer.echo("Not yet implemented.")
 
 
-# ---- settings commands ----
+# ── settings commands ────────────────────────────────────────────────────────
+
 
 @settings_app.command()
 def show() -> None:
