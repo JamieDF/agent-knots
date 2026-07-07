@@ -7,13 +7,12 @@ Serves:
   - Token-based authentication
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import secrets
 import time
 from pathlib import Path
+from typing import Optional
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -28,6 +27,9 @@ from agentjam import settings
 from agentjam.task.store import TaskStore
 from agentjam.task.models import Task, TaskStatus, Priority, new_task_id
 from agentjam.tools.registry import ToolRegistry, CustomTool
+from agentjam.project.store import ProjectStore
+from agentjam.project.models import Project
+from agentjam.config import projects_dir as _projects_dir
 
 
 # ── request models (module-level so FastAPI can resolve them) ────────────────
@@ -43,8 +45,8 @@ class SaveSettingsRequest(BaseModel):
 class CreateSessionRequest(BaseModel):
     prompt: str = ""
     mode: str = "agent"
-    task_id: str | None = None
-    project_id: str | None = None
+    task_id: Optional[str] = None
+    project_id: Optional[str] = None
 
 
 class CreateTaskRequest(BaseModel):
@@ -52,15 +54,15 @@ class CreateTaskRequest(BaseModel):
     description: str = ""
     priority: str = "medium"
     project: str = ""
-    tags: list[str] = []
-    acceptance_criteria: list[str] = []
+    tags: list = []
+    acceptance_criteria: list = []
 
 
 class UpdateTaskRequest(BaseModel):
-    title: str | None = None
-    status: str | None = None
-    priority: str | None = None
-    assign: str | None = None
+    title: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    assign: Optional[str] = None
 
 
 class CreateToolRequest(BaseModel):
@@ -71,9 +73,9 @@ class CreateToolRequest(BaseModel):
 
 
 class UpdateToolRequest(BaseModel):
-    description: str | None = None
-    command: str | None = None
-    parameters: list | None = None
+    description: Optional[str] = None
+    command: Optional[str] = None
+    parameters: Optional[list] = None
 
 
 # ── app factory ──────────────────────────────────────────────────────────────
@@ -81,7 +83,7 @@ class UpdateToolRequest(BaseModel):
 
 def create_app(
     session_manager: SessionManager,
-    static_dir: Path | None = None,
+    static_dir: Optional[Path] = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -475,6 +477,85 @@ def create_app(
             info = registry.toggle_builtin(name)
             return {"enabled": info.enabled}
         raise HTTPException(status_code=404, detail="Tool not found")
+
+    # ── workspace API ────────────────────────────────────────────────────
+
+    @app.get("/api/workspaces")
+    async def list_workspaces():
+        """List all workspaces (projects)."""
+        store = ProjectStore(_projects_dir())
+        workspaces = store.list()
+        return {
+            "workspaces": [
+                {
+                    "id": w.id,
+                    "name": w.name,
+                    "description": w.description,
+                    "repository": w.repository,
+                    "tags": w.tags,
+                    "created_at": w.created_at,
+                }
+                for w in workspaces
+            ]
+        }
+
+    class CreateWorkspaceRequest(BaseModel):
+        id: str
+        name: str
+        description: str = ""
+        repository: str = ""
+        tags: list = []
+
+    @app.post("/api/workspaces")
+    async def create_workspace(body: CreateWorkspaceRequest):
+        """Create a new workspace."""
+        store = ProjectStore(_projects_dir())
+        ws = Project(
+            id=body.id,
+            name=body.name,
+            description=body.description,
+            repository=body.repository,
+            tags=body.tags,
+        )
+        try:
+            store.create(ws)
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return {"status": "ok", "id": ws.id}
+
+    class UpdateWorkspaceRequest(BaseModel):
+        name: Optional[str] = None
+        description: Optional[str] = None
+        repository: Optional[str] = None
+        tags: Optional[list] = None
+
+    @app.patch("/api/workspaces/{workspace_id}")
+    async def update_workspace(workspace_id: str, body: UpdateWorkspaceRequest):
+        """Update a workspace."""
+        store = ProjectStore(_projects_dir())
+        ws = store.get(workspace_id)
+        if ws is None:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        if body.name is not None:
+            ws.name = body.name
+        if body.description is not None:
+            ws.description = body.description
+        if body.repository is not None:
+            ws.repository = body.repository
+        if body.tags is not None:
+            ws.tags = body.tags
+        store.update(ws)
+        return {"status": "ok"}
+
+    @app.delete("/api/workspaces/{workspace_id}")
+    async def delete_workspace(workspace_id: str):
+        """Delete a workspace."""
+        store = ProjectStore(_projects_dir())
+        try:
+            store.delete(workspace_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        return {"status": "ok"}
 
     @app.get("/api/health")
     async def health():

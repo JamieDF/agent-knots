@@ -747,3 +747,66 @@ test.describe('board view', () => {
   })
 
 })
+
+// ── workspaces ──────────────────────────────────────────────────────────────
+
+test.describe('workspaces', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('create, read, update, delete workspace', async ({ page }) => {
+    // Create.
+    const createRes = await page.request.post(`${BASE}/api/workspaces`, {
+      data: { id: 'e2e-workspace', name: 'E2E Workspace', description: 'Test workspace', tags: ['test'] },
+    })
+    expect(createRes.status()).toBe(200)
+
+    // List.
+    const listRes = await page.request.get(`${BASE}/api/workspaces`)
+    const workspaces = (await listRes.json()).workspaces
+    expect(workspaces.some((w: any) => w.id === 'e2e-workspace')).toBe(true)
+
+    // Update.
+    const patchRes = await page.request.patch(`${BASE}/api/workspaces/e2e-workspace`, {
+      data: { name: 'Updated Workspace' },
+    })
+    expect(patchRes.status()).toBe(200)
+
+    // Delete.
+    const delRes = await page.request.delete(`${BASE}/api/workspaces/e2e-workspace`)
+    expect(delRes.status()).toBe(200)
+  })
+
+  test('tasks filter by workspace', async ({ page }) => {
+    // Create workspace.
+    await page.request.post(`${BASE}/api/workspaces`, {
+      data: { id: 'filter-test', name: 'Filter Test' },
+    })
+
+    // Create task in that workspace.
+    const t1 = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Workspace task', project: 'filter-test' },
+    })
+    const id1 = (await t1.json()).id
+
+    // Create task in no workspace.
+    const t2 = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'No workspace task' },
+    })
+    const id2 = (await t2.json()).id
+
+    // List tasks filtered by workspace.
+    const listRes = await page.request.get(`${BASE}/api/tasks?project=filter-test`)
+    const tasks = (await listRes.json()).tasks
+    expect(tasks.some((t: any) => t.id === id1)).toBe(true)
+    expect(tasks.some((t: any) => t.id === id2)).toBe(false)
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${id1}`)
+    await page.request.delete(`${BASE}/api/tasks/${id2}`)
+    await page.request.delete(`${BASE}/api/workspaces/filter-test`)
+  })
+
+})

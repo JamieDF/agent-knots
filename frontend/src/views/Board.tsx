@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchTasks, updateTask, createTask, type TaskSummary } from '../lib/api'
+import { getActiveWorkspace } from '../lib/workspace'
 
 const COLUMNS = [
   { status: 'draft',       label: 'Draft',       color: 'var(--muted-2)' },
@@ -23,7 +24,8 @@ export default function Board() {
 
   const load = useCallback(async () => {
     try {
-      const data = await fetchTasks({ limit: 100 })
+      const ws = getActiveWorkspace()
+      const data = await fetchTasks({ limit: 100, project: ws || undefined })
       setTasks(data.tasks)
     } catch { /* ignore */ }
   }, [])

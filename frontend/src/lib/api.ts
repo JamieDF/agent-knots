@@ -116,3 +116,29 @@ export async function toggleTool(name: string): Promise<{ enabled: boolean }> {
   const res = await fetch(`/api/tools/${name}/toggle`, { method: 'POST' })
   if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
 }
+
+// ── workspaces ──────────────────────────────────────────────────────────────
+
+export interface Workspace {
+  id: string; name: string; description: string; repository: string; tags: string[]
+  created_at: number
+}
+
+export async function fetchWorkspaces(): Promise<{ workspaces: Workspace[] }> {
+  const res = await fetch('/api/workspaces'); if (!res.ok) throw new Error(''); return res.json()
+}
+
+export async function createWorkspace(data: { id: string; name: string; description?: string; repository?: string; tags?: string[] }) {
+  const res = await fetch('/api/workspaces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }; return res.json()
+}
+
+export async function updateWorkspace(id: string, data: { name?: string; description?: string; repository?: string; tags?: string[] }) {
+  const res = await fetch(`/api/workspaces/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+  if (!res.ok) throw new Error(''); return res.json()
+}
+
+export async function deleteWorkspace(id: string): Promise<void> {
+  const res = await fetch(`/api/workspaces/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('')
+}
