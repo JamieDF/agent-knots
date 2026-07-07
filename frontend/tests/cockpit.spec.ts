@@ -698,3 +698,52 @@ test.describe('tool manager', () => {
   })
 
 })
+
+// ── board view ──────────────────────────────────────────────────────────────
+
+test.describe('board view', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('board loads with columns', async ({ page }) => {
+    // Create a few tasks in different statuses.
+    const t1 = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Board task A', priority: 'high' },
+    })
+    const t2 = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Board task B', priority: 'medium' },
+    })
+    const id1 = (await t1.json()).id
+    const id2 = (await t2.json()).id
+
+    // Move one to in_progress.
+    await page.request.patch(`${BASE}/api/tasks/${id1}`, { data: { status: 'in_progress' } })
+
+    // Navigate to board.
+    await page.goto(`${BASE}/#/board`)
+    await page.waitForTimeout(2000)
+
+    // Should see column headers.
+    await expect(page.locator('text=Todo')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=In Progress')).toBeVisible()
+    await expect(page.locator('text=Done')).toBeVisible()
+
+    // Should see task cards.
+    await expect(page.locator('text=Board task A')).toBeVisible()
+    await expect(page.locator('text=Board task B')).toBeVisible()
+
+    // Expand a task card.
+    await page.locator('text=Board task A').click()
+    await page.waitForTimeout(300)
+
+    // Should see priority and status buttons in expanded view.
+    await expect(page.locator('text=Priority')).toBeVisible({ timeout: 3000 })
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${id1}`)
+    await page.request.delete(`${BASE}/api/tasks/${id2}`)
+  })
+
+})

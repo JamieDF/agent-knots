@@ -14,7 +14,9 @@ function Topbar({ agents }: Props) {
       <div className="topbar-brand">⚡ agentjam</div>
       <nav className="topbar-nav">
         <NavLink to="/" end>Overview</NavLink>
-        <NavLink to="/tasks">Tasks</NavLink>
+        <NavLink to="/board">Board</NavLink>
+        <NavLink to="/tasks">List</NavLink>
+        <NavLink to="/tools">Tools</NavLink>
       </nav>
       <div className="topbar-stats">
         <span>{agents.length} agent{agents.length !== 1 ? 's' : ''}</span>
