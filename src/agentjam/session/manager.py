@@ -161,9 +161,12 @@ class SessionManager:
         # Build the full system prompt with task context.
         full_prompt = _build_system_prompt(system_prompt, task_context, mode)
 
-        # Always include task tools.
-        from agentjam.task.tools import ALL_TASK_TOOLS
-        all_tools = list(tools or []) + ALL_TASK_TOOLS
+        # Always include default tools (coding + task management).
+        from agentjam.tools import DEFAULT_TOOLS, auto_approve_tools
+        all_tools = list(tools or []) + DEFAULT_TOOLS
+
+        # Auto-approve tool confirmations — agents run non-interactively.
+        auto_approve_tools()
 
         # Create the model. Strands expects a model instance, not a config dict.
         # For OpenAI-compatible providers, use OpenAIModel with client_args.
@@ -512,9 +515,9 @@ def _build_system_prompt(base_prompt: str, task_context: str, mode: str) -> str:
         parts.append(base_prompt)
 
     if mode == "agent":
-        parts.append("You are an autonomous coding agent. Work through tasks systematically. Log progress after every meaningful action using the task tools provided.")
+        parts.append("You are an autonomous coding agent. You have tools for reading/writing files, running shell commands, editing code, and managing tasks. Work through tasks systematically. Log progress after every meaningful action using the task tools provided.")
     elif mode == "assistant":
-        parts.append("You are a coding assistant working interactively with a user. Ask clarifying questions when needed. Log progress using the task tools provided.")
+        parts.append("You are a coding assistant working interactively with a user. You have tools for reading/writing files, running shell commands, editing code, and managing tasks. Ask clarifying questions when needed. Log progress using the task tools provided.")
     elif mode == "reviewer":
         parts.append("You are a code reviewer. Focus on finding issues, suggesting improvements, and verifying correctness. Do not make changes unless asked.")
     elif mode == "security":
