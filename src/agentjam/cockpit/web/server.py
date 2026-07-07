@@ -27,6 +27,26 @@ from agentjam.session.manager import Session, SessionManager
 from agentjam import settings
 
 
+# ── request models (module-level so FastAPI can resolve them) ────────────────
+
+
+class SaveSettingsRequest(BaseModel):
+    default_model: str = "openai/gpt-4o-mini"
+    api_key: str = ""
+    base_url: str = ""
+    default_mode: str = "agent"
+
+
+class CreateSessionRequest(BaseModel):
+    prompt: str = ""
+    mode: str = "agent"
+    task_id: str | None = None
+    project_id: str | None = None
+
+
+# ── app factory ──────────────────────────────────────────────────────────────
+
+
 def create_app(
     session_manager: SessionManager,
     static_dir: Path | None = None,
@@ -197,14 +217,8 @@ def create_app(
             },
         }
 
-    class SaveSettingsBody(BaseModel):
-        default_model: str = "openai/gpt-4o-mini"
-        api_key: str = ""
-        base_url: str = ""
-        default_mode: str = "agent"
-
     @app.put("/api/settings")
-    async def save_settings(body: SaveSettingsBody):
+    async def save_settings(body: SaveSettingsRequest):
         """Save settings. If api_key is all asterisks, preserve existing key."""
         s = settings.load()
         s.agent.default_model = body.default_model
@@ -220,14 +234,8 @@ def create_app(
 
     # ── session management API ────────────────────────────────────────────
 
-    class CreateSessionBody(BaseModel):
-        prompt: str = ""
-        mode: str = "agent"
-        task_id: str | None = None
-        project_id: str | None = None
-
     @app.post("/api/sessions")
-    async def create_session(body: CreateSessionBody):
+    async def create_session(body: CreateSessionRequest):
         """Start a new agent session in the background."""
         if not settings.is_configured():
             raise HTTPException(status_code=400, detail="Settings not configured. Run setup first.")

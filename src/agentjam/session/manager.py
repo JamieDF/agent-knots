@@ -145,23 +145,33 @@ class SessionManager:
 
         session_id = uuid.uuid4().hex[:12]
 
-        # Build the model config.
-        model_kwargs: dict[str, Any] = {"model": provider.model}
-        if provider.base_url:
-            model_kwargs["base_url"] = provider.base_url
+        # Create the model. Strands expects a model instance, not a config dict.
+        # For OpenAI-compatible providers, use OpenAIModel with client_args.
+        from strands.models.openai import OpenAIModel
+
+        client_args: dict[str, Any] = {}
         if provider.api_key:
-            model_kwargs["api_key"] = provider.api_key
+            client_args["api_key"] = provider.api_key
+        if provider.base_url:
+            client_args["base_url"] = provider.base_url
 
-        # Build the sandbox.
-        sandbox_kwargs: dict[str, Any] = {}
+        model_instance = OpenAIModel(
+            model_id=provider.model,
+            client_args=client_args or None,
+        )
+
+        # Build the sandbox (optional — None means no filesystem sandboxing).
+        sandbox = None
         if working_dir:
-            sandbox_kwargs["workspace"] = str(working_dir)
-
-        sandbox = PosixShellSandbox(**sandbox_kwargs)
+            sandbox_kwargs: dict[str, Any] = {"workspace": str(working_dir)}
+            try:
+                sandbox = PosixShellSandbox(**sandbox_kwargs)
+            except (TypeError, NotImplementedError):
+                pass
 
         # Create the agent.
         agent = Agent(
-            model=model_kwargs,
+            model=model_instance,
             tools=tools or [],
             system_prompt=system_prompt,
             sandbox=sandbox,
