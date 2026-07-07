@@ -97,6 +97,7 @@ class OverviewScreen(Screen):
         ("j,down", "cursor_down", "Down"),
         ("k,up", "cursor_up", "Up"),
         ("enter,f", "focus_agent", "Focus"),
+        ("t", "tools", "Tools"),
         ("q", "quit", "Quit"),
     ]
 
@@ -177,6 +178,9 @@ class OverviewScreen(Screen):
         if self._poll_task:
             self._poll_task.cancel()
         self.app.exit()
+
+    def action_tools(self) -> None:
+        self.app.push_screen(ToolsScreen(self.session_manager))
 
 
 # ── focus screen ─────────────────────────────────────────────────────────────
@@ -291,3 +295,113 @@ class CockpitApp(App):
 
     def on_mount(self) -> None:
         self.push_screen(OverviewScreen(self.session_manager))
+
+
+# ── tools screen ─────────────────────────────────────────────────────────────
+
+
+class ToolsScreen(Screen):
+    """Screen for managing tools — built-in + custom."""
+
+    CSS = """
+    ToolsScreen {
+        background: #12141a;
+    }
+    #tools-table {
+        height: 1fr;
+        border: none;
+    }
+    #tools-help {
+        height: 1;
+        padding: 0 2;
+        background: #1c1e26;
+        color: #6b6b80;
+    }
+    DataTable > .datatable--header {
+        background: #242630;
+        color: #a0a0b0;
+    }
+    DataTable > .datatable--cursor {
+        background: #2a2a3a;
+        color: #e4e4e8;
+    }
+    """
+
+    BINDINGS = [
+        ("t", "toggle_tool", "Toggle"),
+        ("a", "add_tool", "Add Custom"),
+        ("d", "delete_tool", "Delete"),
+        ("escape,q", "back", "Back"),
+    ]
+
+    def __init__(self, session_manager: SessionManager) -> None:
+        super().__init__()
+        self.session_manager = session_manager
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        yield Label("  t: toggle  |  a: add custom  |  d: delete  |  esc: back", id="tools-help")
+        yield DataTable(id="tools-table")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self._refresh()
+
+    def _refresh(self) -> None:
+        from agentjam.tools.registry import ToolRegistry
+        registry = ToolRegistry()
+        tools = registry.list_all()
+
+        table = self.query_one("#tools-table", DataTable)
+        table.clear()
+        table.add_columns("Name", "Type", "Status", "Description")
+        table.cursor_type = "row"
+
+        for t in tools:
+            table.add_row(
+                t.name,
+                "built-in" if t.builtin else "custom",
+                "✓ enabled" if t.enabled else "✗ disabled",
+                (t.description or "")[:80],
+            )
+
+    def action_toggle_tool(self) -> None:
+        from agentjam.tools.registry import ToolRegistry
+        table = self.query_one("#tools-table", DataTable)
+        row_key = table.cursor_row
+        row = table.get_row_at(row_key) if row_key is not None else None
+        if row is None:
+            return
+        name = str(row[0])
+        registry = ToolRegistry()
+        # Try custom first, then built-in.
+        if registry.get_custom(name):
+            registry.toggle_custom(name)
+        else:
+            registry.toggle_builtin(name)
+        self._refresh()
+
+    def action_delete_tool(self) -> None:
+        from agentjam.tools.registry import ToolRegistry
+        table = self.query_one("#tools-table", DataTable)
+        row_key = table.cursor_row
+        row = table.get_row_at(row_key) if row_key is not None else None
+        if row is None:
+            return
+        name = str(row[0])
+        registry = ToolRegistry()
+        if not registry.get_custom(name):
+            return  # Can't delete built-in tools.
+        try:
+            registry.delete_custom(name)
+        except ValueError:
+            pass
+        self._refresh()
+
+    async def action_add_tool(self) -> None:
+        # Simple inline add — in a real app this would open a dialog.
+        # For now, just show a placeholder.
+        self.notify("Custom tool creation via TUI coming soon. Use the web cockpit to add tools.", timeout=5)
+
+    def action_back(self) -> None:
+        self.app.pop_screen()  # Returns to overview.

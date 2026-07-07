@@ -63,6 +63,19 @@ class UpdateTaskRequest(BaseModel):
     assign: str | None = None
 
 
+class CreateToolRequest(BaseModel):
+    name: str
+    description: str = ""
+    command: str
+    parameters: list = []  # list of {name, type, description}
+
+
+class UpdateToolRequest(BaseModel):
+    description: str | None = None
+    command: str | None = None
+    parameters: list | None = None
+
+
 # ── app factory ──────────────────────────────────────────────────────────────
 
 
@@ -406,12 +419,6 @@ def create_app(
             "created_at": ct.created_at,
         }
 
-    class CreateToolRequest(BaseModel):
-        name: str
-        description: str = ""
-        command: str
-        parameters: list[dict] = []
-
     @app.post("/api/tools")
     async def create_tool(body: CreateToolRequest):
         """Create a new custom tool."""
@@ -427,11 +434,6 @@ def create_app(
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e))
         return {"status": "ok", "name": ct.name}
-
-    class UpdateToolRequest(BaseModel):
-        description: str | None = None
-        command: str | None = None
-        parameters: list[dict] | None = None
 
     @app.patch("/api/tools/{name}")
     async def update_tool(name: str, body: UpdateToolRequest):

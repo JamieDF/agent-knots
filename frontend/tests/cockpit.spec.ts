@@ -592,3 +592,109 @@ test.describe('cockpit — agent task tools', () => {
   })
 
 })
+
+// ── tool manager ────────────────────────────────────────────────────────────
+
+test.describe('tool manager', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('list tools shows built-in tools', async ({ page }) => {
+    const res = await page.request.get(`${BASE}/api/tools`)
+    expect(res.status()).toBe(200)
+    const data = await res.json()
+    expect(data.tools.length).toBeGreaterThanOrEqual(10)
+    // Check key built-in tools exist.
+    const names = data.tools.map((t: any) => t.name)
+    expect(names).toContain('editor')
+    expect(names).toContain('shell')
+    expect(names).toContain('create_task')
+    expect(names).toContain('log_progress')
+  })
+
+  test('create and delete custom tool', async ({ page }) => {
+    // Create.
+    const createRes = await page.request.post(`${BASE}/api/tools`, {
+      data: {
+        name: 'e2e_test_tool',
+        description: 'A test tool created by Playwright.',
+        command: 'echo "hello {name}"',
+        parameters: [{ name: 'name', type: 'string', description: 'Name to greet' }],
+      },
+    })
+    expect(createRes.status()).toBe(200)
+
+    // Verify it appears in list.
+    const listRes = await page.request.get(`${BASE}/api/tools`)
+    const tools = (await listRes.json()).tools
+    const found = tools.find((t: any) => t.name === 'e2e_test_tool')
+    expect(found).toBeDefined()
+    expect(found.builtin).toBe(false)
+    expect(found.enabled).toBe(true)
+
+    // Toggle it off.
+    const toggleRes = await page.request.post(`${BASE}/api/tools/e2e_test_tool/toggle`)
+    expect(toggleRes.status()).toBe(200)
+    expect((await toggleRes.json()).enabled).toBe(false)
+
+    // Toggle it back on.
+    const toggleRes2 = await page.request.post(`${BASE}/api/tools/e2e_test_tool/toggle`)
+    expect((await toggleRes2.json()).enabled).toBe(true)
+
+    // Delete.
+    const delRes = await page.request.delete(`${BASE}/api/tools/e2e_test_tool`)
+    expect(delRes.status()).toBe(200)
+
+    // Verify gone.
+    const after = await (await page.request.get(`${BASE}/api/tools`)).json()
+    expect(after.tools.find((t: any) => t.name === 'e2e_test_tool')).toBeUndefined()
+  })
+
+  test('custom tool actually works with agent', async ({ page }) => {
+    test.setTimeout(120000)
+
+    // Create a custom tool.
+    await page.request.post(`${BASE}/api/tools`, {
+      data: {
+        name: 'say_hello',
+        description: 'Say hello to someone.',
+        command: 'echo "Hello, {who}!"',
+        parameters: [{ name: 'who', type: 'string', description: 'Who to greet' }],
+      },
+    })
+
+    // Create a task.
+    const taskRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Custom tool test', priority: 'medium' },
+    })
+    const task = await taskRes.json()
+
+    // Start a session.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: {
+        prompt: 'Use the say_hello tool to greet World. Then use log_progress to record you did it.',
+        mode: 'agent',
+        task_id: task.id,
+      },
+    })
+    expect(sessionRes.status()).toBe(200)
+
+    // Poll until agent modifies task.
+    const deadline = Date.now() + 120000
+    let modified = false
+    while (Date.now() < deadline) {
+      const res = await page.request.get(`${BASE}/api/tasks/${task.id}`)
+      const t = await res.json()
+      if (t.progress.length > 0) { modified = true; break }
+      await new Promise(r => setTimeout(r, 3000))
+    }
+    expect(modified).toBe(true)
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+    await page.request.delete(`${BASE}/api/tools/say_hello`)
+  })
+
+})

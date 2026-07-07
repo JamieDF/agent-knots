@@ -161,12 +161,13 @@ class SessionManager:
         # Build the full system prompt with task context.
         full_prompt = _build_system_prompt(system_prompt, task_context, mode)
 
-        # Always include default tools (coding + task management).
+        # Always include default tools + enabled custom tools from registry.
         from agentjam.tools.defaults import DEFAULT_TOOLS, auto_approve_tools
-        all_tools = list(tools or []) + DEFAULT_TOOLS
+        from agentjam.tools.registry import ToolRegistry
 
-        # Auto-approve tool confirmations — agents run non-interactively.
         auto_approve_tools()
+        registry = ToolRegistry()
+        all_tools = list(tools or []) + registry.list_enabled()
 
         # Create the model. Strands expects a model instance, not a config dict.
         # For OpenAI-compatible providers, use OpenAIModel with client_args.
