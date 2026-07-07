@@ -63,7 +63,7 @@ export default function TaskDetail() {
   const handleDelete = async () => {
     if (!id) return
     await deleteTask(id)
-    navigate('/board')
+    navigate(-1)
   }
 
   if (loading) return <div style={{ padding: 40, color: 'var(--muted)' }}>Loading...</div>
