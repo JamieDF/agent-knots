@@ -65,7 +65,7 @@ function Topbar({ agents }: Props) {
           )}
         </div>
 
-        <NavLink to="/tools">Tools</NavLink>
+        <NavLink to="/settings">Settings</NavLink>
       </nav>
       <select
         value={active}

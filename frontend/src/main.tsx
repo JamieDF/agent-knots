@@ -8,6 +8,7 @@ import Tasks from './views/Tasks'
 import Board from './views/Board'
 import TaskDetail from './views/TaskDetail'
 import ToolManager from './views/ToolManager'
+import SettingsPage from './views/Settings'
 import './index.css'
 
 createRoot(document.getElementById('root')!).render(
@@ -21,6 +22,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="tasks" element={<Tasks />} />
           <Route path="tasks/:id" element={<TaskDetail />} />
           <Route path="tools" element={<ToolManager />} />
+          <Route path="settings" element={<SettingsPage />} />
         </Route>
       </Routes>
     </HashRouter>
