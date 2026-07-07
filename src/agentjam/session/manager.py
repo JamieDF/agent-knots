@@ -94,7 +94,7 @@ class SessionManager:
     async def start(
         self,
         *,
-        model: str = "openai/gpt-4o-mini",
+        model: str = "",
         api_key: str = "",
         base_url: str | None = None,
         system_prompt: str = "",
@@ -108,16 +108,16 @@ class SessionManager:
         """Start a new Strands-powered agent session.
 
         Args:
-            model: Model identifier (e.g. "openai/gpt-4o-mini").
-            api_key: API key for the model provider.
-            base_url: Optional custom API base URL (for MiniMax, local LLMs, etc.).
+            model: Model identifier. Empty = resolve from env/settings.
+            api_key: API key. Empty = resolve from env/settings.
+            base_url: Optional custom API base URL (MiniMax, local LLMs, etc.).
             system_prompt: System prompt for the agent.
             task_description: Initial task/message to send.
             working_dir: Working directory to bind into the sandbox.
             mode: Agent mode (agent, assistant, reviewer, security).
             task_id: Optional task ID reference.
             project_id: Optional project ID reference.
-            tools: Optional list of Strands tools to give the agent.
+            tools: Optional list of Strands tools.
 
         Returns:
             The created Session.
@@ -128,14 +128,29 @@ class SessionManager:
                 "Install with: pip install strands-agents"
             )
 
+        # Resolve provider config from CLI/env/settings.
+        from agentjam.provider import resolve_provider
+
+        provider = resolve_provider(model=model, api_key=api_key, base_url=base_url)
+        if not provider.is_configured:
+            raise RuntimeError(
+                "No API key configured. Set one via:\n"
+                "  export AGENTJAM_API_KEY=<your-key>\n"
+                "  export AGENTJAM_MODEL=<model-id>\n"
+                "Or add to ~/.agentjam/settings.yaml:\n"
+                "  agent:\n"
+                "    api_key: <your-key>\n"
+                "    default_model: openai/gpt-4o-mini"
+            )
+
         session_id = uuid.uuid4().hex[:12]
 
         # Build the model config.
-        model_kwargs: dict[str, Any] = {"model": model}
-        if base_url:
-            model_kwargs["base_url"] = base_url
-        if api_key:
-            model_kwargs["api_key"] = api_key
+        model_kwargs: dict[str, Any] = {"model": provider.model}
+        if provider.base_url:
+            model_kwargs["base_url"] = provider.base_url
+        if provider.api_key:
+            model_kwargs["api_key"] = provider.api_key
 
         # Build the sandbox.
         sandbox_kwargs: dict[str, Any] = {}

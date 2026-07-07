@@ -64,18 +64,52 @@ def start(
     project: str = typer.Option(None, "--project", help="Project ID."),
     mode: str = typer.Option("agent", "--mode", help="Agent mode (agent, assistant)."),
     detach: bool = typer.Option(False, "--detach", help="Run in background."),
+    model: str = typer.Option("", "--model", help="Model override (e.g. openai/minimax-m2.7)."),
+    api_key: str = typer.Option("", "--api-key", help="API key override."),
+    base_url: str = typer.Option("", "--base-url", help="Custom API base URL (e.g. for MiniMax)."),
+    prompt: str = typer.Option(None, "--prompt", help="Initial task description."),
 ) -> None:
-    """Start a new agent session."""
+    """Start a new agent session.
+
+    The API key and model are resolved from (in order):
+      1. CLI flags --api-key, --model, --base-url
+      2. Environment variables AGENTJAM_API_KEY, AGENTJAM_MODEL, AGENTJAM_BASE_URL
+      3. Settings file ~/.agentjam/settings.yaml
+
+    For MiniMax:
+      export AGENTJAM_MODEL=openai/minimax-m2.7
+      export AGENTJAM_BASE_URL=https://api.minimax.io/v1
+      export AGENTJAM_API_KEY=<your-key>
+
+    Then run: agentjam session start --prompt "your task"
+    """
     if detach:
         typer.echo("Detached mode not yet implemented.")
         raise typer.Exit(1)
 
-    typer.echo(f"Starting session (mode={mode})...")
-    typer.echo("To start a session with a real LLM, set your API key and model:")
-    typer.echo("  export AGENTJAM_API_KEY=your-key")
-    typer.echo("  export AGENTJAM_MODEL=openai/gpt-4o-mini")
-    typer.echo("")
-    typer.echo("Full session start not yet implemented — Strands integration pending API key.")
+    mgr = SessionManager(sessions_dir())
+
+    try:
+        session = asyncio.run(mgr.start(
+            model=model,
+            api_key=api_key,
+            base_url=base_url or None,
+            mode=mode,
+            task_id=task,
+            project_id=project,
+            task_description=prompt,
+        ))
+    except RuntimeError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(1)
+
+    typer.echo(f"Session started: {session.id}")
+    typer.echo(f"Mode: {session.mode}")
+
+    if session.running:
+        typer.echo("Agent is running. Use 'agentjam cockpit' to monitor.")
+    else:
+        typer.echo("Session created but not started (no --prompt given).")
 
 
 @session_app.command(name="list")
