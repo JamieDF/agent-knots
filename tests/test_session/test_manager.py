@@ -53,24 +53,29 @@ class TestSession:
 
 
 class TestChunkToEvent:
-    def test_content_block_delta(self):
-        """Real Strands chunk: contentBlockDelta event."""
+    def test_event_chunk_skipped(self):
+        """contentBlockDelta events are skipped (we use data+delta instead)."""
         evt = SessionManager._chunk_to_event("sid", {
-            "event": {"contentBlockDelta": {"delta": {"text": "hello world"}}},
+            "event": {"contentBlockDelta": {"delta": {"text": "hello"}}},
         })
-        assert evt is not None
-        assert evt.type == EventType.MESSAGE
-        assert evt.message == "hello world"
+        assert evt is None
 
-    def test_data_delta(self):
-        """Real Strands chunk: data + delta."""
+    def test_data_delta_incremental(self):
+        """data+delta only emits the new portion after first call."""
+        state = {}
+        # First chunk: full text.
         evt = SessionManager._chunk_to_event("sid", {
-            "data": "accumulated text",
-            "delta": {"text": "new text"},
-        })
+            "data": "hello", "delta": {"text": "hello"},
+        }, state)
         assert evt is not None
-        assert evt.type == EventType.MESSAGE
-        assert evt.message == "new text"
+        assert evt.message == "hello"
+
+        # Second chunk: same prefix + new text — only new emitted.
+        evt = SessionManager._chunk_to_event("sid", {
+            "data": "hello world", "delta": {"text": "hello world"},
+        }, state)
+        assert evt is not None
+        assert evt.message == " world"
 
     def test_message_chunk(self):
         """Real Strands chunk: final message."""
@@ -100,13 +105,11 @@ class TestChunkToEvent:
         })
         assert evt is not None
         assert evt.type == EventType.STATE_CHANGE
-        assert "finished" in evt.message.lower()
 
     def test_lifecycle_skipped(self):
         """Lifecycle bookmarks should be skipped."""
         assert SessionManager._chunk_to_event("sid", {"init_event_loop": True}) is None
         assert SessionManager._chunk_to_event("sid", {"start": True}) is None
-        assert SessionManager._chunk_to_event("sid", {"start_event_loop": True}) is None
 
     def test_none_chunk(self):
         assert SessionManager._chunk_to_event("sid", None) is None

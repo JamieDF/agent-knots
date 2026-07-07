@@ -258,12 +258,15 @@ class SessionManager:
                 message="Agent started.",
             ))
 
+            # Per-session state for deduplication.
+            chunk_state: dict[str, Any] = {}
+
             # Stream the agent's response.
             async for chunk in agent.stream_async(prompt):
                 if session._cancelled:
                     break
 
-                event = self._chunk_to_event(session.id, chunk)
+                event = self._chunk_to_event(session.id, chunk, chunk_state)
                 if event is not None:
                     await session._events.put(event)
 
@@ -289,51 +292,50 @@ class SessionManager:
             ))
 
     @staticmethod
-    def _chunk_to_event(session_id: str, chunk: Any) -> Event | None:
+    def _chunk_to_event(session_id: str, chunk: Any, _state: dict[str, Any] | None = None) -> Event | None:
         """Translate a Strands stream chunk into an agentjam Event.
 
-        Strands stream_async yields various chunk types:
-          - {'event': {'contentBlockDelta': {'delta': {'text': '...'}}}} — text delta
-          - {'data': '...'} — accumulated text
-          - {'message': {...}} — final message
-          - {'result': AgentResult} — completion
-          - {'event': {'messageStart'}} / {'event': {'messageStop'}} — lifecycle
+        Uses _state dict to track accumulated text and avoid duplicates
+        (Strands sends both incremental contentBlockDelta and accumulated
+        data+delta for the same text).
         """
+        if _state is None:
+            _state = {}
+
         now = time.time()
 
         if not isinstance(chunk, dict):
             return None
 
-        # Lifecycle bookmarks — skip, handled by state change events.
+        # Lifecycle bookmarks — skip.
         if any(k in chunk for k in ('init_event_loop', 'start', 'start_event_loop',
                                        'force_stop', 'force_stop_reason')):
             return None
 
-        # Text delta from content block.
+        # Text delta from content block — skip these, we use data+delta instead.
+        # contentBlockDelta and data+delta overlap; data+delta gives us the
+        # accumulated text which we can diff to emit only new portions.
         if 'event' in chunk:
-            evt = chunk['event']
-            if 'contentBlockDelta' in evt:
-                text = evt['contentBlockDelta'].get('delta', {}).get('text', '')
-                if text:
-                    return Event(
-                        type=EventType.MESSAGE if not _is_thinking(text) else EventType.THINKING,
-                        session_id=session_id,
-                        message=text,
-                        timestamp=now,
-                    )
-            # Other events (messageStart, messageStop) — skip.
             return None
 
-        # Accumulated text delta (contains the full text so far).
+        # Accumulated text delta — only emit the new portion.
         if 'data' in chunk and 'delta' in chunk:
             delta = chunk['delta'].get('text', '')
             if delta:
-                return Event(
-                    type=EventType.MESSAGE if not _is_thinking(delta) else EventType.THINKING,
-                    session_id=session_id,
-                    message=delta,
-                    timestamp=now,
-                )
+                prev = _state.get('last_data_text', '')
+                if delta != prev:
+                    # Find the new text: delta = prev + new
+                    new_text = delta
+                    if delta.startswith(prev):
+                        new_text = delta[len(prev):]
+                    _state['last_data_text'] = delta
+                    return Event(
+                        type=EventType.THINKING if _is_thinking(new_text) else EventType.MESSAGE,
+                        session_id=session_id,
+                        message=new_text,
+                        timestamp=now,
+                    )
+            return None
 
         # Final message.
         if 'message' in chunk:
