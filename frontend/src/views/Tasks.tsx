@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchTasks, createTask, type TaskSummary } from '../lib/api'
-import Topbar from '../components/Topbar'
 
 const STATUS_ICONS: Record<string, { icon: string; color: string; label: string }> = {
   draft:      { icon: '○', color: 'var(--muted-2)', label: 'Draft' },
@@ -54,7 +53,6 @@ export default function Tasks() {
 
   return (
     <>
-      <Topbar agents={[]} />
       <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
         {/* Filter sidebar */}
         <div style={{ width: 200, background: 'var(--surface)', borderRight: '1px solid var(--border)', padding: 16, overflowY: 'auto', flexShrink: 0 }}>

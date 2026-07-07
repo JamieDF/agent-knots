@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
 import AgentCard from '../components/AgentCard'
-import Topbar from '../components/Topbar'
 import SetupWizard from '../components/SetupWizard'
 import NewSessionDialog from '../components/NewSessionDialog'
 import { fetchAgents, fetchSettings, createSession, type AgentInfo } from '../lib/api'
@@ -55,8 +54,6 @@ function Overview() {
 
   return (
     <>
-      <Topbar agents={agents} />
-
       {/* Setup wizard — first time */}
       {showWizard && <SetupWizard onComplete={handleWizardComplete} />}
 
