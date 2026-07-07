@@ -287,3 +287,90 @@ test.describe('mode switching API', () => {
   })
 
 })
+
+// ── task API ────────────────────────────────────────────────────────────────
+
+test.describe('task API', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('create, read, update, delete task', async ({ page }) => {
+    const createRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: {
+        title: 'E2E test task',
+        description: 'A task created by Playwright',
+        priority: 'high',
+        tags: ['e2e', 'test'],
+        acceptance_criteria: ['Must pass', 'Must be fast'],
+      },
+    })
+    expect(createRes.status()).toBe(200)
+    const created = await createRes.json()
+    expect(created.title).toBe('E2E test task')
+    expect(created.priority).toBe('high')
+    expect(created.tags).toContain('e2e')
+    const taskId = created.id
+
+    // List.
+    const listRes = await page.request.get(`${BASE}/api/tasks?status=open`)
+    expect(listRes.status()).toBe(200)
+    const list = await listRes.json()
+    expect(list.tasks.some((t: any) => t.id === taskId)).toBe(true)
+
+    // Get.
+    const getRes = await page.request.get(`${BASE}/api/tasks/${taskId}`)
+    expect(getRes.status()).toBe(200)
+    const got = await getRes.json()
+    expect(got.acceptance_criteria).toEqual(['Must pass', 'Must be fast'])
+
+    // Update status.
+    const patchRes = await page.request.patch(`${BASE}/api/tasks/${taskId}`, {
+      data: { status: 'in_progress', assign: 'agent-test' },
+    })
+    expect(patchRes.status()).toBe(200)
+    const patched = await patchRes.json()
+    expect(patched.status).toBe('in_progress')
+    expect(patched.assigned_to).toBe('agent-test')
+
+    // Delete.
+    const delRes = await page.request.delete(`${BASE}/api/tasks/${taskId}`)
+    expect(delRes.status()).toBe(200)
+
+    // Verify deleted.
+    const goneRes = await page.request.get(`${BASE}/api/tasks/${taskId}`)
+    expect(goneRes.status()).toBe(404)
+  })
+
+  test('get nonexistent task returns 404', async ({ page }) => {
+    const res = await page.request.get(`${BASE}/api/tasks/fake-id`)
+    expect(res.status()).toBe(404)
+  })
+
+  test('create task without title returns 422', async ({ page }) => {
+    const res = await page.request.post(`${BASE}/api/tasks`, {
+      data: { priority: 'low' },
+    })
+    expect(res.status()).toBe(422)
+  })
+
+  test('list and filter tasks', async ({ page }) => {
+    const t1 = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Filter test A', priority: 'low' },
+    })
+    const t2 = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Filter test B', priority: 'high' },
+    })
+    const id1 = (await t1.json()).id
+    const id2 = (await t2.json()).id
+
+    const list = await page.request.get(`${BASE}/api/tasks?limit=10`)
+    expect((await list.json()).tasks.length).toBeGreaterThanOrEqual(2)
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${id1}`)
+    await page.request.delete(`${BASE}/api/tasks/${id2}`)
+  })
+
+})

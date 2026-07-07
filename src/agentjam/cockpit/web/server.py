@@ -46,6 +46,22 @@ class CreateSessionRequest(BaseModel):
     project_id: str | None = None
 
 
+class CreateTaskRequest(BaseModel):
+    title: str
+    description: str = ""
+    priority: str = "medium"
+    project: str = ""
+    tags: list[str] = []
+    acceptance_criteria: list[str] = []
+
+
+class UpdateTaskRequest(BaseModel):
+    title: str | None = None
+    status: str | None = None
+    priority: str | None = None
+    assign: str | None = None
+
+
 # ── app factory ──────────────────────────────────────────────────────────────
 
 
@@ -302,14 +318,6 @@ def create_app(
             raise HTTPException(status_code=404, detail="Task not found")
         return _task_to_response(task)
 
-    class CreateTaskRequest(BaseModel):
-        title: str
-        description: str = ""
-        priority: str = "medium"
-        project: str = ""
-        tags: list[str] = []
-        acceptance_criteria: list[str] = []
-
     @app.post("/api/tasks")
     async def create_task(body: CreateTaskRequest):
         """Create a new task."""
@@ -325,12 +333,6 @@ def create_app(
         )
         store.create(task)
         return _task_to_response(task)
-
-    class UpdateTaskRequest(BaseModel):
-        title: str | None = None
-        status: str | None = None
-        priority: str | None = None
-        assign: str | None = None
 
     @app.patch("/api/tasks/{task_id}")
     async def update_task(task_id: str, body: UpdateTaskRequest):
