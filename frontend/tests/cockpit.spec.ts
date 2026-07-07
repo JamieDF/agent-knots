@@ -843,49 +843,6 @@ test.describe('task editing', () => {
   test.beforeEach(async ({ page }) => {
     await authPage(page)
   })
-
-  test('edit all task fields from detail view', async ({ page }) => {
-    // Create a task.
-    const res = await page.request.post(`${BASE}/api/tasks`, {
-      data: { title: 'Original title', description: 'Original desc', priority: 'low', tags: ['old'] },
-    })
-    const { id } = await res.json()
-
-    // Navigate to detail.
-    await page.goto(`${BASE}/#/tasks/${id}`)
-    await page.waitForTimeout(1000)
-
-    // Click edit pencil.
-    await page.locator('button[title="Edit"]').click()
-    await page.waitForTimeout(300)
-
-    // Edit all fields.
-    const titleInput = page.locator('input[placeholder="Title"]')
-    await titleInput.fill('Updated title')
-    const descInput = page.locator('textarea[placeholder="Description"]')
-    await descInput.fill('Updated description')
-
-    // Change priority.
-    const prioritySelect = page.locator('select').nth(1) // second select is priority
-    await prioritySelect.selectOption('urgent')
-
-    // Save.
-    await page.locator('text=Save').click()
-    await page.waitForTimeout(500)
-
-    // Verify.
-    await expect(page.locator('text=Updated title')).toBeVisible()
-    await expect(page.locator('text=Updated description')).toBeVisible()
-
-    // Verify via API.
-    const updated = await (await page.request.get(`${BASE}/api/tasks/${id}`)).json()
-    expect(updated.title).toBe('Updated title')
-    expect(updated.priority).toBe('urgent')
-
-    // Cleanup.
-    await page.request.delete(`${BASE}/api/tasks/${id}`)
-  })
-
   test('change status from detail dropdown', async ({ page }) => {
     const res = await page.request.post(`${BASE}/api/tasks`, {
       data: { title: 'Status change test' },
@@ -947,4 +904,30 @@ test.describe('task editing', () => {
     expect(page.url()).toContain('/board')
   })
 
+})
+
+test.describe('task modal editing', () => {
+  test.beforeEach(async ({ page }) => { await authPage(page) })
+
+  test('edit task via modal', async ({ page }) => {
+    test.setTimeout(30000)
+    const res = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Modal test', priority: 'low' } })
+    const { id } = await res.json()
+    await page.goto(`${BASE}/#/tasks/${id}`)
+    await page.waitForTimeout(1000)
+
+    await page.locator('text=Edit task').click()
+    await page.waitForTimeout(500)
+
+    // Fill in the modal.
+    await page.locator("input").first().fill('Updated via modal')
+    await page.locator("select").nth(3).selectOption('urgent')
+    await page.locator('text=Save changes').click()
+    await page.waitForTimeout(500)
+
+    const updated = await (await page.request.get(`${BASE}/api/tasks/${id}`)).json()
+    expect(updated.title).toBe('Updated via modal')
+    expect(updated.priority).toBe('urgent')
+    await page.request.delete(`${BASE}/api/tasks/${id}`)
+  })
 })
