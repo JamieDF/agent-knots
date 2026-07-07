@@ -446,12 +446,12 @@ test.describe('task UI', () => {
     await expect(page.locator(`text=${id}`).first()).toBeVisible()
 
     // Status change.
-    await page.locator('select').first().selectOption('in_progress')
+    await page.locator('select').nth(1).selectOption('review')
     await page.waitForTimeout(500)
 
     // Verify via API.
     const updated = await (await page.request.get(`${BASE}/api/tasks/${id}`)).json()
-    expect(updated.status).toBe('in_progress')
+    expect(updated.status).toBe('review')
 
     // Cleanup.
     await page.request.delete(`${BASE}/api/tasks/${id}`)
@@ -832,6 +832,119 @@ test.describe('agent deletion', () => {
     // Verify gone from agent list.
     const list = await (await page.request.get(`${BASE}/api/agents`)).json()
     expect(list.agents.find((a: any) => a.id === id)).toBeUndefined()
+  })
+
+})
+
+// ── task editing ────────────────────────────────────────────────────────────
+
+test.describe('task editing', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('edit all task fields from detail view', async ({ page }) => {
+    // Create a task.
+    const res = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Original title', description: 'Original desc', priority: 'low', tags: ['old'] },
+    })
+    const { id } = await res.json()
+
+    // Navigate to detail.
+    await page.goto(`${BASE}/#/tasks/${id}`)
+    await page.waitForTimeout(1000)
+
+    // Click edit pencil.
+    await page.locator('button[title="Edit"]').click()
+    await page.waitForTimeout(300)
+
+    // Edit all fields.
+    const titleInput = page.locator('input[placeholder="Title"]')
+    await titleInput.fill('Updated title')
+    const descInput = page.locator('textarea[placeholder="Description"]')
+    await descInput.fill('Updated description')
+
+    // Change priority.
+    const prioritySelect = page.locator('select').nth(1) // second select is priority
+    await prioritySelect.selectOption('urgent')
+
+    // Save.
+    await page.locator('text=Save').click()
+    await page.waitForTimeout(500)
+
+    // Verify.
+    await expect(page.locator('text=Updated title')).toBeVisible()
+    await expect(page.locator('text=Updated description')).toBeVisible()
+
+    // Verify via API.
+    const updated = await (await page.request.get(`${BASE}/api/tasks/${id}`)).json()
+    expect(updated.title).toBe('Updated title')
+    expect(updated.priority).toBe('urgent')
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${id}`)
+  })
+
+  test('change status from detail dropdown', async ({ page }) => {
+    const res = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Status change test' },
+    })
+    const { id } = await res.json()
+
+    await page.goto(`${BASE}/#/tasks/${id}`)
+    await page.waitForTimeout(1000)
+
+    // Change status via dropdown.
+    await page.locator('select').nth(1).selectOption('review')
+    await page.waitForTimeout(500)
+
+    // Verify.
+    const updated = await (await page.request.get(`${BASE}/api/tasks/${id}`)).json()
+    expect(updated.status).toBe('review')
+
+    await page.request.delete(`${BASE}/api/tasks/${id}`)
+  })
+
+  test('create task from board + button', async ({ page }) => {
+    await page.goto(`${BASE}/#/board`)
+    await page.waitForTimeout(1000)
+
+    // Click + button in the Todo column.
+    const plusButtons = page.locator('button[title="Add task"]')
+    await plusButtons.first().click()
+    await page.waitForTimeout(300)
+
+    // Fill dialog.
+    await page.locator('input[placeholder="What needs to be done?"]').fill('Board dialog task')
+    await page.locator('text=Create Task').click()
+    await page.waitForTimeout(1000)
+
+    // Should appear on board.
+    await expect(page.locator('text=Board dialog task')).toBeVisible({ timeout: 5000 })
+
+    // Cleanup via API.
+    const list = await (await page.request.get(`${BASE}/api/tasks`)).json()
+    const task = list.tasks.find((t: any) => t.title === 'Board dialog task')
+    if (task) await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+  })
+
+  test('tasks nav dropdown shows Board and List', async ({ page }) => {
+    await page.goto(BASE)
+    await page.waitForTimeout(1000)
+
+    // Click Tasks dropdown.
+    await page.locator('text=Tasks ▾').click()
+    await page.waitForTimeout(300)
+
+    // Should show Board and List options.
+    await expect(page.locator('text=Board')).toBeVisible()
+    await expect(page.locator('text=List')).toBeVisible()
+
+    // Click Board.
+    await page.locator('text=Board').click()
+    await page.waitForTimeout(500)
+    expect(page.url()).toContain('/board')
   })
 
 })

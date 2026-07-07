@@ -78,7 +78,7 @@ export async function createTask(data: {
   if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
 }
 
-export async function updateTask(id: string, data: { status?: string; priority?: string; title?: string; assign?: string }): Promise<TaskDetail> {
+export async function updateTask(id: string, data: { status?: string; priority?: string; title?: string; description?: string; assign?: string }): Promise<TaskDetail> {
   const res = await fetch(`/api/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
   if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
 }

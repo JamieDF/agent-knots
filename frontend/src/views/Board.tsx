@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchTasks, updateTask, createTask, type TaskSummary } from '../lib/api'
+import { fetchTasks, updateTask, type TaskSummary } from '../lib/api'
 import { getActiveWorkspace } from '../lib/workspace'
+import CreateTaskDialog from '../components/CreateTaskDialog'
 
 const COLUMNS = [
   { status: 'draft',       label: 'Draft',       color: 'var(--muted-2)' },
@@ -41,15 +42,6 @@ export default function Board() {
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t))
   }
 
-  const handleCreate = async (title: string, colStatus: string) => {
-    if (!title.trim()) return
-    const created = await createTask({ title, priority: 'medium' })
-    if (colStatus !== 'open') {
-      await updateTask(created.id, { status: colStatus })
-    }
-    setShowCreate(null)
-    load()
-  }
 
   const tasksByStatus = (status: string) =>
     tasks.filter(t => t.status === status).sort((a, b) => {
@@ -81,7 +73,7 @@ export default function Board() {
                   {items.length}
                 </span>
                 <button
-                  onClick={() => setShowCreate(showCreate === col.status ? null : col.status)}
+                  onClick={() => setShowCreate(col.status)}
                   style={{
                     marginLeft: 'auto', width: 22, height: 22, borderRadius: 4,
                     border: '1px solid var(--border)', background: 'transparent',
@@ -91,27 +83,6 @@ export default function Board() {
                   title="Add task"
                 >+</button>
               </div>
-
-              {/* Quick-create input */}
-              {showCreate === col.status && (
-                <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border-subtle)' }}>
-                  <input
-                    autoFocus
-                    placeholder="Task title..."
-                    style={{
-                      width: '100%', padding: '4px 8px', borderRadius: 4, fontSize: 12,
-                      border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', outline: 'none',
-                    }}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        handleCreate((e.target as HTMLInputElement).value, col.status)
-                        ;(e.target as HTMLInputElement).value = ''
-                      }
-                      if (e.key === 'Escape') setShowCreate(null)
-                    }}
-                  />
-                </div>
-              )}
 
               {/* Task cards */}
               <div style={{ flex: 1, overflowY: 'auto', padding: 6 }}>
@@ -135,6 +106,7 @@ export default function Board() {
           )
         })}
       </div>
+      {showCreate && <CreateTaskDialog onClose={() => setShowCreate(null)} onCreated={() => { setShowCreate(null); load() }} />}
     </div>
   )
 }
