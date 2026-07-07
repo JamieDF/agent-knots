@@ -505,6 +505,7 @@ def create_app(
                     "name": w.name,
                     "description": w.description,
                     "repository": w.repository,
+                    "runtime": w.runtime,
                     "tags": w.tags,
                     "created_at": w.created_at,
                 }
@@ -517,6 +518,7 @@ def create_app(
         name: str
         description: str = ""
         repository: str = ""
+        runtime: str = ""
         tags: list = []
 
     @app.post("/api/workspaces")
@@ -528,6 +530,7 @@ def create_app(
             name=body.name,
             description=body.description,
             repository=body.repository,
+            runtime=body.runtime,
             tags=body.tags,
         )
         try:
@@ -555,6 +558,8 @@ def create_app(
             ws.description = body.description
         if body.repository is not None:
             ws.repository = body.repository
+        if body.runtime is not None:
+            ws.runtime = body.runtime
         if body.tags is not None:
             ws.tags = body.tags
         store.update(ws)

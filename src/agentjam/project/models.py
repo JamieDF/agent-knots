@@ -12,8 +12,9 @@ class Project:
     id: str
     name: str
     description: str = ""
-    repository: str = ""           # git repo path
+    repository: str = ""
     default_branch: str = "main"
+    runtime: str = ""           # "inprocess", "subprocess", or "" (use global)
     tags: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)

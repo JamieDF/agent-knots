@@ -104,6 +104,7 @@ class SessionManager:
         task_id: str | None = None,
         project_id: str | None = None,
         tools: list[Any] | None = None,
+        runtime_override: str = "",
     ) -> Session:
         """Start a new Strands-powered agent session.
 
@@ -235,12 +236,20 @@ class SessionManager:
         )
         self._sessions[session_id] = session
 
-        # Choose runtime based on global setting.
-        from agentjam.session.runtime import get_runtime_type, create_runtime
-
-        runtime_type = get_runtime_type()
+        # Resolve runtime: explicit > workspace setting > global setting.
+        runtime_type = runtime_override  # explicit override from caller
+        if not runtime_type and project_id:
+            from agentjam.project.store import ProjectStore
+            from agentjam.config import projects_dir as _projects_dir
+            ps = ProjectStore(_projects_dir())
+            proj = ps.get(project_id)
+            if proj and proj.runtime:
+                runtime_type = proj.runtime
+        if not runtime_type:
+            from agentjam.session.runtime import get_runtime_type
+            runtime_type = get_runtime_type()
         if runtime_type == "subprocess":
-            # Subprocess runtime handles its own event streaming.
+            from agentjam.session.runtime import create_runtime
             runtime = create_runtime()
             await runtime.start(session, {
                 "model": provider.model,
