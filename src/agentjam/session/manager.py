@@ -150,13 +150,16 @@ class SessionManager:
         task_context = ""
         if task_id:
             from agentjam.task.store import TaskStore
+            from agentjam.task.models import TaskStatus
             from agentjam.config import tasks_dir as _tasks_dir
             store = TaskStore(_tasks_dir())
             task = store.get(task_id)
             if task:
                 task_context = _build_task_prompt(task)
-                # Assign the task to this session.
+                # Assign the task to this session and move to in_progress.
                 store.assign(task_id, session_id)
+                if task.status.value == "open":
+                    store.set_status(task_id, TaskStatus("in_progress"))
 
         # Build the full system prompt with task context.
         full_prompt = _build_system_prompt(system_prompt, task_context, mode)

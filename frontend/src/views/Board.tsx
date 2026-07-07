@@ -159,6 +159,15 @@ function TaskCard({ task, expanded, onExpand, onStatusChange, onClick }: {
           <button onClick={onClick} style={{ fontSize: 11, color: 'var(--info)', cursor: 'pointer', border: 0, background: 'none', padding: 0 }}>
             View full details →
           </button>
+          <button onClick={async (e) => {
+            e.stopPropagation()
+            const { createSession } = await import('../lib/api')
+            const session = await createSession({ prompt: '', mode: 'agent', task_id: task.id, project_id: getActiveWorkspace() || undefined })
+            // We're in a callback, can't use hooks — just set location.
+            window.location.hash = '#/agent/' + session.id
+          }} style={{ fontSize: 11, color: 'var(--running)', cursor: 'pointer', border: '1px solid var(--running)', borderRadius: 4, background: 'transparent', padding: '2px 8px', marginLeft: 8, fontFamily: 'inherit' }}>
+            ▶ Start session
+          </button>
         </div>
       )}
     </div>

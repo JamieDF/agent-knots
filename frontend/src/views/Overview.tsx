@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AgentCard from '../components/AgentCard'
 import SetupWizard from '../components/SetupWizard'
-import { fetchAgents, fetchSettings, createSession, type AgentInfo } from '../lib/api'
+import { fetchAgents, fetchSettings, fetchTasks, createSession, type AgentInfo } from '../lib/api'
 import { getActiveWorkspace } from '../lib/workspace'
 
 function Overview() {
@@ -11,8 +11,17 @@ function Overview() {
   const [showWizard, setShowWizard] = useState(false)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [openTasks, setOpenTasks] = useState<{id:string, title:string}[]>([])
+  const [showTaskPicker, setShowTaskPicker] = useState(false)
   const workspace = getActiveWorkspace()
   const navigate = useNavigate()
+
+  // Load open tasks for the task picker.
+  useEffect(() => {
+    fetchTasks({ status: 'open', limit: 10 }).then(d => {
+      setOpenTasks(d.tasks.map(t => ({ id: t.id, title: t.title })))
+    }).catch(() => {})
+  }, [workspace])
 
   // Check if settings are configured.
   useEffect(() => {
@@ -52,10 +61,10 @@ function Overview() {
     setShowWizard(false)
   }, [])
 
-  const handleInstantStart = async () => {
+  const handleInstantStart = async (taskId?: string) => {
     setCreating(true)
     try {
-      const session = await createSession({ prompt: '', mode: 'agent', project_id: workspace || undefined })
+      const session = await createSession({ prompt: '', mode: 'agent', project_id: workspace || undefined, task_id: taskId })
       navigate(`/agent/${session.id}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start')
@@ -76,19 +85,7 @@ function Overview() {
         <div className="overview">
           {/* New session button */}
           <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
-            <button
-              className="btn"
-              onClick={handleInstantStart}
-              disabled={creating}
-              style={{
-                background: 'var(--info)',
-                color: 'var(--bg)',
-                fontWeight: 600,
-                fontSize: 13,
-              }}
-            >
-              + New Session
-            </button>
+                        <div style={{ position: 'relative' }}>               <button className="btn" onClick={() => setShowTaskPicker(!showTaskPicker)} disabled={creating}                 style={{ background: 'var(--info)', color: 'var(--bg)', fontWeight: 600, fontSize: 13 }}>                 {creating ? 'Starting...' : '+ New Session'}               </button>               {showTaskPicker && openTasks.length > 0 && (                 <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 4, minWidth: 240, zIndex: 60, boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}>                   <div style={{ fontSize: 11, color: 'var(--muted)', padding: '4px 8px' }}>Attach to task (optional)</div>                   <button onClick={() => { handleInstantStart(); setShowTaskPicker(false) }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', borderRadius: 4, fontSize: 13, color: 'var(--fg-soft)', border: 0, background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}>No task — just start</button>                   {openTasks.map(t => (                     <button key={t.id} onClick={() => { handleInstantStart(t.id); setShowTaskPicker(false) }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', borderRadius: 4, fontSize: 13, color: 'var(--fg)', border: 0, background: 'transparent', cursor: 'pointer', fontFamily: 'inherit' }}>{t.title}</button>                   ))}                 </div>               )}             </div>
           </div>
 
           {error && (
