@@ -21,10 +21,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agentjam.cockpit.web.auth import Auth, COOKIE_NAME, load_or_create_token
-from agentjam.config import cockpit_token_file
+from agentjam.config import cockpit_token_file, tasks_dir
 from agentjam.events import Event, EventType
 from agentjam.session.manager import Session, SessionManager
 from agentjam import settings
+from agentjam.task.store import TaskStore
+from agentjam.task.models import Task, TaskStatus, Priority, new_task_id
 
 
 # ── request models (module-level so FastAPI can resolve them) ────────────────
@@ -260,7 +262,106 @@ def create_app(
             "running": session.running,
         }
 
-    # ── health ───────────────────────────────────────────────────────────
+    # ── task API ─────────────────────────────────────────────────────────
+
+    @app.get("/api/tasks")
+    async def list_tasks(
+        status: str = Query(""),
+        project: str = Query(""),
+        limit: int = Query(0),
+    ):
+        """List tasks with optional filters."""
+        store = TaskStore(tasks_dir())
+        tasks = store.list(status=status, project=project, limit=limit)
+        return {
+            "tasks": [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "status": t.status.value,
+                    "priority": t.priority.value,
+                    "tags": t.tags,
+                    "project": t.project,
+                    "assigned_to": t.assigned_to,
+                    "created_at": t.created_at,
+                    "updated_at": t.updated_at,
+                    "progress_count": len(t.progress),
+                    "steps_count": len(t.steps),
+                    "criteria_count": len(t.acceptance_criteria),
+                }
+                for t in tasks
+            ]
+        }
+
+    @app.get("/api/tasks/{task_id}")
+    async def get_task(task_id: str):
+        """Get full task details."""
+        store = TaskStore(tasks_dir())
+        task = store.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return _task_to_response(task)
+
+    class CreateTaskRequest(BaseModel):
+        title: str
+        description: str = ""
+        priority: str = "medium"
+        project: str = ""
+        tags: list[str] = []
+        acceptance_criteria: list[str] = []
+
+    @app.post("/api/tasks")
+    async def create_task(body: CreateTaskRequest):
+        """Create a new task."""
+        store = TaskStore(tasks_dir())
+        task = Task(
+            id=new_task_id(body.project),
+            title=body.title,
+            description=body.description,
+            priority=Priority(body.priority),
+            project=body.project,
+            tags=body.tags,
+            acceptance_criteria=body.acceptance_criteria,
+        )
+        store.create(task)
+        return _task_to_response(task)
+
+    class UpdateTaskRequest(BaseModel):
+        title: str | None = None
+        status: str | None = None
+        priority: str | None = None
+        assign: str | None = None
+
+    @app.patch("/api/tasks/{task_id}")
+    async def update_task(task_id: str, body: UpdateTaskRequest):
+        """Update a task's status, priority, or assignment."""
+        store = TaskStore(tasks_dir())
+        task = store.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        if body.status:
+            task = store.set_status(task_id, TaskStatus(body.status))
+        if body.priority:
+            task.priority = Priority(body.priority)
+            task = store.update(task)
+        if body.title:
+            task.title = body.title
+            task = store.update(task)
+        if body.assign is not None:
+            task = store.assign(task_id, body.assign)
+
+        return _task_to_response(task)
+
+    @app.delete("/api/tasks/{task_id}")
+    async def delete_task(task_id: str):
+        """Delete a task."""
+        store = TaskStore(tasks_dir())
+        try:
+            store.delete(task_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return {"status": "ok"}
 
     @app.get("/api/health")
     async def health():
@@ -407,6 +508,58 @@ def _format_args(args: dict) -> str:
 def _escape(text: str) -> str:
     """Basic HTML escaping."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def _task_to_response(task: Task) -> dict:
+    """Serialize a Task to a JSON-safe dict."""
+    return {
+        "id": task.id,
+        "title": task.title,
+        "description": task.description,
+        "status": task.status.value,
+        "priority": task.priority.value,
+        "tags": task.tags,
+        "project": task.project,
+        "assigned_to": task.assigned_to,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+        "created_by": task.created_by,
+        "acceptance_criteria": task.acceptance_criteria,
+        "out_of_scope": task.out_of_scope,
+        "dependencies": task.dependencies,
+        "required_credentials": task.required_credentials,
+        "steps": [
+            {
+                "id": s.id,
+                "title": s.title,
+                "status": s.status.value,
+                "notes": s.notes,
+                "sub_steps": [
+                    {"id": ss.id, "title": ss.title, "status": ss.status.value, "notes": ss.notes}
+                    for ss in s.sub_steps
+                ],
+            }
+            for s in task.steps
+        ],
+        "progress": [
+            {
+                "timestamp": p.timestamp,
+                "status": p.status.value,
+                "entry": p.entry,
+                "actions_taken": p.actions_taken,
+                "blocker": {
+                    "description": p.blocker.description,
+                    "question": p.blocker.question,
+                    "options": p.blocker.options,
+                    "awaiting": p.blocker.awaiting,
+                } if p.blocker else None,
+                "resolution": p.resolution,
+                "next_step": p.next_step,
+                "caller": p.caller,
+            }
+            for p in task.progress
+        ],
+    }
 
 
 # ── HTML templates ───────────────────────────────────────────────────────────
