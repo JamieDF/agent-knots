@@ -3,7 +3,7 @@ import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 
-const BASE = 'http://127.0.0.1:8080'
+const BASE = 'http://127.0.0.1:8090'
 
 function getToken(): string {
   const tokenPath = join(homedir(), '.agentjam', 'cockpit.token')
