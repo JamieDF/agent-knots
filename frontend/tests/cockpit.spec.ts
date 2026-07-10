@@ -1270,3 +1270,29 @@ test.describe('agent panel tabs', () => {
   })
 
 })
+
+test.describe('agent code panel', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('code tab shows files agent touches', async ({ page }) => {
+    test.setTimeout(60000)
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: { prompt: 'Say hello', mode: 'agent' },
+    })
+    const session = await sessionRes.json()
+
+    await page.goto(`${BASE}/#/agent/${session.id}`)
+    await page.waitForTimeout(3000)
+
+    // Click Code tab.
+    await page.locator('button:has-text("Code")').click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=touched')).toBeVisible({ timeout: 5000 })
+
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
+  })
+
+})

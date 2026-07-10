@@ -5,7 +5,13 @@ import { assumeAgent, relinquishAgent, sendMessage, fetchTask, type AgentInfo, f
 import { subscribeToAgent, type SSEEvent } from '../lib/sse'
 
 interface EventItem { id: number; html: string; type: string; text: string }
-type Tab = 'review' | 'terminal' | 'browser'
+type Tab = 'terminal' | 'review' | 'code' | 'browser'
+
+interface FileChange {
+  path: string
+  action: string  // 'read', 'write', 'edit', 'shell'
+  timestamp: number
+}
 
 function AgentFocus() {
   const { id } = useParams<{ id: string }>()
@@ -18,6 +24,7 @@ function AgentFocus() {
   const [tab, setTab] = useState<Tab>('terminal')
   const [task, setTask] = useState<TaskDetail | null>(null)
   const [termLines, setTermLines] = useState<string[]>([])
+  const [files, setFiles] = useState<FileChange[]>([])
   const counterRef = useRef(0)
 
   // Fetch agent + task info.
@@ -55,6 +62,24 @@ function AgentFocus() {
         if (evt.type === 'tool_result' && evt.html) {
           const text = stripHtml(evt.html)
           setTermLines(prev => [...prev.slice(-500), text])
+        }
+        // Track file changes from tool calls.
+        if (evt.type === 'tool_call' && evt.html) {
+          const text = stripHtml(evt.html).toLowerCase()
+          // Extract file path from tool call display.
+          const pathMatch = text.match(/(?:file|path|edit|write|read)\s*[:=]?\s*(\S+\.\w+)/i)
+            || text.match(/(\/\S+\.\w+)/)
+            || text.match(/['\"](\S+\.\w+)['\"]/)
+          if (pathMatch) {
+            const action = text.includes('edit') || text.includes('write') ? 'edit'
+              : text.includes('shell') || text.includes('bash') ? 'shell'
+              : 'read'
+            setFiles(prev => {
+              const exists = prev.find(f => f.path === pathMatch[1])
+              if (exists) return prev
+              return [...prev.slice(-50), { path: pathMatch[1], action, timestamp: Date.now() }]
+            })
+          }
         }
       },
       () => {
@@ -114,7 +139,7 @@ function AgentFocus() {
       <div className="focus-right" style={{ display: 'flex', flexDirection: 'column', padding: 0 }}>
         {/* Tab bar */}
         <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-          {(['terminal', 'review', 'browser'] as Tab[]).map(t => (
+          {(['terminal', 'review', 'code', 'browser'] as Tab[]).map(t => (
             <button key={t} onClick={() => setTab(t)} style={{
               flex: 1, padding: '8px 4px', fontSize: 11, fontWeight: 600, textTransform: 'uppercase',
               letterSpacing: 0.5, border: 0, cursor: 'pointer', fontFamily: 'inherit',
@@ -122,7 +147,7 @@ function AgentFocus() {
               color: tab === t ? 'var(--fg)' : 'var(--muted)',
               borderBottom: tab === t ? '2px solid var(--info)' : '2px solid transparent',
             }}>
-              {t === 'terminal' ? '▶ Terminal' : t === 'review' ? '📋 Review' : '🌐 Browser'}
+              {t === 'terminal' ? '▶' : t === 'review' ? '📋' : t === 'code' ? '{}' : '🌐'} {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
           ))}
         </div>
@@ -131,6 +156,7 @@ function AgentFocus() {
         <div style={{ flex: 1, overflowY: 'auto', padding: tab !== 'terminal' ? 12 : 0 }}>
           {tab === 'terminal' && <TerminalPanel lines={termLines} endRef={termEndRef} agent={agent} />}
           {tab === 'review' && <ReviewPanel task={task} agent={agent} />}
+          {tab === 'code' && <CodePanel files={files} />}
           {tab === 'browser' && <BrowserPanel />}
         </div>
       </div>
@@ -239,6 +265,56 @@ function BrowserPanel() {
       <div style={{ fontSize: 13, color: 'var(--fg-soft)' }}>Browser preview</div>
       <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center' }}>
         If the agent starts a dev server,<br />the preview will appear here.
+      </div>
+    </div>
+  )
+}
+
+// ── Code Panel ─────────────────────────────────────────────────────────────
+
+function CodePanel({ files }: { files: FileChange[] }) {
+  const actionColors: Record<string, string> = {
+    edit: 'var(--assumed)',
+    write: 'var(--assumed)',
+    read: 'var(--info)',
+    shell: 'var(--muted)',
+  }
+  const actionIcons: Record<string, string> = {
+    edit: 'M',
+    write: '+',
+    read: '~',
+    shell: '$',
+  }
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ padding: '6px 10px', fontSize: 10, color: 'var(--muted-2)', borderBottom: '1px solid var(--border-subtle)', fontFamily: 'var(--font-mono)' }}>
+        {files.length} file{files.length !== 1 ? 's' : ''} touched
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+        {files.length === 0 && (
+          <div style={{ padding: 12, fontSize: 12, color: 'var(--muted)' }}>
+            Files the agent reads or edits will appear here.
+          </div>
+        )}
+        {files.map((f, i) => (
+          <div key={i} style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
+            borderBottom: '1px solid var(--border-subtle)', fontSize: 11,
+          }}>
+            <span style={{
+              width: 18, height: 18, borderRadius: 3, display: 'grid', placeItems: 'center',
+              fontSize: 10, fontWeight: 600, fontFamily: 'var(--font-mono)',
+              background: f.action === 'edit' ? 'oklch(76% 0.16 75 / 0.12)' : f.action === 'read' ? 'oklch(68% 0.12 235 / 0.12)' : 'var(--surface-raised)',
+              color: actionColors[f.action] || 'var(--muted)',
+              flexShrink: 0,
+            }}>{actionIcons[f.action] || '·'}</span>
+            <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-soft)', wordBreak: 'break-all' }}>{f.path}</span>
+            <span style={{ fontSize: 10, color: 'var(--muted-2)', fontFamily: 'var(--font-mono)' }}>
+              {new Date(f.timestamp).toLocaleTimeString()}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   )
