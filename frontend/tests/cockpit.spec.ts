@@ -1181,3 +1181,92 @@ test.describe('runtime & isolation', () => {
   })
 
 })
+
+// ── agent panel tabs ────────────────────────────────────────────────────────
+
+test.describe('agent panel tabs', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('terminal, review, browser tabs switch in agent focus', async ({ page }) => {
+    // Start a session.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: { prompt: 'Say hello', mode: 'agent' },
+    })
+    const session = await sessionRes.json()
+
+    // Navigate to focus view.
+    await page.goto(BASE)
+    await page.waitForTimeout(3000)
+    const card = page.locator(`text=${session.id}`)
+    await expect(card).toBeVisible({ timeout: 10000 })
+    await card.click()
+    await page.waitForTimeout(2000)
+
+    // Should see tab bar.
+    await expect(page.locator('button:has-text("Terminal")')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('button:has-text("Review")')).toBeVisible()
+    await expect(page.locator('button:has-text("Browser")')).toBeVisible()
+
+    // Terminal tab should be active by default.
+    await expect(page.locator('text=Waiting for shell output')).toBeVisible()
+
+    // Switch to Review tab.
+    await page.locator('button:has-text("Review")').click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=No task assigned')).toBeVisible()
+
+    // Switch to Browser tab.
+    await page.locator('button:has-text("Browser")').click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=Browser preview')).toBeVisible()
+
+    // Switch back to Terminal.
+    await page.locator('button:has-text("Terminal")').click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=Waiting for shell output')).toBeVisible()
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
+  })
+
+  test('review panel shows task details when session has task', async ({ page }) => {
+    test.setTimeout(120000)
+
+    // Create a task with criteria and steps.
+    const taskRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: {
+        title: 'Panel review test',
+        description: 'Testing review panel.',
+        priority: 'medium',
+        acceptance_criteria: ['Should show in panel', 'Should update live'],
+      },
+    })
+    const task = await taskRes.json()
+
+    // Start session on the task.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: { prompt: 'Use log_progress to record you started.', mode: 'agent', task_id: task.id },
+    })
+    const session = await sessionRes.json()
+
+    // Navigate to focus.
+    await page.goto(`${BASE}/#/agent/${session.id}`)
+    await page.waitForTimeout(3000)
+
+    // Switch to Review tab.
+    await page.locator('button:has-text("Review")').click()
+    await page.waitForTimeout(500)
+
+    // Should show task title and criteria.
+    await expect(page.locator('text=Panel review test').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('text=Should show in panel')).toBeVisible()
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+  })
+
+})
