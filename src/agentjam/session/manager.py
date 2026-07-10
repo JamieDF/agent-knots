@@ -217,13 +217,20 @@ class SessionManager:
                 for t in all_tools
             ]
 
-        # Create the agent.
+        # Create the agent with mode-aware intervention handler.
+        from agentjam.intervention import ModeInterventionHandler
+
+        intervention_handler = ModeInterventionHandler(
+            get_mode=lambda: session.mode
+        )
+
         agent = Agent(
             model=model_instance,
             tools=all_tools,
             system_prompt=full_prompt,
             sandbox=None,
             agent_id=session_id,
+            interventions=[intervention_handler],
         )
 
         session = Session(
