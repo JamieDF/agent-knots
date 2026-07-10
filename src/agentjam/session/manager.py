@@ -243,6 +243,10 @@ class SessionManager:
         )
         self._sessions[session_id] = session
 
+        # Register hooks for cost tracking + auto progress logging.
+        from agentjam.hooks import register_session_hooks
+        register_session_hooks(agent, session)
+
         # Resolve runtime: explicit > workspace setting > global setting.
         runtime_type = runtime_override  # explicit override from caller
         if not runtime_type and project_id:
