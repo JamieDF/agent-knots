@@ -165,6 +165,13 @@ class SessionManager:
         # Build the full system prompt with task context.
         full_prompt = _build_system_prompt(system_prompt, task_context, mode)
 
+        # Inject cross-session memory from previous progress.
+        if task_id:
+            from agentjam.session.features import inject_memory
+            memory_block = inject_memory(task_id)
+            if memory_block:
+                full_prompt = full_prompt + "\n\n" + memory_block
+
         # Always include default tools + enabled custom tools from registry.
         from agentjam.tools.defaults import DEFAULT_TOOLS, auto_approve_tools
         from agentjam.tools.registry import ToolRegistry
@@ -246,6 +253,15 @@ class SessionManager:
         # Register hooks for cost tracking + auto progress logging.
         from agentjam.hooks import register_session_hooks
         register_session_hooks(agent, session)
+
+        # Register steering hook for criteria validation.
+        if task_id:
+            from agentjam.session.features import register_steering_hook
+            register_steering_hook(agent, task_id)
+
+        # Add delegate_task tool for multi-agent delegation.
+        from agentjam.session.features import make_delegate_tool
+        all_tools.append(make_delegate_tool(self))
 
         # Resolve runtime: explicit > workspace setting > global setting.
         runtime_type = runtime_override  # explicit override from caller
