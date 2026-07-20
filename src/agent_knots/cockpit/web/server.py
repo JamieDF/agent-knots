@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agent_knots.cockpit.web.auth import Auth, COOKIE_NAME, load_or_create_token
+from agent_knots.cockpit.web.auth import Auth, COOKIE_NAME, load_or_create_token, verify_token
 from agent_knots.config import cockpit_token_file, tasks_dir
 from agent_knots.events import Event, EventType
 from agent_knots.session.manager import Session, SessionManager
@@ -102,24 +102,33 @@ def create_app(
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
-        """Authenticate all requests except /login, /api/health, and static files."""
+        """Authenticate all requests except /login, /api/health, and static files.
+
+        Checks (in order): ?token= query param (for EventSource, which
+        can't set headers), the session cookie, then an Authorization:
+        Bearer header (for programmatic/API clients). All three compare
+        against the token with verify_token()'s constant-time comparison
+        rather than a plain == — timing attacks on a token compare are a
+        real (if narrow) risk worth not reintroducing.
+        """
         path = request.url.path
         # Allow login, health, and static assets without auth.
         if path in ("/login", "/api/health") or path.startswith("/assets/"):
             return await call_next(request)
         # Allow SSE with ?token= query param for EventSource (can't set headers).
-        if path.startswith("/api/") and request.query_params.get("token"):
-            token = request.query_params.get("token", "")
-            if token == auth.token:
-                return await call_next(request)
-        # Everything else requires the cookie.
-        cookie = request.cookies.get(COOKIE_NAME, "")
-        if not cookie or cookie != auth.token:
-            # HTMX requests get 401, browser gets redirect to login.
-            if request.headers.get("HX-Request"):
-                return JSONResponse({"error": "unauthorized"}, status_code=401)
-            return RedirectResponse(url="/login?return=" + request.url.path, status_code=303)
-        return await call_next(request)
+        if path.startswith("/api/") and verify_token(request.query_params.get("token", ""), auth.token):
+            return await call_next(request)
+        # Cookie.
+        if verify_token(request.cookies.get(COOKIE_NAME, ""), auth.token):
+            return await call_next(request)
+        # Authorization: Bearer header, for non-browser clients.
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer ") and verify_token(auth_header[7:], auth.token):
+            return await call_next(request)
+        # HTMX requests get 401, browser gets redirect to login.
+        if request.headers.get("HX-Request"):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return RedirectResponse(url="/login?return=" + request.url.path, status_code=303)
 
     # ── login ────────────────────────────────────────────────────────────
 
@@ -132,20 +141,12 @@ def create_app(
 
     @app.post("/login")
     async def login_post(token: str = Form(...), return_url: str = Form("/")):
-        if token != auth.token:
+        if not verify_token(token, auth.token):
             return HTMLResponse(LOGIN_HTML.format(
                 return_url=return_url,
                 error="Invalid token.",
             ))
-        response = RedirectResponse(url=return_url or "/", status_code=303)
-        response.set_cookie(
-            key=COOKIE_NAME,
-            value=auth.token,
-            httponly=True,
-            samesite="strict",
-            max_age=7 * 24 * 3600,
-        )
-        return response
+        return auth.set_cookie_redirect(return_url or "/")
 
     # ── SPA shell ────────────────────────────────────────────────────────
 

@@ -2,18 +2,21 @@
 
 Matches the Go implementation: a 64-char hex token stored in
 ~/.agent-knots/cockpit.token with 0600 permissions. Auth is via
-?token= query param (sets a cookie on first access) or the
-agent-knots-session HttpOnly cookie.
+?token= query param (sets a cookie on first access), the
+agent-knots-session HttpOnly cookie, or an Authorization: Bearer header.
+
+The actual auth check lives in server.py's auth_middleware, not here —
+this module holds the token lifecycle (generate/load/verify) and the
+shared helpers the middleware and /login route both use, so there's one
+source of truth for "is this token valid" instead of two.
 """
 
 from __future__ import annotations
 
-import hashlib
 import os
 import secrets
 from pathlib import Path
 
-from fastapi import Cookie, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 
@@ -60,49 +63,20 @@ def verify_token(provided: str, stored: str) -> bool:
     return _constant_time_compare(provided, stored)
 
 
-# ── FastAPI dependency ───────────────────────────────────────────────────────
+# ── token holder ─────────────────────────────────────────────────────────────
 
 
 class Auth:
-    """Authentication dependency for FastAPI routes.
+    """Holds the cockpit's auth token and the helpers built around it.
 
     Usage:
         auth = Auth(token_path)
-        app.include_router(router, dependencies=[Depends(auth.require)])
+        # in auth_middleware: verify_token(candidate, auth.token)
+        # in /login: auth.set_cookie_redirect(return_url)
     """
 
     def __init__(self, token_path: Path) -> None:
         self.token = load_or_create_token(token_path)
-
-    async def require(self, request: Request) -> None:
-        """Raise 401 if the request is not authenticated.
-
-        Checks the cookie first, then falls back to ?token= query param.
-        GET /login and POST /login are always allowed.
-        HTMX requests get 401 instead of a redirect.
-        """
-        path = request.url.path
-        if path in ("/login", "/login/"):
-            return
-
-        # Check cookie.
-        cookie_token = request.cookies.get(COOKIE_NAME, "")
-        if cookie_token and verify_token(cookie_token, self.token):
-            return
-
-        # Check query param.
-        query_token = request.query_params.get("token", "")
-        if query_token and verify_token(query_token, self.token):
-            return
-
-        # Check Authorization header (Bearer token).
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            bearer_token = auth_header[7:]
-            if verify_token(bearer_token, self.token):
-                return
-
-        raise HTTPException(status_code=401, detail="Unauthorized")
 
     def set_cookie_redirect(self, return_url: str = "/") -> RedirectResponse:
         """Return a redirect response that sets the auth cookie.
@@ -120,7 +94,6 @@ class Auth:
         )
         return response
 
-    @property
     def cockpit_url(self, host: str = "127.0.0.1", port: int = 0) -> str:
         """Return the one-click cockpit URL with embedded token."""
         addr = f"127.0.0.1:{port}" if port else host

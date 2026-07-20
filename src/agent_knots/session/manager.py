@@ -224,8 +224,8 @@ class SessionManager:
         if ws_sandbox and ws_sandbox.exists:
             from agent_knots.sandbox_tools import make_sandboxed_shell, make_sandboxed_editor
             ws = ws_sandbox.workspace_dir
-            sb_shell = make_sandboxed_shell(ws)
-            sb_editor = make_sandboxed_editor(ws)
+            sb_shell = make_sandboxed_shell(ws, max_output=ws_sandbox.max_output)
+            sb_editor = make_sandboxed_editor(ws, max_file_size=ws_sandbox.max_file_size)
             all_tools = [
                 sb_shell if getattr(t, '__name__', '') == 'shell'
                 else sb_editor if getattr(t, '__name__', '') == 'editor'

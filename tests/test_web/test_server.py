@@ -12,7 +12,26 @@ from agent_knots.session.manager import SessionManager
 
 
 @pytest.fixture
-def session_manager():
+def agent_knots_home(tmp_path, monkeypatch):
+    """Isolate AGENT_KNOTS_HOME so tests never read/write the real user's
+    cockpit token file."""
+    monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+    return tmp_path
+
+
+@pytest.fixture
+def auth_token(agent_knots_home):
+    """The token the app under test will authenticate against.
+    load_or_create_token is idempotent, so it doesn't matter whether this
+    or create_app()'s own Auth(...) call creates the file first — both
+    read/write the same path and agree on the same value."""
+    from agent_knots.config import cockpit_token_file
+    from agent_knots.cockpit.web.auth import load_or_create_token
+    return load_or_create_token(cockpit_token_file())
+
+
+@pytest.fixture
+def session_manager(agent_knots_home):
     with tempfile.TemporaryDirectory() as d:
         yield SessionManager(Path(d))
 
@@ -22,6 +41,16 @@ async def client(session_manager):
     app = create_app(session_manager)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as c:
+        yield c
+
+
+@pytest.fixture
+async def raw_client(session_manager):
+    """Same as `client` but without auto-following redirects, so tests can
+    assert on the redirect itself (status code, Location header)."""
+    app = create_app(session_manager)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=False) as c:
         yield c
 
 
@@ -66,6 +95,63 @@ class TestAuth:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_query_token_grants_access(self, client, auth_token):
+        resp = await client.get(f"/api/agents?token={auth_token}")
+        assert resp.status_code == 200
+        assert resp.json() == {"agents": []}
+
+    @pytest.mark.asyncio
+    async def test_wrong_query_token_denied(self, client, auth_token):
+        resp = await client.get("/api/agents?token=not-the-real-token")
+        assert "Enter your access token" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_cookie_grants_access(self, raw_client, auth_token):
+        raw_client.cookies.set("agent-knots-session", auth_token)
+        resp = await raw_client.get("/api/agents")
+        assert resp.status_code == 200
+        assert resp.json() == {"agents": []}
+
+    @pytest.mark.asyncio
+    async def test_wrong_cookie_denied(self, raw_client):
+        raw_client.cookies.set("agent-knots-session", "not-the-real-token")
+        resp = await raw_client.get("/api/agents")
+        assert resp.status_code == 303  # redirect to login
+
+    @pytest.mark.asyncio
+    async def test_bearer_token_grants_access(self, raw_client, auth_token):
+        resp = await raw_client.get(
+            "/api/agents", headers={"Authorization": f"Bearer {auth_token}"}
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"agents": []}
+
+    @pytest.mark.asyncio
+    async def test_wrong_bearer_token_denied(self, raw_client):
+        resp = await raw_client.get(
+            "/api/agents", headers={"Authorization": "Bearer not-the-real-token"}
+        )
+        assert resp.status_code == 303
+
+    @pytest.mark.asyncio
+    async def test_login_post_wrong_token_shows_error(self, client, auth_token):
+        resp = await client.post("/login", data={"token": "wrong", "return_url": "/"})
+        assert "Invalid token" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_login_post_correct_token_sets_cookie_and_redirects(self, raw_client, auth_token):
+        resp = await raw_client.post(
+            "/login", data={"token": auth_token, "return_url": "/api/agents"},
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/api/agents"
+        assert "agent-knots-session" in resp.cookies
+
+        # The cookie actually works on a follow-up request.
+        resp2 = await raw_client.get("/api/agents")
+        assert resp2.status_code == 200
 
 
 class TestEventFormatting:

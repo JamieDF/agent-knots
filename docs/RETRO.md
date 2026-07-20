@@ -1,8 +1,8 @@
 # Retrospective — where agent-knots actually is
 
 **Date:** 2026-07-20
-**Codebase:** ~6.0K src LOC (Python) + ~2.1K frontend LOC (TSX/TS), 137 Python
-unit tests (106 at the start of this audit, +31 added same day covering the
+**Codebase:** ~6.0K src LOC (Python) + ~2.1K frontend LOC (TSX/TS), 171 Python
+unit tests (106 at the start of this audit, +65 added same day covering the
 fixes below), 43 Playwright e2e tests
 **Goal:** honest self-audit — what's real, what's stubbed, what's untested,
 where docs oversell the code
@@ -67,6 +67,55 @@ disabled built-ins actually being excluded, custom tools actually binding
 to the session workspace, and `InProcessRuntime.start()` actually creating
 the background task. None of it needs network — no `task_description` is
 passed, so the in-process runtime never invokes the real agent loop.
+
+### Second pass — remaining backend cleanup items
+
+- **Auth duplication ("Real bugs #8")** — consolidated. `server.py`'s
+  `auth_middleware` now uses `auth.py`'s `verify_token()` (constant-time
+  compare) instead of plain `==`/`!=` on the cookie, `?token=`, and login
+  form — the old code wasn't timing-attack-safe despite that helper
+  existing specifically to prevent it. Added `Authorization: Bearer`
+  support to the actual middleware (previously that path only existed in
+  the unused `Auth.require()`). Removed `Auth.require()` itself — it
+  assumed a `Depends()`-per-route architecture the app doesn't use, so
+  keeping it around as a second, unreachable auth implementation was the
+  actual problem, not a fix worth preserving. `login_post` now calls
+  `auth.set_cookie_redirect()` instead of duplicating the cookie-setting
+  code inline. Fixed the broken `cockpit_url` (`@property` that couldn't
+  accept the `host`/`port` args it declared) by making it a plain method.
+  Also fixed a pre-existing test-isolation gap while adding coverage
+  here: `tests/test_web/test_server.py` had no `AGENT_KNOTS_HOME`
+  override, so it was reading/writing the *real* user's cockpit token
+  file. Added an `agent_knots_home` fixture; 8 new tests cover query
+  token, cookie, Bearer header, and the login POST flow, including wrong-
+  token rejection for each.
+- **`validate_task_output` ("Wired in but never called")** — wired up, and
+  moved from `session/features.py` to `task/tools.py` (it's task-domain
+  validation, not really a session feature — the old location was just
+  where it happened to get written). Now runs inside `create_task` and
+  `update_task` before constructing a `Priority`/`TaskStatus`, turning
+  what used to be an uncaught `ValueError` on invalid input into a
+  structured `{"error": ...}` tool response. 12 new tests in
+  `tests/test_task/test_tools.py`.
+- **`save_checkpoint`/`load_checkpoint` ("Wired in but never called")** —
+  removed rather than wired up. No call site anywhere (no CLI command, no
+  API route, nothing ever resumed from a checkpoint), `inject_memory`
+  already covers cross-session continuity more robustly (structured
+  progress-log entries vs. an untyped session-data dict), and real
+  session/agent-state resume would need to serialize actual conversation
+  history — a real feature to design later, not scaffolding worth
+  reviving as-is. See `docs/strands-features.md`'s new "Removed" section.
+- **`WorkspaceSandbox`'s dead config (Security gaps #3)** — resolved per
+  field, not uniformly. `max_output` (shell) and `max_file_size` (editor)
+  are now real: `run_confined()` truncates stdout/stderr past
+  `max_output`, and the sandboxed editor rejects writes past
+  `max_file_size` before touching disk. `allowed_urls` was **removed**
+  rather than enforced — there's no URL-fetching tool anywhere in
+  `DEFAULT_TOOLS` for it to gate, and even if there were, the shell tool
+  already has unrestricted network access (see gap #1), so a URL
+  allowlist on one hypothetical future tool wouldn't have been meaningful
+  protection. 14 new tests in `tests/test_sandbox_tools.py` (previously
+  zero coverage for this whole module).
 
 ---
 
@@ -187,6 +236,10 @@ frontend sends that the backend model doesn't have.
 ---
 
 ## Wired in but never tested, or wired in but never called
+
+> **Update:** the first two items below are resolved — see "Second pass"
+> above. `save_checkpoint`/`load_checkpoint` were removed;
+> `validate_task_output` was wired into `create_task`/`update_task`.
 
 - **`save_checkpoint`/`load_checkpoint`** — fully implemented, listed as
   "✅ Integrated" in `docs/strands-features.md`, but **never called from

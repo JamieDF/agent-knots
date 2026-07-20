@@ -19,9 +19,8 @@ class WorkspaceSandbox:
     and confine execution to the workspace directory.
     """
     workspace_dir: str
-    allowed_urls: list[str]
-    max_output: int = 1 << 20
-    max_file_size: int = 10 << 20
+    max_output: int = 1 << 20       # truncate shell stdout/stderr past this
+    max_file_size: int = 10 << 20   # reject editor writes past this
 
     @property
     def exists(self) -> bool:
@@ -36,14 +35,4 @@ def create_sandbox(workspace_dir: str = "") -> WorkspaceSandbox | None:
     if not workspace_dir or not Path(workspace_dir).exists():
         return None
 
-    from agent_knots import settings
-    s = settings.load()
-    allowed: list[str] = []
-    if s.agent.base_url:
-        base = s.agent.base_url.rstrip("/")
-        allowed.append(f"{base}/*")
-
-    return WorkspaceSandbox(
-        workspace_dir=workspace_dir,
-        allowed_urls=allowed,
-    )
+    return WorkspaceSandbox(workspace_dir=workspace_dir)

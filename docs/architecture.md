@@ -67,7 +67,7 @@ agent-knots/
 │   ├── session/
 │   │   ├── manager.py             # SessionManager, Session, system prompt assembly
 │   │   ├── runtime.py             # InProcessRuntime / SubprocessRuntime
-│   │   ├── features.py            # memory, multi-agent delegate, checkpoint, steering
+│   │   ├── features.py            # memory injection, multi-agent delegate, steering
 │   │   └── worker.py              # subprocess worker entry point
 │   ├── task/                      # Task model, YAML store, Strands tools for agents
 │   ├── project/                   # Workspace model + YAML store
@@ -160,10 +160,20 @@ project scopes task listing and session workspace resolution.
 ### WorkspaceSandbox
 
 Per-session isolation (`isolation.py`, `sandbox_tools.py`). Rather than a
-container boundary, each session gets a `WorkspaceSandbox` that the
-sandboxed shell/editor tools use to resolve paths relative to the
-workspace root and reject traversal outside it. Full container-based
-isolation (podman/Docker) is a roadmap item, not yet implemented — see
+container boundary, each session gets a `WorkspaceSandbox` that:
+
+- confines the **editor** tool to the workspace root via real path
+  resolution (traversal, including symlink escapes, is rejected);
+- gives the **shell** tool a default `cwd` and resource limits (CPU time,
+  memory, full process-group cleanup on timeout via
+  `sandbox_tools.run_confined`) — **not** command-level path confinement,
+  since that's not achievable for an arbitrary `shell=True` string without
+  real OS-level sandboxing;
+- truncates shell output past `max_output` and rejects editor writes past
+  `max_file_size`, both configurable on `WorkspaceSandbox`.
+
+Full container-based isolation (podman/Docker) is a roadmap item, not yet
+implemented — see
 [`docs/decisions/004-container-isolation.md`](decisions/004-container-isolation.md)
 for the original design sketch.
 

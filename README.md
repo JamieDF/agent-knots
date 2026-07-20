@@ -148,7 +148,7 @@ agent-knots/
 │   ├── provider.py            # Model provider resolution (CLI/env/settings)
 │   ├── isolation.py           # Workspace sandbox config
 │   └── sandbox_tools.py       # Sandboxed shell/editor tools
-├── tests/                     # Python unit tests (137)
+├── tests/                     # Python unit tests (171)
 ├── mockups/                   # HTML design mockups
 ├── docs/                      # ADRs, architecture, plan
 └── pyproject.toml
@@ -159,13 +159,13 @@ agent-knots/
 ## Testing
 
 ```bash
-# Python unit tests (137)
+# Python unit tests (171)
 uv run --with pytest pytest tests/ -q
 
 # Playwright e2e tests (43)
 cd frontend && npx playwright test
 
-# Total: 180 tests
+# Total: 214 tests
 ```
 
 ---

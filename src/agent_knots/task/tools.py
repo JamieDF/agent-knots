@@ -29,6 +29,36 @@ def _store() -> TaskStore:
     return TaskStore(tasks_dir())
 
 
+def validate_task_output(data: dict) -> dict:
+    """Validate task creation/update fields before they hit the store.
+
+    Without this, an invalid priority/status raises an uncaught ValueError
+    from inside Priority(...)/TaskStatus(...) — this turns that into a
+    structured, tool-callable error instead.
+    """
+    errors = []
+
+    if "title" in data and (not data["title"] or not isinstance(data["title"], str)):
+        errors.append("title must be a non-empty string")
+
+    if "status" in data:
+        try:
+            TaskStatus(data["status"])
+        except ValueError:
+            errors.append(f"invalid status: {data['status']}")
+
+    if "priority" in data:
+        try:
+            Priority(data["priority"])
+        except ValueError:
+            errors.append(f"invalid priority: {data['priority']}")
+
+    if errors:
+        return {"valid": False, "errors": errors}
+
+    return {"valid": True, "data": data}
+
+
 # ── task tools ───────────────────────────────────────────────────────────────
 
 
@@ -48,8 +78,13 @@ def create_task(
         acceptance_criteria: List of verifiable conditions for completion.
 
     Returns:
-        The created task with its ID.
+        The created task with its ID, or an error if title/priority are
+        invalid.
     """
+    validation = validate_task_output({"title": title, "priority": priority})
+    if not validation["valid"]:
+        return {"error": "; ".join(validation["errors"])}
+
     store = _store()
     task = Task(
         id=new_task_id(),
@@ -168,8 +203,13 @@ def update_task(
         acceptance_criteria: New acceptance criteria list (omit to keep current).
 
     Returns:
-        Updated task details.
+        Updated task details, or an error if title/priority are invalid.
     """
+    to_check = {k: v for k, v in {"title": title, "priority": priority}.items() if v}
+    validation = validate_task_output(to_check)
+    if not validation["valid"]:
+        return {"error": "; ".join(validation["errors"])}
+
     store = _store()
     task = store.get(task_id)
     if task is None:

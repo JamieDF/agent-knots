@@ -58,11 +58,20 @@ def _resource_preexec(timeout: int, max_memory_mb: int):
     return _preexec
 
 
-def run_confined(command: str, cwd: str | None, timeout: int = 60, max_memory_mb: int = 512) -> dict:
+def run_confined(
+    command: str, cwd: str | None, timeout: int = 60, max_memory_mb: int = 512,
+    max_output: int | None = None,
+) -> dict:
     """Run a shell command with basic resource limits and full process-tree
     cleanup on timeout. See module docstring — this bounds resource usage
     and guarantees no orphaned children, but does not confine what paths
     the command can touch.
+
+    Args:
+        max_output: If set, stdout/stderr are each truncated to this many
+            characters (with a note appended) before returning — protects
+            against a runaway command flooding the agent's context with
+            output, not a hard OS-level cap on what the process can write.
     """
     try:
         proc = subprocess.Popen(
@@ -75,14 +84,28 @@ def run_confined(command: str, cwd: str | None, timeout: int = 60, max_memory_mb
 
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
-        return {"stdout": stdout, "stderr": stderr, "exit_code": proc.returncode}
+        return {
+            "stdout": _truncate(stdout, max_output),
+            "stderr": _truncate(stderr, max_output),
+            "exit_code": proc.returncode,
+        }
     except subprocess.TimeoutExpired:
         _kill_process_tree(proc)
         stdout, stderr = proc.communicate()
-        return {"error": f"Command timed out ({timeout}s)", "stdout": stdout, "stderr": stderr}
+        return {
+            "error": f"Command timed out ({timeout}s)",
+            "stdout": _truncate(stdout, max_output),
+            "stderr": _truncate(stderr, max_output),
+        }
     except Exception as e:
         _kill_process_tree(proc)
         return {"error": str(e)}
+
+
+def _truncate(text: str, limit: int | None) -> str:
+    if not limit or len(text) <= limit:
+        return text
+    return text[:limit] + f"\n... [truncated, {len(text) - limit} more characters]"
 
 
 def _kill_process_tree(proc: subprocess.Popen) -> None:
@@ -99,18 +122,18 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
         pass
 
 
-def make_sandboxed_shell(workspace: str):
+def make_sandboxed_shell(workspace: str, max_output: int = 1 << 20):
     """Create a shell tool that defaults cwd to the workspace directory."""
 
     @_tool_dec(description="Run a shell command with cwd defaulted to the workspace root. Not a security sandbox — see module docs.")
     def shell_tool(command: str) -> dict:
         """Run a shell command with cwd defaulted to the workspace root."""
-        return run_confined(command, cwd=workspace)
+        return run_confined(command, cwd=workspace, max_output=max_output)
 
     return shell_tool
 
 
-def make_sandboxed_editor(workspace: str):
+def make_sandboxed_editor(workspace: str, max_file_size: int = 10 << 20):
     """Create an editor tool confined to the workspace directory."""
 
     @_tool_dec(description="Read or write files inside the workspace. Paths are relative to workspace root.")
@@ -139,6 +162,12 @@ def make_sandboxed_editor(workspace: str):
                 return {"error": str(e)}
 
         if action == "write":
+            size = len(content.encode("utf-8"))
+            if size > max_file_size:
+                return {
+                    "error": f"Content is {size} bytes, exceeds max_file_size "
+                              f"({max_file_size} bytes)."
+                }
             try:
                 Path(resolved).parent.mkdir(parents=True, exist_ok=True)
                 Path(resolved).write_text(content)

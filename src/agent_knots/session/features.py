@@ -1,4 +1,4 @@
-"""Advanced session features — memory, multi-agent, checkpoint, steering.
+"""Advanced session features — memory, multi-agent delegation, steering.
 
 All features are wired via hooks, interventions, and system prompt
 enhancements — no changes to the core session manager needed.
@@ -6,15 +6,12 @@ enhancements — no changes to the core session manager needed.
 
 from __future__ import annotations
 
-import json
 import time
-from pathlib import Path
 from typing import Any
 
 from strands.hooks.events import AfterToolCallEvent
 from strands.tools import tool as _tool_dec
 
-from agent_knots.config import sessions_dir as _sessions_dir
 from agent_knots.config import tasks_dir as _tasks_dir
 
 
@@ -108,37 +105,6 @@ def make_delegate_tool(session_manager: Any) -> Any:
     return delegate_task
 
 
-# ── Checkpoint: session state save/load ──────────────────────────────────────
-
-
-def save_checkpoint(session_id: str, session_data: dict) -> None:
-    """Save session state to a YAML checkpoint file."""
-    import yaml
-
-    path = Path(_sessions_dir()) / f"{session_id}.checkpoint.yaml"
-    data = {
-        "session_id": session_id,
-        "timestamp": time.time(),
-        **session_data,
-    }
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(yaml.dump(data, default_flow_style=False))
-    tmp.rename(path)
-
-
-def load_checkpoint(session_id: str) -> dict | None:
-    """Load a session checkpoint, or None if not found."""
-    import yaml
-
-    path = Path(_sessions_dir()) / f"{session_id}.checkpoint.yaml"
-    if not path.exists():
-        return None
-    try:
-        return yaml.safe_load(path.read_text()) or {}
-    except Exception:
-        return None
-
-
 # ── Steering: criteria validation via hooks ──────────────────────────────────
 
 
@@ -190,36 +156,3 @@ def register_steering_hook(agent: Any, task_id: str) -> None:
                 break  # One suggestion per tool call.
 
     agent.add_hook(on_tool, AfterToolCallEvent)
-
-
-# ── Structured output: task data validation ──────────────────────────────────
-
-
-def validate_task_output(data: dict) -> dict:
-    """Validate task creation/update data against the task model.
-
-    Used before creating or updating tasks to ensure well-formed data.
-    """
-    from agent_knots.task.models import TaskStatus, Priority
-
-    errors = []
-
-    if "title" in data and (not data["title"] or not isinstance(data["title"], str)):
-        errors.append("title must be a non-empty string")
-
-    if "status" in data:
-        try:
-            TaskStatus(data["status"])
-        except ValueError:
-            errors.append(f"invalid status: {data['status']}")
-
-    if "priority" in data:
-        try:
-            Priority(data["priority"])
-        except ValueError:
-            errors.append(f"invalid priority: {data['priority']}")
-
-    if errors:
-        return {"valid": False, "errors": errors}
-
-    return {"valid": True, "data": data}
