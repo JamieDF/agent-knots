@@ -20,6 +20,8 @@ from agent_knots.config import (
     projects_dir,
     vault_dir,
 )
+from agent_knots.project.models import Project
+from agent_knots.project.store import ProjectStore
 from agent_knots.session.manager import SessionManager
 from agent_knots.task.models import Priority, Task, TaskStatus
 from agent_knots.task.store import TaskStore
@@ -371,13 +373,238 @@ def _format_ts(ts: float) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+# ── vault template commands ──────────────────────────────────────────────────
+
+vault_template_app = typer.Typer(
+    help="Manage credential injection templates.", no_args_is_help=True
+)
+vault_app.add_typer(vault_template_app, name="template")
+
+
+@vault_template_app.command(name="add")
+def template_add(
+    cred_id: str = typer.Argument(..., help="Credential ID (e.g. 'github/work')."),
+    name: str = typer.Option(..., "--name", help="Template name (e.g. 'gh_cli_env')."),
+    description: str = typer.Option("", "--description", help="Human-readable note."),
+    env: str = typer.Option(
+        "", "--env", help='JSON object of env vars to inject, e.g. \'{"GH_TOKEN": "$value"}\'.'
+    ),
+    file_path: str = typer.Option(
+        "", "--file", help="Write the value to this path instead of an env var."
+    ),
+    file_permissions: str = typer.Option(
+        "600", "--file-permissions", help="Octal permissions for --file (default 600)."
+    ),
+    stdin: bool = typer.Option(False, "--stdin", help="Pipe the value to the command's stdin."),
+    wrapper: str = typer.Option(
+        "", "--wrapper", help="Command wrapper template using {original} and $value."
+    ),
+) -> None:
+    """Add or replace an injection template on a credential.
+
+    Examples:
+        agent-knots vault template add github/work --name gh_cli_env --env '{"GH_TOKEN": "$value"}'
+        agent-knots vault template add github/work --name curl_bearer --wrapper "curl -H 'Authorization: token $value' {original}"
+    """
+    import json
+
+    from agent_knots.vault.store import InjectionTemplate
+
+    store = _get_vault()
+    if store.lock_state != LockState.UNLOCKED:
+        typer.echo("Vault is locked. Use 'vault unlock' first.")
+        raise typer.Exit(1)
+
+    try:
+        env_dict = json.loads(env) if env else {}
+        if not isinstance(env_dict, dict):
+            raise ValueError("--env must be a JSON object")
+    except (json.JSONDecodeError, ValueError) as e:
+        typer.echo(f"Error: invalid --env: {e}")
+        raise typer.Exit(1)
+
+    try:
+        store.set_template(cred_id, InjectionTemplate(
+            name=name,
+            description=description,
+            env=env_dict,
+            file_path=file_path or None,
+            file_permissions=int(file_permissions, 8),
+            stdin=stdin,
+            command_wrapper=wrapper or None,
+        ))
+        typer.echo(f"Template '{name}' added to '{cred_id}'.")
+    except ValueError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(1)
+
+
+@vault_template_app.command(name="list")
+def template_list(cred_id: str = typer.Argument(..., help="Credential ID.")) -> None:
+    """List templates on a credential."""
+    store = _get_vault()
+    templates = store.list_templates(cred_id)
+    if not templates:
+        typer.echo("No templates.")
+        return
+    for t in templates:
+        kind = "env" if t.env else "file" if t.file_path else "stdin" if t.stdin else "wrapper"
+        typer.echo(f"  {t.name:20s}  {kind:8s}  {t.description}")
+
+
+@vault_template_app.command(name="show")
+def template_show(
+    cred_id: str = typer.Argument(..., help="Credential ID."),
+    name: str = typer.Argument(..., help="Template name."),
+) -> None:
+    """Show a template's injection config."""
+    store = _get_vault()
+    t = store.get_template(cred_id, name)
+    if t is None:
+        typer.echo(f"Template {name!r} not found on {cred_id!r}.")
+        raise typer.Exit(1)
+    typer.echo(f"Name:        {t.name}")
+    typer.echo(f"Description: {t.description or '—'}")
+    if t.env:
+        typer.echo(f"Env:         {t.env}")
+    if t.file_path:
+        typer.echo(f"File:        {t.file_path} (mode {oct(t.file_permissions)})")
+    if t.stdin:
+        typer.echo("Stdin:       yes")
+    if t.command_wrapper:
+        typer.echo(f"Wrapper:     {t.command_wrapper}")
+
+
+@vault_template_app.command(name="remove")
+def template_remove(
+    cred_id: str = typer.Argument(..., help="Credential ID."),
+    name: str = typer.Argument(..., help="Template name to remove."),
+) -> None:
+    """Remove a template from a credential."""
+    store = _get_vault()
+    try:
+        store.remove_template(cred_id, name)
+        typer.echo(f"Template '{name}' removed from '{cred_id}'.")
+    except ValueError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(1)
+
+
 # ── project commands ─────────────────────────────────────────────────────────
+
+# Global project store reference.
+_project_store: ProjectStore | None = None
+
+
+def _get_project_store() -> ProjectStore:
+    global _project_store
+    if _project_store is None:
+        _project_store = ProjectStore(projects_dir())
+    return _project_store
+
+
+@project_app.command(name="create")
+def create_project(
+    project_id: str = typer.Argument(..., help="Project ID (e.g. 'my-app')."),
+    name: str = typer.Option(..., "--name", help="Human-readable project name."),
+    description: str = typer.Option("", "--description", help="Longer description."),
+    repository: str = typer.Option("", "--repository", "--repo", help="Repo URL or path."),
+    default_branch: str = typer.Option("main", "--branch", help="Default branch."),
+    runtime: str = typer.Option("", "--runtime", help="Runtime override (inprocess, subprocess)."),
+    tag: list[str] = typer.Option([], "--tag", help="Tags (repeatable)."),
+) -> None:
+    """Create a new project."""
+    store = _get_project_store()
+    project = Project(
+        id=project_id,
+        name=name,
+        description=description,
+        repository=repository,
+        default_branch=default_branch,
+        runtime=runtime,
+        tags=list(tag),
+    )
+    try:
+        store.create(project)
+        typer.echo(f"Project created: {project.id}")
+    except ValueError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(1)
 
 
 @project_app.command(name="list")
 def list_projects() -> None:
     """List all projects."""
-    typer.echo("Not yet implemented.")
+    store = _get_project_store()
+    projects = store.list()
+    if not projects:
+        typer.echo("No projects found.")
+        return
+    for p in projects:
+        tags = ", ".join(p.tags) if p.tags else ""
+        typer.echo(f"  {p.id:20s}  {p.name:30s}  {tags}")
+
+
+@project_app.command(name="show")
+def show_project(project_id: str = typer.Argument(..., help="Project ID.")) -> None:
+    """Show full project details."""
+    store = _get_project_store()
+    project = store.get(project_id)
+    if project is None:
+        typer.echo(f"Project {project_id!r} not found.")
+        raise typer.Exit(1)
+
+    typer.echo(f"Project: {project.id}")
+    typer.echo(f"  Name:           {project.name}")
+    typer.echo(f"  Description:    {project.description or '—'}")
+    typer.echo(f"  Repository:     {project.repository or '—'}")
+    typer.echo(f"  Default branch: {project.default_branch}")
+    typer.echo(f"  Runtime:        {project.runtime or '(global default)'}")
+    if project.tags:
+        typer.echo(f"  Tags:           {', '.join(project.tags)}")
+
+
+@project_app.command(name="update")
+def update_project(
+    project_id: str = typer.Argument(..., help="Project ID."),
+    name: str = typer.Option("", "--name", help="New name."),
+    description: str = typer.Option("", "--description", help="New description."),
+    repository: str = typer.Option("", "--repository", "--repo", help="New repository URL or path."),
+    default_branch: str = typer.Option("", "--branch", help="New default branch."),
+    runtime: str = typer.Option("", "--runtime", help="New runtime override."),
+) -> None:
+    """Update a project."""
+    store = _get_project_store()
+    project = store.get(project_id)
+    if project is None:
+        typer.echo(f"Project {project_id!r} not found.")
+        raise typer.Exit(1)
+
+    if name:
+        project.name = name
+    if description:
+        project.description = description
+    if repository:
+        project.repository = repository
+    if default_branch:
+        project.default_branch = default_branch
+    if runtime:
+        project.runtime = runtime
+
+    store.update(project)
+    typer.echo(f"Project {project.id} updated.")
+
+
+@project_app.command(name="delete")
+def delete_project(project_id: str = typer.Argument(..., help="Project ID to delete.")) -> None:
+    """Delete a project."""
+    store = _get_project_store()
+    try:
+        store.delete(project_id)
+        typer.echo(f"Project {project_id} deleted.")
+    except ValueError as e:
+        typer.echo(f"Error: {e}")
+        raise typer.Exit(1)
 
 
 # ── task commands ────────────────────────────────────────────────────────────

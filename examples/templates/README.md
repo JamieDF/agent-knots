@@ -8,16 +8,24 @@ to your needs.
 ```bash
 # 1. Add a credential (interactive)
 agent-knots vault add github/work
-# Value: <paste your token>
+# Credential value: <paste your token>
 
 # 2. Add a template from this library
 agent-knots vault template add github/work \
   --name gh_cli_env \
   --env '{"GH_TOKEN": "$value"}'
 
-# 3. The agent can now use it via vault://github/work?template=gh_cli_env
-# The credential value is never returned to the agent.
+# 3. Inspect what you've stored
+agent-knots vault template list github/work
+agent-knots vault template show github/work gh_cli_env
 ```
+
+> **Note:** the CLI/web/TUI can store and manage templates today (this
+> page), but there's no agent-callable `vault_use` tool yet that actually
+> spawns a command with the template's injection applied and scrubs the
+> output — that's still on the [roadmap](../../roadmap.md). Right now
+> templates are metadata attached to a credential; nothing consumes them
+> automatically during a session.
 
 ## Files
 
@@ -29,17 +37,17 @@ agent-knots vault template add github/work \
 - **`openai.json`** — OpenAI / OpenAI-compatible API keys
 - **`anthropic.json`** — Anthropic API key
 
-Each file shows the same template in JSON form (which you can hand-edit
-in your vault's `vault.enc`) and as CLI flags for `agent-knots vault template add`.
+Each file shows the same template as JSON (for reference — `vault.enc` is
+encrypted and isn't meant to be hand-edited) and as the equivalent CLI
+flags for `agent-knots vault template add`.
 
 ## Variables
 
-All templates use `$value` as the substitution marker. When the template
-fires, `$value` is replaced with the decrypted credential value *inside
-the spawned process's environment* — never in the orchestrator or agent.
-
-Command wrapper templates also support `{original}`, which is replaced
-with the agent's original command + arguments.
+Templates use `$value` as the substitution marker and (for command
+wrapper templates) `{original}` for the agent's original command +
+arguments. These are how the injection is *meant* to work once a
+consuming tool applies the template — see the note above about what's
+implemented today.
 
 ## Adding custom templates
 

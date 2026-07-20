@@ -82,14 +82,39 @@ uv run agent-knots vault audit
 ```
 
 Credentials are encrypted at rest (AES-256-GCM, argon2id-derived keys).
-Vault-aware credential injection for agent tool calls is on the
-[roadmap](../roadmap.md) — today the vault is a secure store you manage via
-CLI/web/TUI.
+Attach an injection template so a tool knows how to consume it:
+
+```bash
+uv run agent-knots vault template add github-work \
+  --name gh_cli_env --env '{"GH_TOKEN": "$value"}'
+
+uv run agent-knots vault template list github-work
+uv run agent-knots vault template show github-work gh_cli_env
+```
+
+> Templates are stored metadata today — there's no agent-callable
+> `vault_use` tool yet that spawns a command with the injection applied
+> and scrubs the output. That execution engine is on the
+> [roadmap](../roadmap.md). See
+> [`examples/templates/`](../examples/templates/) for a library of
+> starter templates.
+
+## Create a project
+
+```bash
+uv run agent-knots project create my-app \
+  --name "My App" --repo "[email protected]:me/my-app.git"
+# Project created: my-app
+
+uv run agent-knots project list
+uv run agent-knots project show my-app
+```
 
 ## Create a task
 
 ```bash
 uv run agent-knots task create "Add dark mode toggle to settings" \
+  --project my-app \
   --priority medium \
   --criteria "Toggle visible in /settings/appearance" \
   --criteria "Choice persists across sessions"
@@ -100,11 +125,6 @@ uv run agent-knots task create "Add dark mode toggle to settings" \
 uv run agent-knots task list
 uv run agent-knots task show T-...
 ```
-
-> Project management (`agent-knots project ...`) is minimal right now —
-> only `project list` exists. Multi-repo project CRUD from the CLI is
-> tracked in the [roadmap](../roadmap.md); for now, sessions and tasks work
-> fine without a project.
 
 ## Start a session
 

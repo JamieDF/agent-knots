@@ -4,6 +4,18 @@ All notable changes to agent-knots are documented here.
 
 ## [Unreleased]
 
+### Added
+- **CLI: `project` subcommand group.** `create`, `list`, `show`, `update`,
+  `delete` now wired to the existing `ProjectStore` (previously only
+  `project list` existed, and only as a stub — the web cockpit already
+  had full CRUD via `/api/workspaces`).
+- **CLI: `vault template` subcommand group.** `add`, `list`, `show`,
+  `remove` for managing per-credential injection templates (`--env`,
+  `--file`, `--stdin`, `--wrapper`), matching the `VaultStore` methods
+  that already backed the data model. Actually *using* a template to
+  inject a credential into a spawned command (an agent-callable
+  `vault_use` tool) is still not implemented — see roadmap.
+
 ### Changed
 - **Renamed project from "AgentJam" to "agent-knots".** Python package is
   now `agent_knots` (import path), CLI binary is `agent-knots`. Default

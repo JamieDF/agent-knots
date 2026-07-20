@@ -86,7 +86,16 @@ agent-knots
 │   ├── init, unlock, lock, status
 │   ├── add <id> [--value ...] [--tag ...]
 │   ├── list, show <id>, remove <id>
-│   └── audit [--credential <id>] [--limit <n>]
+│   ├── audit [--credential <id>] [--limit <n>]
+│   └── template
+│       ├── add <cred-id> --name <n> [--env <json>] [--file <path>] [--wrapper <cmd>]
+│       ├── list <cred-id>, show <cred-id> <name>
+│       └── remove <cred-id> <name>
+├── project
+│   ├── create <id> --name <n> [--repo <url>] [--branch <b>] [--tag ...]
+│   ├── list, show <id>
+│   ├── update <id> [--name ...] [--repo ...] [--branch ...]
+│   └── delete <id>
 └── version
 ```
 
