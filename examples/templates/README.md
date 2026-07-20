@@ -50,5 +50,3 @@ If you want a template the agent can use for a tool not in this library,
 either:
 1. Pick the closest generic template (`curl_bearer`, `env`, `stdin`)
 2. Write a new template JSON in your vault directly
-3. (Advanced) Implement a plugin — see `internal/vault/vault.go` for the
-   `PluginInjection` type

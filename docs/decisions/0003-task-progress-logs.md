@@ -1,4 +1,7 @@
 > **Note:** Captured under the prior project name "harness"; see CHANGELOG for the rename.
+> The progress-log design described here still holds in the Python rebuild
+> (`src/agent_knots/task/`), including memory injection from prior sessions
+> (`session/features.py::inject_memory`).
 
 # ADR 0003: Task state lives in persistent progress logs, not chat
 

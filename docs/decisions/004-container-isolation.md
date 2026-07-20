@@ -1,4 +1,8 @@
 > **Note:** Captured under the prior project name "harness"; see CHANGELOG for the rename.
+> This design was never fully implemented and is **not** built in the
+> Python rebuild — sessions today only get workspace-directory confinement
+> (`src/agent_knots/isolation.py`), not podman container isolation. This
+> remains the design sketch for that roadmap item.
 
 # ADR-004: Container isolation strategy for agent sessions
 

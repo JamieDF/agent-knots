@@ -125,7 +125,7 @@ agent-knots/
 │       ├── views/             # Overview, Board, Tasks, TaskDetail, Settings, ...
 │       ├── components/        # Topbar, AgentCard, CreateTaskDialog, ...
 │       └── lib/               # API client, SSE client, workspace context
-├── src/agent-knots/
+├── src/agent_knots/
 │   ├── cli/                   # Typer CLI entry point + commands
 │   ├── cockpit/
 │   │   ├── tui/               # Textual TUI (overview, focus, tools)

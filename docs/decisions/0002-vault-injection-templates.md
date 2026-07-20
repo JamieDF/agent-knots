@@ -1,4 +1,7 @@
 > **Note:** Captured under the prior project name "harness"; see CHANGELOG for the rename.
+> The template/injection design described here still holds in the Python
+> rebuild, but the implementation is `src/agent_knots/vault/` rather than
+> `internal/vault/filestore/`.
 
 # ADR 0002: Vault uses injection templates, not direct value retrieval
 

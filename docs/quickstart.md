@@ -1,145 +1,155 @@
 # Quickstart
 
-This walkthrough gets you from zero to a running agent in five minutes.
+This walkthrough goes a bit deeper than the README's quickstart: vault,
+tasks, and a full session lifecycle from the CLI.
 
 ## Prerequisites
 
-- **Go 1.23+** (for building from source; prebuilt binaries coming)
-- **Podman** (for containerized agents; optional for v0.1)
-- **OpenCode** (for the agent engine; optional for v0.1)
-- An **LLM API key** (any OpenAI-compatible provider, including local Ollama)
+- **Python 3.14+** and [`uv`](https://docs.astral.sh/uv/)
+- **Node.js** (to build the web cockpit frontend; optional if you only use
+  the TUI)
+- An **LLM API key** for any OpenAI-compatible provider (MiniMax, OpenAI,
+  Ollama, etc.)
 
 ## Install
-
-From source:
 
 ```bash
 git clone https://github.com/jamiedf/agent-knots.git
 cd agent-knots
-go build -o ~/.local/bin/agent-knots ./cmd/agent-knots
-export PATH=$PATH:~/.local/bin
+uv sync
+
+# Optional: build the web cockpit frontend
+cd frontend && npm install && npm run build && cd ..
 ```
 
 Verify:
 
 ```bash
-agent-knots version
-# agent-knots 0.1.0 (commit dev)
+uv run agent-knots version
+# agent-knots 0.1.0
 ```
 
-## Set up data directory
+## Configure a model provider
 
-agent-knots stores everything under `~/.agent-knots/` by default. Override with
-`AGENT_KNOTS_HOME=/some/path`.
-
-The first run creates the directory structure:
+Settings resolve in this order: CLI flags → `AGENT_KNOTS_*` env vars →
+`~/.agent-knots/settings.yaml`.
 
 ```bash
-agent-knots version
-ls ~/.agent-knots/
-# logs/  modes/  projects/  tasks/  vault/
+mkdir -p ~/.agent-knots
+cat > ~/.agent-knots/settings.yaml << 'EOF'
+agent:
+  default_model: minimax-m2.7
+  base_url: https://api.minimax.io/v1
+  api_key: <your-api-key>
+  runtime: inprocess
+EOF
 ```
+
+Or export env vars for a one-off session:
+
+```bash
+export AGENT_KNOTS_MODEL=openai/minimax-m2.7
+export AGENT_KNOTS_BASE_URL=https://api.minimax.io/v1
+export AGENT_KNOTS_API_KEY=<your-minimax-key>
+```
+
+All persistent state lives under `~/.agent-knots/` (override with
+`AGENT_KNOTS_HOME=/some/path`). Subdirectories (`sessions/`, `tasks/`,
+`projects/`, `vault/`) are created on first use.
 
 ## Initialize the vault
 
 ```bash
-agent-knots vault init
+uv run agent-knots vault init
 # Choose a passphrase: ********
 # Confirm passphrase: ********
-# Vault initialized.
+# Vault initialized and unlocked.
 ```
 
-The vault is now unlocked for this session. Lock it with `agent-knots vault lock`,
-unlock with `agent-knots vault unlock`.
+Lock it with `agent-knots vault lock`, unlock with `agent-knots vault
+unlock`.
 
 ## Add a credential
 
 ```bash
-agent-knots vault add github/work \
-  --description "GitHub PAT for work" \
-  --tag github --tag work
-# Value: ********
-# Added credential "github/work".
+uv run agent-knots vault add github-work --description "GitHub PAT for work" --tag github --tag work
+# Credential value: ********
+# Confirm value: ********
+# Credential 'github-work' added.
+
+uv run agent-knots vault list
+uv run agent-knots vault audit
 ```
 
-## Add a template so the agent can use it
-
-```bash
-agent-knots vault template add github/work \
-  --name gh_cli_env \
-  --env '{"GH_TOKEN": "$value"}'
-# Added template "gh_cli_env".
-```
-
-The template tells the vault: when the agent asks to use `github/work` with
-template `gh_cli_env`, expose the value as `GH_TOKEN` in the spawned
-process's environment.
-
-## Create a project
-
-```bash
-agent-knots project create my-app \
-  --name "My Cool App" \
-  --repo [email protected]:you/my-app.git \
-  --branch main \
-  --role frontend
-# Created project "my-app".
-
-agent-knots project switch my-app
-# Switched to project "my-app".
-```
-
-For multi-repo projects:
-
-```yaml
-# Edit ~/.agent-knots/projects/my-app.yaml directly for advanced config.
-# See docs/architecture.md for the full schema.
-```
+Credentials are encrypted at rest (AES-256-GCM, argon2id-derived keys).
+Vault-aware credential injection for agent tool calls is on the
+[roadmap](../roadmap.md) — today the vault is a secure store you manage via
+CLI/web/TUI.
 
 ## Create a task
 
 ```bash
-agent-knots task new \
-  --title "Add dark mode toggle to settings" \
-  --project my-app \
+uv run agent-knots task create "Add dark mode toggle to settings" \
   --priority medium \
-  --acceptance "Toggle visible in /settings/appearance" \
-  --acceptance "Choice persists across sessions" \
-  --acceptance "No FOUC on page reload"
-# Created task "T-2026-06-30-...".
+  --criteria "Toggle visible in /settings/appearance" \
+  --criteria "Choice persists across sessions"
+# Task created: T-...
 ```
-
-## Spawn an agent on the task
 
 ```bash
-agent-knots agent spawn --task T-2026-06-30-... --mode agent
+uv run agent-knots task list
+uv run agent-knots task show T-...
 ```
 
-The agent starts in `agent` mode (autonomous, spec-driven) and begins
-working the task. Events stream to your terminal:
+> Project management (`agent-knots project ...`) is minimal right now —
+> only `project list` exists. Multi-repo project CRUD from the CLI is
+> tracked in the [roadmap](../roadmap.md); for now, sessions and tasks work
+> fine without a project.
 
+## Start a session
+
+```bash
+uv run agent-knots session start --task T-... --mode agent \
+  --prompt "Add the dark mode toggle described in the task."
 ```
-Spawned agent oc-1234567890
-Streaming events (Ctrl-C to stop):
-[session.created] New session
-[message.updated] I'll start by reading the settings page...
-[tool_call] read_file src/pages/Settings.tsx
-[tool_result] ...
+
+The session runs in the foreground and streams events to your terminal.
+(`--detach` is not implemented yet — use the cockpit, below, to run
+multiple sessions and monitor them without blocking your shell.)
+
+```bash
+uv run agent-knots session list
 ```
 
 ## Watch progress
 
 ```bash
-agent-knots task show T-2026-06-30-...
+uv run agent-knots task show T-...
 ```
 
-You'll see the task's progress log fill up as the agent logs each action.
+The task's progress log fills in as the agent logs each meaningful action
+(this happens automatically via hooks — no manual `log_progress` calls
+needed from a well-behaved agent).
+
+## Launch the cockpit
+
+```bash
+# TUI (default)
+uv run agent-knots cockpit launch
+# → j/k navigate, Enter focus, a assume, r relinquish, t tools, d delete, q quit
+
+# Web
+uv run agent-knots cockpit launch --web --port 8080
+# → http://127.0.0.1:8080/?token=...
+```
+
+Both surfaces show live agent status, let you start new sessions, and
+support assume/relinquish take-over.
 
 ## What's next?
 
 - **Read [docs/architecture.md](architecture.md)** to understand the
   design.
-- **Browse [modes/](../modes/)** to see the default modes. Add your own
-  by dropping a markdown file in `~/.agent-knots/modes/`.
-- **Check [docs/roadmap.md](roadmap.md)** for what's coming next.
+- **Check [roadmap.md](../roadmap.md)** at the repo root for what's done
+  and what's next.
 - **Open an issue** if you find a bug or want a feature.

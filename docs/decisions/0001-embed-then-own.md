@@ -1,3 +1,9 @@
+> **Note:** This ADR describes the design for the original Go implementation
+> (`cmd/`, `internal/`, now removed). The Python rebuild
+> (`src/agent_knots/`) integrates the Strands Agents SDK directly in-process
+> rather than driving Pi over subprocess RPC — see
+> [`docs/architecture.md`](../architecture.md) for current behavior.
+
 # ADR 0001: Pi via subprocess RPC as the v1 default agent backend
 
 **Status:** Accepted (revised 2026-07-03)
