@@ -100,17 +100,23 @@ web server, and TUI are all thin front ends over the same `SessionManager`.
 `SessionManager` (`session/manager.py`) owns the set of active `Session`
 objects and is the single thing the CLI, TUI, and web server all talk to.
 Starting a session resolves the model provider, assembles the system prompt
-(mode + task context), builds a Strands `Agent` with the tool set and a
-`ModeInterventionHandler`, and hands it to a `SessionRuntime`.
+(mode + task context), and builds a Strands `Agent` with the tool set and a
+`ModeInterventionHandler`.
 
-Two runtimes implement `SessionRuntime` (`session/runtime.py`):
+`SessionRuntime` (`session/runtime.py`) has two implementations, but they
+are **not symmetric today**:
 
-- **`InProcessRuntime`** — runs the agent loop in the same Python process.
-  Fast, no IPC overhead, default for most use.
-- **`SubprocessRuntime`** — spawns a child process (`session/worker.py`)
-  that runs the agent loop in isolation and streams events back over a
-  pipe. Selected per workspace/session when isolation matters more than
-  startup latency.
+- **`InProcessRuntime`** exists but its `start()` is a no-op.
+  `SessionManager.start()` never constructs it — the in-process path runs
+  `_run_agent` directly, bypassing the `SessionRuntime` abstraction
+  entirely. Treat `InProcessRuntime` as dead code until this is fixed.
+- **`SubprocessRuntime`** is the one real implementation: it spawns a
+  child process (`session/worker.py`) that runs the agent loop and streams
+  JSONL events back over stdin/stdout. Selected per workspace/session when
+  isolation matters more than startup latency.
+
+See [`docs/RETRO.md`](RETRO.md) for the fuller audit this note is based
+on.
 
 **Why this matters:** the orchestrator — cockpit, task system, vault
 integration — talks to sessions through this interface regardless of

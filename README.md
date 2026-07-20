@@ -162,10 +162,10 @@ agent-knots/
 # Python unit tests (106)
 uv run --with pytest pytest tests/ -q
 
-# Playwright e2e tests (30)
+# Playwright e2e tests (43)
 cd frontend && npx playwright test
 
-# Total: 136 tests
+# Total: 149 tests
 ```
 
 ---
