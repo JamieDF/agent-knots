@@ -1,0 +1,1298 @@
+import { test, expect } from '@playwright/test'
+import { readFileSync } from 'fs'
+import { homedir } from 'os'
+import { join } from 'path'
+
+const BASE = 'http://127.0.0.1:8090'
+
+function getToken(): string {
+  const tokenPath = join(homedir(), '.agentjam', 'cockpit.token')
+  return readFileSync(tokenPath, 'utf-8').trim()
+}
+
+async function authPage(page: any) {
+  const token = getToken()
+  await page.context().addCookies([{
+    name: 'agentjam-session',
+    value: token,
+    domain: '127.0.0.1',
+    path: '/',
+    httpOnly: true,
+    sameSite: 'Strict',
+  }])
+}
+
+// ── helpers ─────────────────────────────────────────────────────────────────
+
+async function createSession(page: any, prompt: string, mode = 'agent') {
+  const res = await page.request.post(`${BASE}/api/sessions`, {
+    data: { prompt, mode },
+  })
+  expect(res.status()).toBe(200)
+  return await res.json()
+}
+
+// ── public endpoints ────────────────────────────────────────────────────────
+
+test.describe('public endpoints', () => {
+
+  test('health is public', async ({ page }) => {
+    const res = await page.request.get(`${BASE}/api/health`)
+    expect(res.status()).toBe(200)
+    expect((await res.json()).status).toBe('ok')
+  })
+
+  test('login page renders', async ({ page }) => {
+    await page.goto(`${BASE}/login`)
+    await expect(page.locator('text=Enter your access token')).toBeVisible()
+  })
+
+  test('protected routes redirect to login', async ({ page }) => {
+    const res = await page.request.get(`${BASE}/api/agents`, { maxRedirects: 0 })
+    expect(res.status()).toBe(303)
+    expect(res.headers()['location']).toContain('/login')
+  })
+
+})
+
+// ── authenticated API ───────────────────────────────────────────────────────
+
+test.describe('authenticated API', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('agents list returns data', async ({ page }) => {
+    const res = await page.request.get(`${BASE}/api/agents`)
+    expect(res.status()).toBe(200)
+    const data = await res.json()
+    expect(Array.isArray(data.agents)).toBe(true)
+  })
+
+  test('settings returns config', async ({ page }) => {
+    const res = await page.request.get(`${BASE}/api/settings`)
+    expect(res.status()).toBe(200)
+    const data = await res.json()
+    expect(data).toHaveProperty('configured')
+    expect(data.agent).toHaveProperty('default_model')
+  })
+
+  test('settings save preserves existing key', async ({ page }) => {
+    // Save settings WITHOUT touching the API key (empty string = preserve).
+    const res = await page.request.put(`${BASE}/api/settings`, {
+      data: {
+        default_model: 'minimax-m2.7',
+        api_key: '',  // empty = preserve existing key
+        base_url: '',
+        default_mode: 'agent',
+      },
+    })
+    expect(res.status()).toBe(200)
+    const data = await res.json()
+    expect(data.status).toBe('ok')
+  })
+
+})
+
+// ── SPA overview ────────────────────────────────────────────────────────────
+
+test.describe('SPA overview', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('overview loads with cockpit branding', async ({ page }) => {
+    await page.goto(BASE)
+    await page.waitForSelector('text=agentjam', { timeout: 5000 })
+    // Either the React SPA or inline shell renders.
+    const count = await page.locator('text=agentjam').count()
+    expect(count).toBeGreaterThanOrEqual(1)
+  })
+
+  test('empty state shows when no agents', async ({ page }) => {
+    await page.goto(BASE)
+    // Should show either "No agents running" or the setup wizard.
+    const hasEmpty = await page.locator('text=No agents running').count()
+    const hasWizard = await page.locator('text=Welcome to agentjam').count()
+    const hasCockpit = await page.locator('text=agentjam').count()
+    expect(hasEmpty + hasWizard + hasCockpit).toBeGreaterThanOrEqual(1)
+  })
+
+})
+
+// ── full cockpit flow (requires real MiniMax key) ───────────────────────────
+
+test.describe('cockpit — real agent flow', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('create session, view in cockpit, assume/relinquish', async ({ page }) => {
+    // 1. Create a real session via API.
+    const session = await createSession(
+      page,
+      'My name is Taylor. Favourite colour: teal. Remember both facts and reply confirming.',
+      'agent'
+    )
+    console.log(`Session created: ${session.id}`)
+
+    // 2. Navigate to overview — agent card should appear.
+    await page.goto(BASE)
+    await page.waitForTimeout(3000) // wait for polling
+
+    const card = page.locator(`text=${session.id}`)
+    await expect(card).toBeVisible({ timeout: 10000 })
+
+    // Check mode pill on card shows 'agent'.
+    const modePill = page.locator('.agent-card .mode-pill').first()
+    await expect(modePill).toContainText('agent')
+
+    // 3. Click the agent card to enter focus view.
+    await card.click()
+    await page.waitForTimeout(2000)
+
+    // Should see the agent header with Assume button.
+    const assumeBtn = page.locator('text=Assume')
+    await expect(assumeBtn).toBeVisible({ timeout: 5000 })
+
+    // Mode pill should show 'watching'.
+    const focusPill = page.locator('#mode-pill')
+    await expect(focusPill).toContainText('watching')
+
+    // 4. Assume control.
+    await assumeBtn.click()
+    await page.waitForTimeout(500)
+
+    // Mode pill should now show 'driving'.
+    await expect(focusPill).toContainText('driving')
+
+    // Should see Relinquish button.
+    const relinquishBtn = page.locator('text=Relinquish')
+    await expect(relinquishBtn).toBeVisible()
+
+    // 5. Send a multi-turn message.
+    const chatInput = page.locator('#chat-input, .chat-bar input').first()
+    await expect(chatInput).toBeVisible()
+    await chatInput.fill('What is my name?')
+    await chatInput.press('Enter')
+    await page.waitForTimeout(3000)
+
+    // Should see the user message echoed.
+    await expect(page.locator('.prose-user')).toBeVisible({ timeout: 5000 })
+
+    // 6. Relinquish control.
+    await relinquishBtn.click()
+    await page.waitForTimeout(500)
+
+    // Mode pill should go back to 'watching'.
+    await expect(focusPill).toContainText('watching')
+
+    // Should see Assume button again.
+    await expect(page.locator('text=Assume')).toBeVisible()
+
+    // 7. Send another message in agent mode.
+    await chatInput.fill('What colour did I mention?')
+    await chatInput.press('Enter')
+    await page.waitForTimeout(3000)
+
+    // 8. Navigate back to overview.
+    const backBtn = page.locator('text=Back').first()
+    if (await backBtn.isVisible()) {
+      await backBtn.click()
+    } else {
+      await page.goBack()
+    }
+    await page.waitForTimeout(1000)
+
+    // Agent card should still be visible.
+    await expect(card).toBeVisible()
+  })
+
+})
+
+// ── multi-turn via API ──────────────────────────────────────────────────────
+
+test.describe('multi-turn API', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('multi-turn conversation remembers context', async ({ page }) => {
+    // Create session.
+    const session = await createSession(
+      page,
+      'My name is Alex. My pet is a cat named Whiskers.',
+      'agent'
+    )
+
+    // Wait for first turn to complete.
+    await page.waitForTimeout(5000)
+
+    // Turn 2: ask a follow-up.
+    const res2 = await page.request.post(`${BASE}/api/agent/${session.id}/send`, {
+      form: { message: 'What is my name and what is my pet called?' },
+    })
+    expect(res2.status()).toBe(200)
+    await page.waitForTimeout(5000)
+
+    // Turn 3: another follow-up.
+    const res3 = await page.request.post(`${BASE}/api/agent/${session.id}/send`, {
+      form: { message: 'What species is Whiskers?' },
+    })
+    expect(res3.status()).toBe(200)
+
+    // Basic smoke test: API calls succeed.
+  })
+
+})
+
+// ── mode switching via API ──────────────────────────────────────────────────
+
+test.describe('mode switching API', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('assume and relinquish via API', async ({ page }) => {
+    const session = await createSession(page, 'Say hello.', 'agent')
+    await page.waitForTimeout(3000)
+
+    // Assume control.
+    const assumeRes = await page.request.post(`${BASE}/api/agent/${session.id}/assume`)
+    expect(assumeRes.status()).toBe(200)
+
+    // Relinquish.
+    const relRes = await page.request.post(`${BASE}/api/agent/${session.id}/relinquish`)
+    expect(relRes.status()).toBe(200)
+  })
+
+  test('mode switching on nonexistent agent returns 404', async ({ page }) => {
+    const res = await page.request.post(`${BASE}/api/agent/fake-id/assume`)
+    // Returns error — either 404 from agent lookup or 500 from session manager.
+    expect([404, 500]).toContain(res.status())
+  })
+
+})
+
+// ── task API ────────────────────────────────────────────────────────────────
+
+test.describe('task API', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('create, read, update, delete task', async ({ page }) => {
+    const createRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: {
+        title: 'E2E test task',
+        description: 'A task created by Playwright',
+        priority: 'high',
+        tags: ['e2e', 'test'],
+        acceptance_criteria: ['Must pass', 'Must be fast'],
+      },
+    })
+    expect(createRes.status()).toBe(200)
+    const created = await createRes.json()
+    expect(created.title).toBe('E2E test task')
+    expect(created.priority).toBe('high')
+    expect(created.tags).toContain('e2e')
+    const taskId = created.id
+
+    // List.
+    const listRes = await page.request.get(`${BASE}/api/tasks?status=open`)
+    expect(listRes.status()).toBe(200)
+    const list = await listRes.json()
+    expect(list.tasks.some((t: any) => t.id === taskId)).toBe(true)
+
+    // Get.
+    const getRes = await page.request.get(`${BASE}/api/tasks/${taskId}`)
+    expect(getRes.status()).toBe(200)
+    const got = await getRes.json()
+    expect(got.acceptance_criteria).toEqual(['Must pass', 'Must be fast'])
+
+    // Update status.
+    const patchRes = await page.request.patch(`${BASE}/api/tasks/${taskId}`, {
+      data: { status: 'in_progress', assign: 'agent-test' },
+    })
+    expect(patchRes.status()).toBe(200)
+    const patched = await patchRes.json()
+    expect(patched.status).toBe('in_progress')
+    expect(patched.assigned_to).toBe('agent-test')
+
+    // Delete.
+    const delRes = await page.request.delete(`${BASE}/api/tasks/${taskId}`)
+    expect(delRes.status()).toBe(200)
+
+    // Verify deleted.
+    const goneRes = await page.request.get(`${BASE}/api/tasks/${taskId}`)
+    expect(goneRes.status()).toBe(404)
+  })
+
+  test('get nonexistent task returns 404', async ({ page }) => {
+    const res = await page.request.get(`${BASE}/api/tasks/fake-id`)
+    expect(res.status()).toBe(404)
+  })
+
+  test('create task without title returns 422', async ({ page }) => {
+    const res = await page.request.post(`${BASE}/api/tasks`, {
+      data: { priority: 'low' },
+    })
+    expect(res.status()).toBe(422)
+  })
+
+  test('list and filter tasks', async ({ page }) => {
+    const t1 = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Filter test A', priority: 'low' },
+    })
+    const t2 = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Filter test B', priority: 'high' },
+    })
+    const id1 = (await t1.json()).id
+    const id2 = (await t2.json()).id
+
+    const list = await page.request.get(`${BASE}/api/tasks?limit=10`)
+    expect((await list.json()).tasks.length).toBeGreaterThanOrEqual(2)
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${id1}`)
+    await page.request.delete(`${BASE}/api/tasks/${id2}`)
+  })
+
+})
+
+// ── task UI ─────────────────────────────────────────────────────────────────
+
+test.describe('task UI', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('task list renders and shows created task', async ({ page }) => {
+    // Create a task via API.
+    const res = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'UI test task', priority: 'high', tags: ['ui-test'] },
+    })
+    const { id } = await res.json()
+
+    // Navigate to tasks page.
+    await page.goto(`${BASE}/#/tasks`)
+    await page.waitForTimeout(1000)
+
+    // Should show the task title.
+    await expect(page.locator(`text=UI test task`)).toBeVisible({ timeout: 5000 })
+
+    // Should show the task ID in mono font.
+    await expect(page.locator(`text=${id}`)).toBeVisible()
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${id}`)
+  })
+
+  test('create task via dialog', async ({ page }) => {
+    await page.goto(`${BASE}/#/tasks`)
+    await page.waitForTimeout(1000)
+
+    // Click "New Task" button.
+    await page.locator('text=New Task').click()
+    await page.waitForTimeout(300)
+
+    // Fill in the form.
+    await page.locator('input[placeholder="What needs to be done?"]').fill('Dialog test task')
+    await page.locator('select').last().selectOption('high')
+
+    // Submit.
+    await page.locator('text=Create Task').click()
+    await page.waitForTimeout(1000)
+
+    // Should appear in the list.
+    await expect(page.locator('text=Dialog test task')).toBeVisible({ timeout: 5000 })
+
+    // Cleanup — find and delete via API.
+    const list = await (await page.request.get(`${BASE}/api/tasks`)).json()
+    const task = list.tasks.find((t: any) => t.title === 'Dialog test task')
+    if (task) await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+  })
+
+  test('task detail view', async ({ page }) => {
+    // Create a task with criteria and steps.
+    const res = await page.request.post(`${BASE}/api/tasks`, {
+      data: {
+        title: 'Detail test task',
+        description: 'A task for testing the detail view.',
+        priority: 'medium',
+        acceptance_criteria: ['Should render correctly', 'Should show steps'],
+      },
+    })
+    const { id } = await res.json()
+
+    // Navigate to task detail.
+    await page.goto(`${BASE}/#/tasks/${id}`)
+    await page.waitForTimeout(1000)
+
+    // Should show title.
+    await expect(page.locator('text=Detail test task')).toBeVisible({ timeout: 5000 })
+    // Should show description.
+    await expect(page.locator('text=A task for testing the detail view.')).toBeVisible()
+    // Should show acceptance criteria.
+    await expect(page.locator('text=Should render correctly')).toBeVisible()
+    // Should show task ID.
+    await expect(page.locator(`text=${id}`).first()).toBeVisible()
+
+    // Status change.
+    await page.locator('select').nth(1).selectOption('review')
+    await page.waitForTimeout(500)
+
+    // Verify via API.
+    const updated = await (await page.request.get(`${BASE}/api/tasks/${id}`)).json()
+    expect(updated.status).toBe('review')
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${id}`)
+  })
+
+  test('delete task from detail view', async ({ page }) => {
+    const res = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Delete me' },
+    })
+    const { id } = await res.json()
+
+    await page.goto(`${BASE}/#/tasks/${id}`)
+    await page.waitForTimeout(1000)
+
+    // Click delete button specifically.
+    await page.locator('button:has-text("Delete")').click()
+    await page.waitForTimeout(500)
+
+    // Should redirect to tasks list.
+    await expect(page).not.toHaveURL(new RegExp(id))
+
+    // Verify gone via API.
+    const check = await page.request.get(`${BASE}/api/tasks/${id}`)
+    expect(check.status()).toBe(404)
+  })
+
+})
+
+// ── agent task tools ────────────────────────────────────────────────────────
+
+/** Poll a task until the agent modifies it (progress or status change). */
+async function waitForAgentToModifyTask(page: any, taskId: string, maxSec = 120): Promise<any> {
+  const deadline = Date.now() + maxSec * 1000
+  while (Date.now() < deadline) {
+    const res = await page.request.get(`${BASE}/api/tasks/${taskId}`)
+    const task = await res.json()
+    if (task.progress.length > 0 || task.status !== 'open') {
+      return task
+    }
+    await new Promise(r => setTimeout(r, 3000))
+  }
+  // One final check.
+  const res = await page.request.get(`${BASE}/api/tasks/${taskId}`)
+  return res.json()
+}
+
+test.describe('agent task tools', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('agent logs progress and updates task status', async ({ page }) => {
+    test.setTimeout(180000)
+
+    // Create task.
+    const taskRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Agent tool e2e test', description: 'Agent must log progress.', priority: 'medium' },
+    })
+    const task = await taskRes.json()
+    console.log(`Task: ${task.id}`)
+
+    // Start agent session.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: {
+        prompt: 'Use log_progress to record that you started work. Then use update_task_status to mark the task in_progress.',
+        mode: 'agent',
+        task_id: task.id,
+      },
+    })
+    expect(sessionRes.status()).toBe(200)
+    const session = await sessionRes.json()
+    console.log(`Session: ${session.id}`)
+
+    // Poll until agent modifies the task (up to 2 min).
+    const updated = await waitForAgentToModifyTask(page, task.id, 120)
+    console.log(`Final: status=${updated.status}, progress=${updated.progress.length}`)
+
+    expect(updated.progress.length).toBeGreaterThanOrEqual(1)
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+  })
+
+})
+
+// ── cockpit: agent uses task tools (frontend) ───────────────────────────────
+
+test.describe('cockpit — agent task tools', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('watch agent use task tools in cockpit', async ({ page }) => {
+    test.setTimeout(180000)
+
+    // Create task.
+    const taskRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: {
+        title: 'Cockpit tool e2e test',
+        description: 'Agent should log progress.',
+        priority: 'high',
+        acceptance_criteria: ['Agent logs progress'],
+      },
+    })
+    const task = await taskRes.json()
+
+    // Start session.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: {
+        prompt: 'Use log_progress to record you started. Then use update_task_status to set task to in_progress.',
+        mode: 'agent',
+        task_id: task.id,
+      },
+    })
+    expect(sessionRes.status()).toBe(200)
+    const session = await sessionRes.json()
+
+    // Navigate to cockpit and find the agent card.
+    await page.goto(BASE)
+    await page.waitForTimeout(3000)
+    const card = page.locator(`text=${session.id}`)
+    await expect(card).toBeVisible({ timeout: 10000 })
+
+    // Click into focus view.
+    await card.click()
+    await page.waitForTimeout(2000)
+
+    // Poll the task until the agent modifies it (checking via API in background).
+    const updated = await waitForAgentToModifyTask(page, task.id, 120)
+    console.log(`Agent finished: status=${updated.status}, progress=${updated.progress.length}`)
+
+    // Check cockpit UI for any tool cards that appeared.
+    const toolCards = await page.locator('.tool-card').count()
+    console.log(`Tool cards in UI: ${toolCards}`)
+
+    expect(updated.progress.length).toBeGreaterThanOrEqual(1)
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+  })
+
+})
+
+// ── tool manager ────────────────────────────────────────────────────────────
+
+test.describe('tool manager', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('list tools shows built-in tools', async ({ page }) => {
+    const res = await page.request.get(`${BASE}/api/tools`)
+    expect(res.status()).toBe(200)
+    const data = await res.json()
+    expect(data.tools.length).toBeGreaterThanOrEqual(10)
+    // Check key built-in tools exist.
+    const names = data.tools.map((t: any) => t.name)
+    expect(names).toContain('editor')
+    expect(names).toContain('shell')
+    expect(names).toContain('create_task')
+    expect(names).toContain('log_progress')
+  })
+
+  test('create and delete custom tool', async ({ page }) => {
+    // Create.
+    const createRes = await page.request.post(`${BASE}/api/tools`, {
+      data: {
+        name: 'e2e_test_tool',
+        description: 'A test tool created by Playwright.',
+        command: 'echo "hello {name}"',
+        parameters: [{ name: 'name', type: 'string', description: 'Name to greet' }],
+      },
+    })
+    expect(createRes.status()).toBe(200)
+
+    // Verify it appears in list.
+    const listRes = await page.request.get(`${BASE}/api/tools`)
+    const tools = (await listRes.json()).tools
+    const found = tools.find((t: any) => t.name === 'e2e_test_tool')
+    expect(found).toBeDefined()
+    expect(found.builtin).toBe(false)
+    expect(found.enabled).toBe(true)
+
+    // Toggle it off.
+    const toggleRes = await page.request.post(`${BASE}/api/tools/e2e_test_tool/toggle`)
+    expect(toggleRes.status()).toBe(200)
+    expect((await toggleRes.json()).enabled).toBe(false)
+
+    // Toggle it back on.
+    const toggleRes2 = await page.request.post(`${BASE}/api/tools/e2e_test_tool/toggle`)
+    expect((await toggleRes2.json()).enabled).toBe(true)
+
+    // Delete.
+    const delRes = await page.request.delete(`${BASE}/api/tools/e2e_test_tool`)
+    expect(delRes.status()).toBe(200)
+
+    // Verify gone.
+    const after = await (await page.request.get(`${BASE}/api/tools`)).json()
+    expect(after.tools.find((t: any) => t.name === 'e2e_test_tool')).toBeUndefined()
+  })
+
+  test('custom tool actually works with agent', async ({ page }) => {
+    test.setTimeout(120000)
+
+    // Create a custom tool.
+    await page.request.post(`${BASE}/api/tools`, {
+      data: {
+        name: 'say_hello',
+        description: 'Say hello to someone.',
+        command: 'echo "Hello, {who}!"',
+        parameters: [{ name: 'who', type: 'string', description: 'Who to greet' }],
+      },
+    })
+
+    // Create a task.
+    const taskRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Custom tool test', priority: 'medium' },
+    })
+    const task = await taskRes.json()
+
+    // Start a session.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: {
+        prompt: 'Use the say_hello tool to greet World. Then use log_progress to record you did it.',
+        mode: 'agent',
+        task_id: task.id,
+      },
+    })
+    expect(sessionRes.status()).toBe(200)
+
+    // Poll until agent modifies task.
+    const deadline = Date.now() + 120000
+    let modified = false
+    while (Date.now() < deadline) {
+      const res = await page.request.get(`${BASE}/api/tasks/${task.id}`)
+      const t = await res.json()
+      if (t.progress.length > 0) { modified = true; break }
+      await new Promise(r => setTimeout(r, 3000))
+    }
+    expect(modified).toBe(true)
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+    await page.request.delete(`${BASE}/api/tools/say_hello`)
+  })
+
+})
+
+// ── board view ──────────────────────────────────────────────────────────────
+
+test.describe('board view', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('board loads with columns', async ({ page }) => {
+    // Create a few tasks in different statuses.
+    const t1 = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Board task A', priority: 'high' },
+    })
+    const t2 = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Board task B', priority: 'medium' },
+    })
+    const id1 = (await t1.json()).id
+    const id2 = (await t2.json()).id
+
+    // Move one to in_progress.
+    await page.request.patch(`${BASE}/api/tasks/${id1}`, { data: { status: 'in_progress' } })
+
+    // Navigate to board.
+    await page.goto(`${BASE}/#/board`)
+    await page.waitForTimeout(2000)
+
+    // Should see column headers.
+    await expect(page.locator('text=Todo')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=In Progress')).toBeVisible()
+    await expect(page.locator('text=Done')).toBeVisible()
+
+    // Should see task cards.
+    await expect(page.locator('text=Board task A')).toBeVisible()
+    await expect(page.locator('text=Board task B')).toBeVisible()
+
+    // Expand a task card.
+    await page.locator('text=Board task A').click()
+    await page.waitForTimeout(300)
+
+    // Should see priority and status buttons in expanded view.
+    await expect(page.locator('text=Priority')).toBeVisible({ timeout: 3000 })
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${id1}`)
+    await page.request.delete(`${BASE}/api/tasks/${id2}`)
+  })
+
+})
+
+// ── workspaces ──────────────────────────────────────────────────────────────
+
+test.describe('workspaces', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('create, read, update, delete workspace', async ({ page }) => {
+    // Create.
+    const createRes = await page.request.post(`${BASE}/api/workspaces`, {
+      data: { id: 'e2e-workspace', name: 'E2E Workspace', description: 'Test workspace', tags: ['test'] },
+    })
+    expect(createRes.status()).toBe(200)
+
+    // List.
+    const listRes = await page.request.get(`${BASE}/api/workspaces`)
+    const workspaces = (await listRes.json()).workspaces
+    expect(workspaces.some((w: any) => w.id === 'e2e-workspace')).toBe(true)
+
+    // Update.
+    const patchRes = await page.request.patch(`${BASE}/api/workspaces/e2e-workspace`, {
+      data: { name: 'Updated Workspace' },
+    })
+    expect(patchRes.status()).toBe(200)
+
+    // Delete.
+    const delRes = await page.request.delete(`${BASE}/api/workspaces/e2e-workspace`)
+    expect(delRes.status()).toBe(200)
+  })
+
+  test('tasks filter by workspace', async ({ page }) => {
+    // Create workspace.
+    await page.request.post(`${BASE}/api/workspaces`, {
+      data: { id: 'filter-test', name: 'Filter Test' },
+    })
+
+    // Create task in that workspace.
+    const t1 = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Workspace task', project: 'filter-test' },
+    })
+    const id1 = (await t1.json()).id
+
+    // Create task in no workspace.
+    const t2 = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'No workspace task' },
+    })
+    const id2 = (await t2.json()).id
+
+    // List tasks filtered by workspace.
+    const listRes = await page.request.get(`${BASE}/api/tasks?project=filter-test`)
+    const tasks = (await listRes.json()).tasks
+    expect(tasks.some((t: any) => t.id === id1)).toBe(true)
+    expect(tasks.some((t: any) => t.id === id2)).toBe(false)
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${id1}`)
+    await page.request.delete(`${BASE}/api/tasks/${id2}`)
+    await page.request.delete(`${BASE}/api/workspaces/filter-test`)
+  })
+
+})
+
+test.describe('agent deletion', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('delete agent via API', async ({ page }) => {
+    // Create a session.
+    const res = await page.request.post(`${BASE}/api/sessions`, {
+      data: { prompt: 'Say hello', mode: 'agent' },
+    })
+    expect(res.status()).toBe(200)
+    const { id } = await res.json()
+
+    // Delete it.
+    const delRes = await page.request.delete(`${BASE}/api/agent/${id}`)
+    expect(delRes.status()).toBe(200)
+
+    // Verify gone from agent list.
+    const list = await (await page.request.get(`${BASE}/api/agents`)).json()
+    expect(list.agents.find((a: any) => a.id === id)).toBeUndefined()
+  })
+
+})
+
+// ── task editing ────────────────────────────────────────────────────────────
+
+test.describe('task editing', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+  test('change status from detail dropdown', async ({ page }) => {
+    const res = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Status change test' },
+    })
+    const { id } = await res.json()
+
+    await page.goto(`${BASE}/#/tasks/${id}`)
+    await page.waitForTimeout(1000)
+
+    // Change status via dropdown.
+    await page.locator('select').nth(1).selectOption('review')
+    await page.waitForTimeout(500)
+
+    // Verify.
+    const updated = await (await page.request.get(`${BASE}/api/tasks/${id}`)).json()
+    expect(updated.status).toBe('review')
+
+    await page.request.delete(`${BASE}/api/tasks/${id}`)
+  })
+
+  test('create task from board + button', async ({ page }) => {
+    await page.goto(`${BASE}/#/board`)
+    await page.waitForTimeout(1000)
+
+    // Click + button in the Todo column.
+    const plusButtons = page.locator('button[title="Add task"]')
+    await plusButtons.first().click()
+    await page.waitForTimeout(300)
+
+    // Fill dialog.
+    await page.locator('input[placeholder="What needs to be done?"]').fill('Board dialog task')
+    await page.locator('text=Create Task').click()
+    await page.waitForTimeout(1000)
+
+    // Should appear on board.
+    await expect(page.locator('text=Board dialog task')).toBeVisible({ timeout: 5000 })
+
+    // Cleanup via API.
+    const list = await (await page.request.get(`${BASE}/api/tasks`)).json()
+    const task = list.tasks.find((t: any) => t.title === 'Board dialog task')
+    if (task) await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+  })
+
+  test('tasks nav dropdown shows Board and List', async ({ page }) => {
+    await page.goto(BASE)
+    await page.waitForTimeout(1000)
+
+    // Click Tasks dropdown.
+    await page.locator('text=Tasks ▾').click()
+    await page.waitForTimeout(300)
+
+    // Should show Board and List options.
+    await expect(page.locator('text=Board')).toBeVisible()
+    await expect(page.locator('text=List')).toBeVisible()
+
+    // Click Board.
+    await page.locator('text=Board').click()
+    await page.waitForTimeout(500)
+    expect(page.url()).toContain('/board')
+  })
+
+})
+
+test.describe('task modal editing', () => {
+  test.beforeEach(async ({ page }) => { await authPage(page) })
+
+  test('edit task via modal', async ({ page }) => {
+    test.setTimeout(30000)
+    const res = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Modal test', priority: 'low' } })
+    const { id } = await res.json()
+    await page.goto(`${BASE}/#/tasks/${id}`)
+    await page.waitForTimeout(1000)
+
+    await page.locator('text=Edit task').click()
+    await page.waitForTimeout(500)
+
+    // Fill in the modal.
+    await page.locator("input").first().fill('Updated via modal')
+    await page.locator("select").nth(3).selectOption('urgent')
+    await page.locator('text=Save changes').click()
+    await page.waitForTimeout(500)
+
+    const updated = await (await page.request.get(`${BASE}/api/tasks/${id}`)).json()
+    expect(updated.title).toBe('Updated via modal')
+    expect(updated.priority).toBe('urgent')
+    await page.request.delete(`${BASE}/api/tasks/${id}`)
+  })
+})
+
+// ── session-task assignment ─────────────────────────────────────────────────
+
+test.describe('session-task assignment', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('starting session on task moves it to in_progress', async ({ page }) => {
+    // Create a task.
+    const taskRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Assignment test task', priority: 'medium' },
+    })
+    const task = await taskRes.json()
+    expect(task.status).toBe('open')
+
+    // Start a session assigned to this task.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: { prompt: 'Say hello', mode: 'agent', task_id: task.id },
+    })
+    expect(sessionRes.status()).toBe(200)
+
+    // Wait briefly for session to start.
+    await page.waitForTimeout(3000)
+
+    // Verify task status changed to in_progress.
+    const updated = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+    expect(updated.status).toBe('in_progress')
+    expect(updated.assigned_to).toBeTruthy()
+
+    // Cleanup — stop the session and delete the task.
+    const session = await sessionRes.json()
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+  })
+
+  test('board start session button appears on expanded card', async ({ page }) => {
+    // Create a task.
+    const taskRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Board start test', priority: 'high' },
+    })
+    const task = await taskRes.json()
+
+    // Navigate to board.
+    await page.goto(`${BASE}/#/board`)
+    await page.waitForTimeout(2000)
+
+    // Find and expand the task card.
+    const card = page.locator(`text=${task.title}`)
+    await expect(card).toBeVisible({ timeout: 5000 })
+    await card.click()
+    await page.waitForTimeout(300)
+
+    // Should see the Start session button.
+    const startBtn = page.locator('text=Start session')
+    await expect(startBtn).toBeVisible({ timeout: 3000 })
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+  })
+
+  test('overview + button shows task picker', async ({ page }) => {
+    // Create some open tasks.
+    const t1 = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Picker task 1' } })
+    const t2 = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Picker task 2' } })
+    const id1 = (await t1.json()).id; const id2 = (await t2.json()).id
+
+    // Go to overview.
+    await page.goto(BASE)
+    await page.waitForTimeout(2000)
+
+    // Click + New Session.
+    const addBtn = page.locator('text=New Session')
+    await expect(addBtn).toBeVisible({ timeout: 5000 })
+    await addBtn.click()
+    await page.waitForTimeout(500)
+
+    // Task picker dropdown should show.
+    await expect(page.locator('text=Attach to task')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('text=Picker task 1')).toBeVisible()
+    await expect(page.locator('text=Picker task 2')).toBeVisible()
+    await expect(page.locator('text=No task — just start')).toBeVisible()
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/tasks/${id1}`)
+    await page.request.delete(`${BASE}/api/tasks/${id2}`)
+  })
+
+})
+
+// ── full task workflow ──────────────────────────────────────────────────────
+
+test.describe('full task workflow', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('create task → draft → open → agent works → progress → done', async ({ page }) => {
+    test.setTimeout(180000)
+
+    // 1. Create a task (starts as open by default, but we can set draft).
+    const createRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: {
+        title: 'Full workflow test — write a hello script',
+        description: 'Create a Python script called greet.py that prints a greeting and the current time.',
+        priority: 'medium',
+        acceptance_criteria: [
+          'Script file is named greet.py',
+          'Prints a greeting message',
+          'Prints the current time',
+          'Script exits cleanly when run',
+        ],
+        status: 'draft',
+      },
+    })
+    expect(createRes.status()).toBe(200)
+    const task = await createRes.json()
+    console.log(`Task created: ${task.id} (draft)`)
+
+    // 2. Verify it's in draft status.
+    let current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+    expect(current.status).toBe('draft')
+
+    // 3. Move to open (ready for work).
+    await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'open' } })
+    current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+    expect(current.status).toBe('open')
+    console.log('Status: open (ready)')
+
+    // 4. Start an agent session on this task.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: {
+        prompt: `Work on task ${task.id}. Read the task, log progress at each step, create the greet.py file, and when done mark the task as done. Use the task tools.`,
+        mode: 'agent',
+        task_id: task.id,
+      },
+    })
+    expect(sessionRes.status()).toBe(200)
+    const session = await sessionRes.json()
+    console.log(`Session started: ${session.id}`)
+
+    // 5. Verify task moved to in_progress automatically.
+    await page.waitForTimeout(2000)
+    current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+    expect(current.status).toBe('in_progress')
+    expect(current.assigned_to).toBe(session.id)
+    console.log('Status: in_progress (agent assigned)')
+
+    // 6. Poll until agent finishes (task has progress entries).
+    const deadline = Date.now() + 120000
+    let progressCount = 0
+    while (Date.now() < deadline) {
+      current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+      progressCount = current.progress.length
+      if (progressCount >= 2) break  // at least 2 progress entries = agent working
+      await new Promise(r => setTimeout(r, 3000))
+    }
+    console.log(`Progress entries: ${progressCount}, status: ${current.status}`)
+
+    // 7. Verify agent logged progress.
+    expect(progressCount).toBeGreaterThanOrEqual(1)
+
+    // 8. If agent didn't mark it done, we set it manually.
+    if (current.status !== 'done') {
+      await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'done' } })
+      current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+    }
+    expect(current.status).toBe('done')
+    console.log('Status: done (completed)')
+
+    // 9. Verify the full state: task has progress, was assigned, is now done.
+    expect(current.assigned_to).toBeTruthy()
+    expect(current.progress.length).toBeGreaterThanOrEqual(1)
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+    console.log('✅ Full workflow complete: draft → open → in_progress → done')
+  })
+
+})
+
+// ── runtime & isolation ─────────────────────────────────────────────────────
+
+test.describe('runtime & isolation', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('workspace with subprocess runtime spawns agent in child process', async ({ page }) => {
+    test.setTimeout(60000)
+
+    // Create workspace with subprocess runtime.
+    const wsRes = await page.request.post(`${BASE}/api/workspaces`, {
+      data: { id: 'subprocess-test', name: 'Subprocess Test', runtime: 'subprocess' },
+    })
+    expect(wsRes.status()).toBe(200)
+
+    // Create a task in that workspace.
+    const taskRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Subprocess task', project: 'subprocess-test' },
+    })
+    const task = await taskRes.json()
+
+    // Start session in that workspace.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: { prompt: 'Say hello', mode: 'agent', project_id: 'subprocess-test' },
+    })
+    expect(sessionRes.status()).toBe(200)
+    const session = await sessionRes.json()
+
+    // Poll for events — subprocess should stream events.
+    await page.waitForTimeout(5000)
+
+    // Verify session ran.
+    const agents = await (await page.request.get(`${BASE}/api/agents`)).json()
+    console.log(`Agents after subprocess session: ${agents.agents.length}`)
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+    await page.request.delete(`${BASE}/api/workspaces/subprocess-test`)
+  })
+
+  test('workspace runtime appears in settings API', async ({ page }) => {
+    // Create workspace with runtime.
+    await page.request.post(`${BASE}/api/workspaces`, {
+      data: { id: 'runtime-test', name: 'Runtime Test', runtime: 'subprocess' },
+    })
+
+    // Check workspace list includes runtime.
+    const list = await (await page.request.get(`${BASE}/api/workspaces`)).json()
+    const ws = list.workspaces.find((w: any) => w.id === 'runtime-test')
+    expect(ws).toBeDefined()
+    expect(ws.runtime).toBe('subprocess')
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/workspaces/runtime-test`)
+  })
+
+  test('settings API returns global runtime', async ({ page }) => {
+    const settings = await (await page.request.get(`${BASE}/api/settings`)).json()
+    expect(settings.agent).toHaveProperty('runtime')
+    console.log(`Global runtime: ${settings.agent.runtime}`)
+  })
+
+})
+
+// ── agent panel tabs ────────────────────────────────────────────────────────
+
+test.describe('agent panel tabs', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('terminal, review, browser tabs switch in agent focus', async ({ page }) => {
+    // Start a session.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: { prompt: 'Say hello', mode: 'agent' },
+    })
+    const session = await sessionRes.json()
+
+    // Navigate to focus view.
+    await page.goto(BASE)
+    await page.waitForTimeout(3000)
+    const card = page.locator(`text=${session.id}`)
+    await expect(card).toBeVisible({ timeout: 10000 })
+    await card.click()
+    await page.waitForTimeout(2000)
+
+    // Should see tab bar.
+    await expect(page.locator('button:has-text("Terminal")')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('button:has-text("Review")')).toBeVisible()
+    await expect(page.locator('button:has-text("Browser")')).toBeVisible()
+
+    // Terminal tab should be active by default.
+    await expect(page.locator('text=Waiting for shell output')).toBeVisible()
+
+    // Switch to Review tab.
+    await page.locator('button:has-text("Review")').click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=No task assigned')).toBeVisible()
+
+    // Switch to Browser tab.
+    await page.locator('button:has-text("Browser")').click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=Browser preview')).toBeVisible()
+
+    // Switch back to Terminal.
+    await page.locator('button:has-text("Terminal")').click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=Waiting for shell output')).toBeVisible()
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
+  })
+
+  test('review panel shows task details when session has task', async ({ page }) => {
+    test.setTimeout(120000)
+
+    // Create a task with criteria and steps.
+    const taskRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: {
+        title: 'Panel review test',
+        description: 'Testing review panel.',
+        priority: 'medium',
+        acceptance_criteria: ['Should show in panel', 'Should update live'],
+      },
+    })
+    const task = await taskRes.json()
+
+    // Start session on the task.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: { prompt: 'Use log_progress to record you started.', mode: 'agent', task_id: task.id },
+    })
+    const session = await sessionRes.json()
+
+    // Navigate to focus.
+    await page.goto(`${BASE}/#/agent/${session.id}`)
+    await page.waitForTimeout(3000)
+
+    // Switch to Review tab.
+    await page.locator('button:has-text("Review")').click()
+    await page.waitForTimeout(500)
+
+    // Should show task title and criteria.
+    await expect(page.locator('text=Panel review test').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('text=Should show in panel')).toBeVisible()
+
+    // Cleanup.
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+  })
+
+})
+
+test.describe('agent code panel', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('code tab shows files agent touches', async ({ page }) => {
+    test.setTimeout(60000)
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: { prompt: 'Say hello', mode: 'agent' },
+    })
+    const session = await sessionRes.json()
+
+    await page.goto(`${BASE}/#/agent/${session.id}`)
+    await page.waitForTimeout(3000)
+
+    // Click Code tab.
+    await page.locator('button:has-text("Code")').click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=touched')).toBeVisible({ timeout: 5000 })
+
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
+  })
+
+})

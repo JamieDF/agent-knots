@@ -1,26 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+.python-version
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/test-results/
+
 # Binaries
-/bin/
-/dist/
 *.exe
 *.dll
 *.so
 *.dylib
 
-# Test binary, built with `go test -c`
-*.test
-
-# Coverage profile
+# Coverage
 *.cover
 *.out
 coverage.txt
 coverage.html
-
-# Go workspace files
-go.work
-go.work.sum
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
+.pytest_cache/
 
 # IDE / editor
 .idea/
@@ -34,6 +38,8 @@ go.work.sum
 .agentjam/
 *.log
 
-# Generated
-/docs/gen/
-/internal/agent/driver/opencode/sdk/
+# Go (legacy — will be removed when Go code is deleted)
+go.work
+go.work.sum
+*.test
+bin/

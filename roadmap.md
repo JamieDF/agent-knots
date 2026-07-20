@@ -1,108 +1,34 @@
-> **Note:** This document was originally authored under the prior project name "harness"; references to "agentjam" reflect the rename. See CHANGELOG.
-
 # Roadmap
 
-This is a high-level sketch of where agentjam is headed. It's not a
-commitment — features get added, dropped, and reordered based on what
-users actually need.
+## Done
 
-## v0.1 (current)
+- [x] Python rebuild — Replaced Go codebase with Python + Strands Agents SDK
+- [x] Vault — AES-256-GCM encrypted credential store with injection templates
+- [x] Sessions — Start/stop agents from GUI, TUI, CLI. Multi-turn chat with context
+- [x] Web cockpit — Vite + React SPA: overview, board, task detail, settings
+- [x] TUI cockpit — Textual: agent list, focus view, tools manager, keyboard shortcuts
+- [x] Task system — YAML-backed with progress logs, steps, acceptance criteria
+- [x] Kanban board — 6-column board with status chips, priority indicators, inline editing
+- [x] Agent tools — 11 built-in (editor, shell, calculator, think + 7 task tools)
+- [x] Custom tools — User-defined shell command tools, enable/disable per tool
+- [x] Workspaces — Multi-project grouping with task/agent filtering, path isolation
+- [x] Runtime modes — In-process (fast) + subprocess (isolated). Configurable per workspace/session
+- [x] Model providers — MiniMax, OpenAI, Anthropic, Ollama, custom. Selectable in settings
+- [x] Assume/Relinquish — Mode switching with live UI pill updates
+- [x] Full task workflow — Draft → Open → In Progress → Agent works → Done. Auto status transitions
+- [x] Agent-task integration — Agents create, read, update, log progress on tasks via tools
+- [x] Settings page — Model config, tool management, workspace management in one place
+- [x] Playwright e2e tests — 30 browser tests covering full UI flows
+- [x] Python unit tests — 106 tests across vault, session, task, web
 
-Foundation. Core interfaces, file-backed implementations, CLI, modes.
+## Next
 
-## v0.2 — Container integration
-
-- [ ] Container runtime spawn helper: clone repo into a container,
-  install deps, run baseline tests, run agent loop, run final tests,
-  push branch, open PR.
-- [ ] Worktree management per agent session.
-- [ ] Network policy enforcement (default-deny egress, allowlist for
-  registry, vault daemon, gh).
-- [ ] Per-container resource caps.
-
-## v0.3 — TUI cockpit
-
-- [ ] Bubble Tea-based TUI cockpit.
-- [ ] Multi-agent list with live status.
-- [ ] Per-agent focus view (zoom in on one agent's events).
-- [ ] Quick-switch keybindings (j/k or 1-9).
-- [ ] Assume / relinquish control flows.
-- [ ] Task and vault management within the TUI.
-
-## v0.4 — Web cockpit (primary)
-
-- [ ] Web GUI as primary management surface. **Binds to
-  `127.0.0.1:<random-port>` by default** (printed at startup). Browser
-  access is the whole point. Remote access (LAN/WAN) is the user's
-  responsibility — typical setup is a Cloudflare Tunnel with Auth in
-  front of the localhost port.
-- [ ] Token-based auth: one token generated on first start, saved to
-  `~/.agentjam/cockpit.token` (mode 0600). Browser prompts once, cookie
-  issued after (`Secure`, `HttpOnly`, `SameSite=Strict`). All
-  authenticated requests carry the cookie; SSE connections revalidate.
-- [ ] Real-time event streaming via Server-Sent Events (SSE) — single
-  one-way HTTP stream keeps the implementation small. WebSocket
-  deferred until we need browser→server prompts.
-- [ ] Multiple agents visible side-by-side.
-- [ ] Diffs and code rendered with syntax highlighting.
-- [ ] Mobile-friendly layout.
-- [ ] **v0.4.1** — `--bind 0.0.0.0` opt-in for LAN access. Auth still
-  required. Refuse non-localhost bind without a tunnel or TLS cert.
-  Add `--tunnel` (Cloudflare quick tunnel) for zero-config remote.
-
-## v0.5 — Multi-agent orchestration
-
-- [ ] Active agent registry (in-process).
-- [ ] Concurrent agent management from the cockpit.
-- [ ] Cross-agent shared scratchpad.
-- [ ] Conflict detection when two agents edit the same file.
-- [ ] Result aggregation across multiple agents.
-
-## v0.6 — Observability
-
-- [ ] Session replay (click any past action, see the prompt + context
-  that drove it).
-- [ ] Time-spent and tokens-per-step analytics.
-- [ ] Cost tracking per session / task / day.
-- [ ] Budget alerts (50/80/100% of budget).
-- [ ] Session export (Markdown, JSON).
-
-## v0.7 — Provider expansion
-
-- [ ] Direct provider integrations beyond OpenCode's built-in (for cases
-  where OpenCode doesn't support what the user wants).
-- [ ] Fallback chains (try primary, fall back to secondary on error or
-  rate limit).
-- [ ] Custom provider plugins.
-
-## v1.0 — Stability and polish
-
-- [ ] Stable public API.
-- [ ] SemVer commitment (no breaking changes within v1.x).
-- [ ] Performance: large task histories, many concurrent agents.
-- [ ] Documentation: every interface documented, every command has
-  examples, every mode has rationale.
-- [ ] Installer: `curl ... | sh` for macOS / Linux / Windows.
-- [ ] Update mechanism.
-
-## Future (post-1.0, parking lot)
-
-These are interesting ideas we may or may not pursue. Not committed.
-
-- **Multi-user support.** Per-user vaults, audit logs, RBAC.
-- **Cloud sync.** Optional encrypted sync via user's own cloud storage.
-- **Cloud-hosted version.** A hosted agentjam for teams.
-- **Mobile companion.** Mobile UI for monitoring agents on the go.
-- **IDE plugins.** VSCode, JetBrains.
-- **WASM agent sandboxes.** Faster, lighter isolation than containers.
-- **Firecracker microVMs.** Stronger isolation for untrusted code.
-- **Voice input.** Talk to your agents.
-- **Visual reasoning graphs.** See the agent's reasoning as a graph.
-
-## How to influence the roadmap
-
-- Open an issue describing the use case.
-- Upvote existing issues you care about.
-- Send a PR that aligns with a roadmap item.
-- Propose new items via the [decision record
-  process](decisions/).
+- [ ] Container runtime — Podman/Docker isolation with full filesystem + network sandboxing
+- [ ] Git worktree integration — Auto-create worktrees per session on workspace repos
+- [ ] Session replay — Record and replay agent sessions with timeline scrubbing
+- [ ] Multi-agent orchestration — Run multiple agents on the same task, merge results
+- [ ] Vault injection for agents — Agents use vault credentials without seeing raw values
+- [ ] Rich diff rendering — Syntax-highlighted diffs in progress timeline
+- [ ] Cost tracking — Real token counting and cost estimation per session
+- [ ] Provider expansion — More direct LLM provider integrations
+- [ ] Mobile-responsive layout — Full mobile support for the web cockpit

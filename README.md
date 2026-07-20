@@ -2,24 +2,14 @@
 
 > Local-first orchestrator for AI coding agents. You stay in control.
 
-AgentJam is a platform for running, observing, and orchestrating multiple AI
-coding agents in parallel across multi-repo projects. It ships with:
+AgentJam runs AI coding agents in your workspace. Watch them work in real time
+from a browser or terminal. Take over any agent mid-task, hand control back.
+Manage tasks on a Kanban board. Agents have tools for reading/writing files,
+running shell commands, and managing structured tasks with progress tracking.
 
-- **A unified driver interface** so any agent backend (OpenCode today, custom
-  drivers tomorrow) plugs in cleanly.
-- **A persistent task system** with progress logs that survive context
-  compaction, agent crashes, and mode swaps.
-- **A credential vault** with injection templates — the agent uses
-  `vault://github/personal` without ever seeing the token.
-- **Containerized agents** that run in Podman, work on a repo, run tests, and
-  open a PR — all in isolation.
-- **Multi-repo project workspaces** that bind N git repos into one logical unit.
-- **Two UI surfaces** — a Web GUI (primary) and a TUI (keyboard-driven, SSH-friendly).
-- **Mode-based behavior** — `assistant`, `agent`, `reviewer`, etc. are just
-  system prompts. The driver is the same; only the persona changes.
-
-You always own the session. **Assume control** or **relinquish control** at any
-moment. No dead-end states.
+Built on [Strands Agents SDK](https://github.com/strands-agents/harness-sdk) with
+[MiniMax M2.7](https://platform.minimax.io) as the default model provider.
+Configurable to use OpenAI, Anthropic, Ollama, or any OpenAI-compatible API.
 
 ---
 
@@ -27,115 +17,158 @@ moment. No dead-end states.
 
 ```bash
 # Install
-go install github.com/agentjam/agentjam/cmd/agentjam@latest
+git clone <repo>
+cd agentjam
+uv sync
 
-# Initialize a new project
-agentjam project init my-app --repo [email protected]:you/my-app.git
+# Configure your model provider (MiniMax, OpenAI, etc.)
+mkdir -p ~/.agentjam
+cat > ~/.agentjam/settings.yaml << 'EOF'
+agent:
+  default_model: minimax-m2.7
+  base_url: https://api.minimax.io/v1
+  api_key: <your-api-key>
+  runtime: inprocess
+EOF
 
-# Switch to it
-agentjam project switch my-app
+# Build the frontend
+cd frontend && npm install && npm run build && cd ..
 
-# Open the cockpit (TUI default, web if --gui)
-agentjam cockpit
+# Launch the web cockpit
+uv run agentjam cockpit launch --web --port 8080
+# → http://127.0.0.1:8080/?token=...
 
-# Spawn an agent on a task
-agentjam task new --title "Add dark mode toggle"
-agentjam agent spawn --task T-... --mode agent
+# Or launch the TUI cockpit
+uv run agentjam cockpit launch
+# → j/k navigate, Enter focus, a assume, r relinquish, t tools, d delete, q quit
 ```
-
-For a full walkthrough, see [`docs/quickstart.md`](docs/quickstart.md).
 
 ---
 
-## Why AgentJam?
+## What works
 
-Most AI coding tools are single-agent, single-session. When you want to run
-three agents in parallel — one refactoring auth, one fixing failing tests, one
-reviewing a PR — you're stuck with N separate terminal tabs and no shared view
-of what's happening.
+| Capability | Status |
+|---|---|
+| **Session lifecycle** | ✅ Start/stop agents from GUI, TUI, or CLI |
+| **Live event streaming** | ✅ SSE (web) + async event queue (TUI). Tool calls, messages, progress |
+| **Web cockpit** | ✅ Vite + React SPA. Agent cards, Kanban board, task detail, settings |
+| **TUI cockpit** | ✅ Textual. Agent list, focus view, tools manager, keyboard shortcuts |
+| **Take-over flow** | ✅ Assume (agent → assistant) / Relinquish (assistant → agent). Mode pill updates live |
+| **Multi-turn chat** | ✅ Sequential conversation with context retention |
+| **Task system** | ✅ YAML-backed. Draft → Open → In Progress → Review → Done. Progress logs, acceptance criteria, steps |
+| **Kanban board** | ✅ 6-column board. Expand cards, status changes, start session from card |
+| **Vault** | ✅ AES-256-GCM, argon2id KDF, injection templates, audit log. Ported from Go |
+| **Agent tools** | ✅ 11 built-in: editor, shell, calculator, think + 7 task tools. Custom tools via settings |
+| **Task tools** | ✅ Agent can create, read, update, log progress, add steps on tasks |
+| **Workspaces** | ✅ Multi-project workspaces. Task filtering, session grouping, path isolation |
+| **Runtime modes** | ✅ In-process (fast) + subprocess (isolated) per workspace/session |
+| **Model providers** | ✅ MiniMax, OpenAI, Anthropic, Ollama, custom. Configurable in settings |
+| **Custom tools** | ✅ User-defined shell command tools. Enable/disable per tool |
 
-AgentJam is built for that case from day one:
+---
 
-| Need | AgentJam |
-|------|---------|
-| Run multiple agents at once | ✅ Concurrent cockpit |
-| See all of them at a glance | ✅ Web GUI + TUI |
-| Switch between them mid-task | ✅ Keyboard-driven focus |
-| Containerize an agent for a real PR | ✅ Podman + worktrees + tests |
-| Use any LLM (cloud or local) | ✅ Provider-agnostic |
-| Keep tasks alive across context loss | ✅ Persistent progress logs |
-| Use secrets without exposing them | ✅ Vault + injection templates |
-| Manage N repos as one workspace | ✅ Multi-repo projects |
+## CLI Reference
+
+```
+agentjam
+├── session
+│   ├── start [--task <id>] [--project <id>] [--mode agent|assistant]
+│   └── list
+├── cockpit
+│   └── launch [--web] [--port 8080]
+├── task
+│   ├── create <title> [--priority low|medium|high|urgent] [--criteria ...]
+│   ├── list [--status open] [--project <id>]
+│   ├── show <id>
+│   ├── update <id> [--status <s>] [--assign <agent>]
+│   └── delete <id>
+├── vault
+│   ├── init, unlock, lock, status
+│   ├── add <id> [--value ...] [--tag ...]
+│   ├── list, show <id>, remove <id>
+│   └── audit [--credential <id>] [--limit <n>]
+└── version
+```
 
 ---
 
 ## Architecture
 
 ```
-┌─ Your laptop ─────────────────────────────────────────────┐
-│                                                            │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │ Orchestrator (this repo)                           │  │
-│  │  - Cockpit UI (Web + TUI)                          │  │
-│  │  - Task system  - Vault  - Project workspaces      │  │
-│  │  - Talks to drivers via AgentDriver interface      │  │
-│  │  - Manages N drivers concurrently                  │  │
-│  └──────┬───────────────────────────────────────────┬─┘  │
-│         │ Go SDK        │ HTTP/WS to container A  │     │
-│         │               │ HTTP/WS to container B  │     │
-└─────────┼───────────────┼──────────────────────────┼─────┘
-          ▼               ▼                          ▼
-   ┌─────────────┐ ┌─────────────┐           ┌─────────────┐
-   │ Local       │ │ Container   │           │ Container   │
-   │ Driver      │ │ A Driver    │           │ B Driver    │
-   │ (OpenCode)  │ │ (port 7001) │           │ (port 7002) │
-   └─────────────┘ └─────────────┘           └─────────────┘
+┌─ agentjam cockpit ──────────────────────────────┐
+│                                                   │
+│   Web UI (React SPA)    TUI (Textual)             │
+│       ↕ REST + SSE         ↕ asyncio.Queue        │
+│   ┌────────────────────────────────────────────┐ │
+│   │         FastAPI web server                  │ │
+│   │  Token auth, SSE streaming, REST API        │ │
+│   └────────────────┬───────────────────────────┘ │
+│                    │                              │
+│   ┌────────────────▼───────────────────────────┐ │
+│   │     Session Manager                         │ │
+│   │  InProcessRuntime or SubprocessRuntime      │ │
+│   │  ┌──────────────────────────────────────┐  │ │
+│   │  │  Strands Agent (MiniMax/OpenAI/...)   │  │ │
+│   │  │  14 tools: editor, shell, task mgmt   │  │ │
+│   │  │  Sandbox: cwd isolation + path guard  │  │ │
+│   │  └──────────────────────────────────────┘  │ │
+│   └────────────────────────────────────────────┘ │
+└───────────────────────────────────────────────────┘
 ```
 
-The full architecture document lives at [`docs/architecture.md`](docs/architecture.md).
+## Project layout
+
+```
+agentjam/
+├── frontend/                  # Vite + React SPA
+│   └── src/
+│       ├── views/             # Overview, Board, Tasks, TaskDetail, Settings, ...
+│       ├── components/        # Topbar, AgentCard, CreateTaskDialog, ...
+│       └── lib/               # API client, SSE client, workspace context
+├── src/agentjam/
+│   ├── cli/                   # Typer CLI entry point + commands
+│   ├── cockpit/
+│   │   ├── tui/               # Textual TUI (overview, focus, tools)
+│   │   └── web/               # FastAPI server (auth, SSE, REST, SPA shell)
+│   ├── session/               # SessionManager, InProcess/Subprocess runtime, worker
+│   ├── task/                  # Task models, YAML store, Strands tools for agents
+│   ├── vault/                 # AES-256-GCM crypto + file store
+│   ├── project/               # Workspace models + YAML store
+│   ├── tools/                 # Tool registry, defaults, custom tools
+│   ├── settings.py            # Global YAML settings store
+│   ├── provider.py            # Model provider resolution (CLI/env/settings)
+│   ├── isolation.py           # Workspace sandbox config
+│   └── sandbox_tools.py       # Sandboxed shell/editor tools
+├── tests/                     # Python unit tests (106)
+├── mockups/                   # HTML design mockups
+├── docs/                      # ADRs, architecture, plan
+└── pyproject.toml
+```
+
+---
+
+## Testing
+
+```bash
+# Python unit tests (106)
+uv run --with pytest pytest tests/ -q
+
+# Playwright e2e tests (30)
+cd frontend && npx playwright test
+
+# Total: 136 tests
+```
 
 ---
 
 ## Status
 
-AgentJam is in **early development (v0.1.0)**. The interfaces and core
-implementations are usable; the cockpit UIs and container integration are
-scaffolded but evolving.
-
-**What's working in v0.1.0:**
-- All core interfaces (`AgentDriver`, `Vault`, `TaskStore`, `ProjectStore`,
-  `ContainerRuntime`, `Mode`)
-- File-backed implementations of vault (AES-256-GCM), tasks (YAML), and
-  projects (YAML)
-- Mode loader (markdown → system prompt)
-- Podman container runtime (CLI-based)
-- OpenCode driver via the official Go SDK
-- CLI with `project`, `task`, `vault`, `agent`, `cockpit` subcommands
-- Unit tests across all core packages
-- Default modes: `assistant`, `agent`, `reviewer`, `security`, `junior-dev`,
-  `senior-dev`
-
-**What's next:** see [`docs/roadmap.md`](docs/roadmap.md).
-
----
-
-## Contributing
-
-We welcome contributions. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the
-process, [`docs/architecture.md`](docs/architecture.md) for the design, and the
-[issue tracker](../../issues) for current work.
+**Alpha, feature-complete.** Sessions, tasks, board, tools, vault, isolation,
+multi-turn chat, assume/relinquish — all functional and tested. Agents run with
+MiniMax M2.7 by default, configurable to any OpenAI-compatible provider.
 
 ---
 
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
-
----
-
-## Acknowledgments
-
-- [OpenCode](https://opencode.ai) — the agent engine we embed via the Go SDK
-- [Bubble Tea](https://github.com/charmbracelet/bubbletea) — TUI framework
-- [Cobra](https://github.com/spf13/cobra) — CLI framework
-- [Podman](https://podman.io) — container runtime

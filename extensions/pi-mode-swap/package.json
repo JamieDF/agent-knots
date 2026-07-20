@@ -1,0 +1,15 @@
+{
+  "name": "pi-mode-swap",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pi extension for agentjam: runtime mode/persona swap",
+  "main": "dist/index.js",
+  "types": "index.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^5.9.3"
+  }
+}

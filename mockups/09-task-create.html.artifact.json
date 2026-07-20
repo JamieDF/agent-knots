@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "mockups/09-task-create.html",
+  "entry": "mockups/09-task-create.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-07-02T13:29:34.078Z",
+  "updatedAt": "2026-07-02T13:29:34.078Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}

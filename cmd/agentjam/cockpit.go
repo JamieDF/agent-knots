@@ -13,6 +13,7 @@ import (
 	"github.com/JamieDF/agentjam/internal/agent/driver"
 	"github.com/JamieDF/agentjam/internal/config"
 	cockpit "github.com/JamieDF/agentjam/internal/cockpit/tui"
+	webcockpit "github.com/JamieDF/agentjam/internal/cockpit/web"
 	"github.com/JamieDF/agentjam/internal/errs"
 	"github.com/JamieDF/agentjam/internal/session/live"
 )
@@ -28,7 +29,7 @@ func cockpitCmd() *cobra.Command {
 		Long: `Launch the cockpit — the canonical management surface for agentjam.
 
 By default, launches the keyboard-driven TUI cockpit. Use --web to launch
-the web GUI (when implemented).
+the web GUI (browser-accessible, binds to 127.0.0.1).
 
 The cockpit discovers running sessions (started with --detach) and displays
 them in real time. Use 'agentjam session start --driver mock --detach' to
@@ -44,9 +45,19 @@ Keybindings (TUI):
   q            quit`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if web {
-				fmt.Fprintln(cmd.OutOrStdout(),
-					"Web GUI is planned but not yet implemented. Run without --web for the TUI cockpit.")
-				return nil
+				srv := webcockpit.New(config.SessionsPath(), config.Home())
+				url, err := srv.ListenAndServe()
+				if err != nil {
+					return fmt.Errorf("start web cockpit: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "agentjam cockpit (web): %s\n", url)
+				fmt.Fprintln(cmd.OutOrStdout(), "Press Ctrl-C to stop.")
+
+				// Block until context cancelled (Ctrl-C or parent kill).
+				<-cmd.Context().Done()
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				return srv.Shutdown(ctx)
 			}
 
 			registry := &liveRegistry{
@@ -72,14 +83,18 @@ Keybindings (TUI):
 		},
 	}
 
-	cmd.Flags().BoolVar(&web, "web", false, "Use web GUI (planned, not yet implemented)")
+	cmd.Flags().BoolVar(&web, "web", false, "Launch the web GUI (browser-accessible)")
 	return cmd
 }
 
 // liveRegistry implements cockpit.DriverRegistry by discovering running
-// session subprocesses via the live package.
+// session subprocesses via the live package. It caches liveDriver
+// instances by session ID so repeated List() calls reuse the same
+// socket connections instead of creating new ones on every tick.
 type liveRegistry struct {
 	sessionsDir string
+	mu          sync.Mutex
+	cache       map[string]*liveDriver
 }
 
 func (r *liveRegistry) List() []cockpit.Driver {
@@ -87,19 +102,54 @@ func (r *liveRegistry) List() []cockpit.Driver {
 	if err != nil {
 		return nil
 	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cache == nil {
+		r.cache = make(map[string]*liveDriver)
+	}
+
+	// Build the result, reusing cached drivers where possible.
+	current := make(map[string]bool, len(sessions))
 	var drivers []cockpit.Driver
 	for _, ls := range sessions {
-		drivers = append(drivers, newLiveDriver(ls))
+		current[ls.SessionID] = true
+		if d, ok := r.cache[ls.SessionID]; ok {
+			drivers = append(drivers, d)
+		} else {
+			d := newLiveDriver(ls)
+			r.cache[ls.SessionID] = d
+			drivers = append(drivers, d)
+		}
 	}
+
+	// Evict cached entries for sessions that are no longer running.
+	for id := range r.cache {
+		if !current[id] {
+			delete(r.cache, id)
+		}
+	}
+
 	return drivers
 }
 
 func (r *liveRegistry) Get(id string) (cockpit.Driver, bool) {
+	r.mu.Lock()
+	if d, ok := r.cache[id]; ok {
+		r.mu.Unlock()
+		return d, true
+	}
+	r.mu.Unlock()
+
 	ls, err := live.Get(r.sessionsDir, id)
 	if err != nil {
 		return nil, false
 	}
-	return newLiveDriver(ls), true
+	d := newLiveDriver(ls)
+	r.mu.Lock()
+	r.cache[id] = d
+	r.mu.Unlock()
+	return d, true
 }
 
 // liveDriver adapts a live.Session to the cockpit.Driver interface.

@@ -82,9 +82,12 @@ By default, the session is attached: events stream to stdout until the
 agent exits. Pass --detach to return immediately; use 'agentjam session logs
 <id>' to follow.
 
-Use --driver=mock to run a scripted fake-event driver for testing and demos
-without an LLM server. The mock driver emits realistic events (thinking,
-tool calls, messages, progress) every ~1.5 seconds.
+	Use --driver=pi to use Pi (the default). Requires Pi installed:
+  npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+
+  Use --driver=mock to run a scripted fake-event driver for testing
+  and demos without an LLM server. The mock driver emits realistic
+  events (thinking, tool calls, messages, progress) every ~1.5 seconds.
 
 Use --worktree to create a git worktree on a per-session branch, isolating
 the agent's changes from your main working copy. Container sessions always
@@ -176,8 +179,8 @@ Example:
 	cmd.Flags().BoolVar(&detach, "detach", false, "Return immediately after starting")
 	cmd.Flags().BoolVar(&privilegedDebug, "privileged-debug", false,
 		"Opt out of isolation hardening (debug only)")
-	cmd.Flags().StringVar(&driverKind, "driver", "opencode",
-		"Driver implementation: opencode (default) or mock")
+	cmd.Flags().StringVar(&driverKind, "driver", "pi",
+		"Driver: pi (default), mock, opencode")
 	cmd.Flags().BoolVar(&worktree, "worktree", false,
 		"Create a git worktree on a per-session branch (local mode only; container always uses worktrees)")
 

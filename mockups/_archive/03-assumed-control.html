@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>agentjam — Assumed Control</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-200 min-h-screen flex flex-col">
+
+    <!-- Header — shows agent is now in ASSISTANT mode (you have control) -->
+    <header class="border-b border-amber-500/20 bg-amber-500/5 px-6 py-3">
+        <div class="max-w-3xl mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-4">
+                <a href="01-dashboard.html" class="text-zinc-500 hover:text-zinc-300">
+                    <i class="fa-solid fa-arrow-left"></i>
+                </a>
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                    <span class="mono text-sm text-white font-medium">cli-145828-7o18</span>
+                </div>
+                <!-- Assumed badge -->
+                <span class="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20">
+                    <i class="fa-solid fa-hand mr-1"></i>you have control
+                </span>
+            </div>
+            <button class="px-3 py-1.5 text-xs font-medium rounded-md bg-blue-500/15 text-blue-400 border border-blue-500/20 hover:bg-blue-500/25 transition-colors">
+                <i class="fa-solid fa-robot mr-1.5"></i>Relinquish
+            </button>
+        </div>
+    </header>
+
+    <!-- Chat / Interaction Area -->
+    <main class="flex-1 overflow-y-auto">
+        <div class="max-w-3xl mx-auto px-6 py-6 space-y-4">
+
+            <!-- Context: what agent was doing when you assumed -->
+            <div class="bg-zinc-900 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-500">
+                <i class="fa-solid fa-circle-info mr-1.5 text-amber-400/70"></i>
+                Agent was working on <span class="mono text-zinc-400">src/auth.py</span> — step 3 of 5. 
+                Last action: <span class="mono text-zinc-400">edit_file (17 lines)</span>. 
+                It is now paused, waiting for your input.
+            </div>
+
+            <!-- Agent's last message before assume -->
+            <div class="flex gap-3">
+                <div class="w-8 h-8 rounded-full bg-blue-500/15 border border-blue-500/20 flex items-center justify-center shrink-0">
+                    <i class="fa-solid fa-robot text-xs text-blue-400"></i>
+                </div>
+                <div class="flex-1">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="text-xs font-medium text-zinc-300">agent</span>
+                        <span class="mono text-xs text-zinc-600">14:59:01</span>
+                    </div>
+                    <div class="bg-zinc-900 rounded-lg rounded-tl-none p-3 text-sm text-zinc-200">
+                        Authentication module updated. I've added token expiry validation. Running tests now.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mode change notification -->
+            <div class="text-center py-2">
+                <span class="text-xs text-cyan-400 bg-cyan-500/5 px-3 py-1 rounded-full border border-cyan-500/10">
+                    <i class="fa-solid fa-bolt mr-1"></i>
+                    mode changed: agent → assistant
+                </span>
+            </div>
+
+            <!-- Your message (user) -->
+            <div class="flex gap-3 flex-row-reverse">
+                <div class="w-8 h-8 rounded-full bg-amber-500/15 border border-amber-500/20 flex items-center justify-center shrink-0">
+                    <i class="fa-solid fa-user text-xs text-amber-400"></i>
+                </div>
+                <div class="flex-1 flex flex-col items-end">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="mono text-xs text-zinc-600">14:59:18</span>
+                        <span class="text-xs font-medium text-zinc-300">you</span>
+                    </div>
+                    <div class="bg-blue-500/15 border border-blue-500/20 rounded-lg rounded-tr-none p-3 text-sm text-zinc-100 max-w-[80%]">
+                        Can you also add a test for expired tokens? And check if the same issue exists in the refresh token path.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Agent response -->
+            <div class="flex gap-3">
+                <div class="w-8 h-8 rounded-full bg-blue-500/15 border border-blue-500/20 flex items-center justify-center shrink-0">
+                    <i class="fa-solid fa-robot text-xs text-blue-400"></i>
+                </div>
+                <div class="flex-1">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="text-xs font-medium text-zinc-300">agent</span>
+                        <span class="mono text-xs text-zinc-600">14:59:22</span>
+                        <span class="text-xs text-zinc-500">· thinking</span>
+                    </div>
+                    <div class="bg-zinc-900 rounded-lg rounded-tl-none p-3 text-sm text-zinc-200">
+                        <p class="mb-2">Good catch. Let me check the refresh token path.</p>
+                        <p class="mb-2 text-zinc-400">Looking at <span class="mono bg-zinc-800 px-1 rounded text-emerald-400">src/auth.py:142</span> — yes, same issue. The refresh token validation doesn't check expiry either.</p>
+                        <p class="text-zinc-400">I'll:</p>
+                        <ul class="list-disc list-inside text-zinc-400 space-y-0.5 mt-1">
+                            <li>Add expiry check to <span class="mono bg-zinc-800 px-1 rounded">validate_refresh_token()</span></li>
+                            <li>Add tests for both expired access and refresh tokens</li>
+                        </ul>
+                    </div>
+                    <!-- Inline tool calls appear under the message -->
+                    <div class="ml-4 mt-2 border-l-2 border-zinc-800 pl-3 space-y-1">
+                        <div class="text-xs text-zinc-400">
+                            <i class="fa-solid fa-file-lines mr-1 text-zinc-500"></i>
+                            <span class="mono bg-zinc-800 text-emerald-400 px-1 rounded">read_file</span>
+                            <span class="mono text-zinc-500">src/auth.py:140-160</span>
+                        </div>
+                        <div class="text-xs text-zinc-400">
+                            <i class="fa-solid fa-pen-to-square mr-1 text-amber-400/70"></i>
+                            <span class="mono bg-zinc-800 text-amber-400 px-1 rounded">edit_file</span>
+                            <span class="mono text-zinc-500">src/auth.py</span>
+                            <span class="text-zinc-600">· 8 lines</span>
+                        </div>
+                        <div class="text-xs text-zinc-400">
+                            <i class="fa-solid fa-terminal mr-1 text-zinc-500"></i>
+                            <span class="mono bg-zinc-800 text-zinc-300 px-1 rounded">shell</span>
+                            <span class="mono text-zinc-500">pytest tests/test_auth.py -k expired -v</span>
+                        </div>
+                        <div class="text-xs text-emerald-400">
+                            <i class="fa-solid fa-check mr-1"></i>
+                            3 passed
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Typing indicator -->
+            <div class="flex gap-3">
+                <div class="w-8 h-8 rounded-full bg-blue-500/15 border border-blue-500/20 flex items-center justify-center shrink-0">
+                    <i class="fa-solid fa-robot text-xs text-blue-400"></i>
+                </div>
+                <div class="flex items-center gap-1.5 pt-2">
+                    <span class="w-1.5 h-1.5 bg-zinc-600 rounded-full animate-bounce" style="animation-delay: 0ms"></span>
+                    <span class="w-1.5 h-1.5 bg-zinc-600 rounded-full animate-bounce" style="animation-delay: 150ms"></span>
+                    <span class="w-1.5 h-1.5 bg-zinc-600 rounded-full animate-bounce" style="animation-delay: 300ms"></span>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Chat Input -->
+    <footer class="border-t border-zinc-800 px-6 py-4">
+        <div class="max-w-3xl mx-auto flex items-center gap-3">
+            <div class="flex-1 relative">
+                <input type="text" placeholder="Type a message to the agent..."
+                    class="w-full bg-zinc-900 text-zinc-200 text-sm px-4 py-2.5 rounded-lg border border-zinc-700 placeholder-zinc-500 focus:outline-none focus:border-amber-500/40">
+            </div>
+            <button class="w-10 h-10 rounded-lg bg-amber-500/15 text-amber-400 border border-amber-500/20 hover:bg-amber-500/25 transition-colors flex items-center justify-center">
+                <i class="fa-solid fa-paper-plane text-sm"></i>
+            </button>
+        </div>
+        <div class="max-w-3xl mx-auto mt-2 flex items-center justify-between text-xs text-zinc-600">
+            <span>Press <kbd class="mono bg-zinc-800 px-1 rounded">Enter</kbd> to send · <kbd class="mono bg-zinc-800 px-1 rounded">Shift+Enter</kbd> for newline</span>
+            <span>Agent is paused — it won't act until you relinquish</span>
+        </div>
+    </footer>
+
+</body>
+</html>

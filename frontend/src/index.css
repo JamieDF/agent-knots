@@ -1,0 +1,58 @@
+/* agentjam cockpit design system — matching mockups */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg: oklch(9% 0.005 260);
+  --surface: oklch(14% 0.006 260);
+  --surface-raised: oklch(18% 0.008 260);
+  --surface-hover: oklch(20% 0.008 260);
+  --fg: oklch(92% 0.003 260);
+  --fg-soft: oklch(78% 0.005 260);
+  --muted: oklch(58% 0.012 260);
+  --muted-2: oklch(42% 0.012 260);
+  --border: oklch(22% 0.006 260);
+  --border-subtle: oklch(16% 0.004 260);
+  --running: oklch(72% 0.16 155);
+  --blocked: oklch(76% 0.14 65);
+  --assumed: oklch(76% 0.16 75);
+  --info: oklch(68% 0.12 235);
+  --done: oklch(64% 0.06 155);
+  --blocked-bg: oklch(76% 0.14 65 / 0.06);
+  --blocked-bd: oklch(76% 0.14 65 / 0.22);
+  --font: 'DM Sans', system-ui, sans-serif;
+  --font-mono: 'DM Mono', monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font: 14px/1.5 var(--font);
+  background: var(--bg);
+  color: var(--fg);
+  height: 100vh;
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: 0;
+  background: none;
+  color: inherit;
+}
+
+a { color: var(--info); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code {
+  font: 11px var(--font-mono);
+  background: var(--surface-raised);
+  padding: 1px 4px;
+  border-radius: 3px;
+}

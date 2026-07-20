@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>agentjam — Agent Detail</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-200 min-h-screen flex flex-col">
+
+    <!-- Agent Header Bar -->
+    <header class="border-b border-zinc-800 px-6 py-3">
+        <div class="max-w-5xl mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-4">
+                <a href="01-dashboard.html" class="text-zinc-500 hover:text-zinc-300">
+                    <i class="fa-solid fa-arrow-left"></i>
+                </a>
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span class="mono text-sm text-white font-medium">cli-145828-7o18</span>
+                </div>
+                <!-- Mode Badge -->
+                <span class="text-xs px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/20">
+                    <i class="fa-solid fa-robot mr-1"></i>agent mode
+                </span>
+            </div>
+            <!-- Live Stats -->
+            <div class="flex items-center gap-5 text-xs text-zinc-400">
+                <span><span class="text-emerald-400 font-medium">running</span></span>
+                <span class="mono">12m 34s</span>
+                <span class="mono">1,247 tok</span>
+                <span class="mono text-amber-400">$0.012</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Sticky Action Bar -->
+    <div class="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur sticky top-0 z-10">
+        <div class="max-w-5xl mx-auto px-6 py-2.5 flex items-center gap-2">
+            <button class="px-3 py-1.5 text-xs font-medium rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/20 hover:bg-amber-500/25 transition-colors">
+                <i class="fa-solid fa-hand mr-1.5"></i>Assume Control
+            </button>
+            <button class="px-3 py-1.5 text-xs font-medium rounded-md bg-zinc-800 text-zinc-400 border border-zinc-700 hover:bg-zinc-700 transition-colors">
+                <i class="fa-solid fa-pause mr-1.5"></i>Pause
+            </button>
+            <button class="px-3 py-1.5 text-xs font-medium rounded-md bg-zinc-800 text-zinc-400 border border-zinc-700 hover:bg-zinc-700 transition-colors">
+                <i class="fa-solid fa-stop mr-1.5"></i>Stop
+            </button>
+            <div class="flex-1 flex items-center gap-2 ml-3">
+                <input type="text" placeholder="Send a message to the agent..."
+                    class="flex-1 bg-zinc-800 text-zinc-200 text-xs px-3 py-1.5 rounded-md border border-zinc-700 placeholder-zinc-500 focus:outline-none focus:border-blue-500/50">
+                <button class="px-3 py-1.5 text-xs font-medium rounded-md bg-blue-500/15 text-blue-400 border border-blue-500/20 hover:bg-blue-500/25 transition-colors">
+                    <i class="fa-solid fa-paper-plane"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Event Stream -->
+    <main class="flex-1 overflow-hidden">
+        <div class="max-w-5xl mx-auto px-6 py-4 space-y-0.5">
+
+            <!-- Events with type-based colors -->
+
+            <!-- thinking -->
+            <div class="flex gap-3 py-1.5 group hover:bg-zinc-900/50 rounded px-2 -mx-2">
+                <span class="mono text-xs text-zinc-600 w-16 shrink-0 pt-0.5">14:58:12</span>
+                <i class="fa-solid fa-brain text-xs text-blue-400/60 w-4 shrink-0 pt-0.5"></i>
+                <span class="text-xs text-zinc-400 italic">I need to check the authentication module first. Let me look at the existing code...</span>
+            </div>
+
+            <!-- tool_call: read_file -->
+            <div class="flex gap-3 py-1.5 group hover:bg-zinc-900/50 rounded px-2 -mx-2">
+                <span class="mono text-xs text-zinc-600 w-16 shrink-0 pt-0.5">14:58:14</span>
+                <i class="fa-solid fa-file-lines text-xs text-zinc-500 w-4 shrink-0 pt-0.5"></i>
+                <span class="text-xs text-zinc-300">
+                    <span class="mono bg-zinc-800 text-emerald-400 px-1 rounded">read_file</span>
+                    <span class="mono text-zinc-400">src/auth.py</span>
+                </span>
+            </div>
+
+            <!-- tool_result -->
+            <div class="flex gap-3 py-1.5 group hover:bg-zinc-900/50 rounded px-2 -mx-2">
+                <span class="mono text-xs text-zinc-600 w-16 shrink-0 pt-0.5">14:58:14</span>
+                <i class="fa-solid fa-check text-xs text-emerald-500/60 w-4 shrink-0 pt-0.5"></i>
+                <span class="text-xs text-zinc-500">245 lines read</span>
+            </div>
+
+            <!-- thinking -->
+            <div class="flex gap-3 py-1.5 group hover:bg-zinc-900/50 rounded px-2 -mx-2">
+                <span class="mono text-xs text-zinc-600 w-16 shrink-0 pt-0.5">14:58:18</span>
+                <i class="fa-solid fa-brain text-xs text-blue-400/60 w-4 shrink-0 pt-0.5"></i>
+                <span class="text-xs text-zinc-400 italic">I can see the issue is in the authentication module — the token validation is missing an expiry check...</span>
+            </div>
+
+            <!-- tool_call: edit_file -->
+            <div class="flex gap-3 py-1.5 group hover:bg-zinc-900/50 rounded px-2 -mx-2">
+                <span class="mono text-xs text-zinc-600 w-16 shrink-0 pt-0.5">14:58:22</span>
+                <i class="fa-solid fa-pen-to-square text-xs text-amber-400/70 w-4 shrink-0 pt-0.5"></i>
+                <span class="text-xs text-zinc-300">
+                    <span class="mono bg-zinc-800 text-amber-400 px-1 rounded">edit_file</span>
+                    <span class="mono text-zinc-400">src/auth.py</span>
+                    <span class="text-zinc-500">· 17 lines changed</span>
+                </span>
+            </div>
+
+            <!-- tool_result with diff -->
+            <div class="flex gap-3 py-1.5 group hover:bg-zinc-900/50 rounded px-2 -mx-2">
+                <span class="mono text-xs text-zinc-600 w-16 shrink-0 pt-0.5">14:58:23</span>
+                <i class="fa-solid fa-check text-xs text-emerald-500/60 w-4 shrink-0 pt-0.5"></i>
+                <div class="text-xs">
+                    <span class="text-zinc-500">Success · </span>
+                    <details class="inline-block">
+                        <summary class="text-zinc-400 cursor-pointer hover:text-zinc-200">view diff</summary>
+                        <pre class="mono mt-1 bg-zinc-900 rounded p-2 text-xs leading-relaxed border border-zinc-800"><span class="text-red-400">- if token:</span>
+<span class="text-red-400">-     return True</span>
+<span class="text-emerald-400">+ if token and token.expires_at > now():</span>
+<span class="text-emerald-400">+     return True</span>
+<span class="text-emerald-400">+ return False</span></pre>
+                    </details>
+                </div>
+            </div>
+
+            <!-- message (assistant response) -->
+            <div class="flex gap-3 py-1.5 group hover:bg-zinc-900/50 rounded px-2 -mx-2">
+                <span class="mono text-xs text-zinc-600 w-16 shrink-0 pt-0.5">14:58:30</span>
+                <i class="fa-solid fa-message text-xs text-zinc-300 w-4 shrink-0 pt-0.5"></i>
+                <span class="text-xs text-zinc-200">Authentication module updated. I've added token expiry validation to the <span class="mono bg-zinc-800 px-1 rounded text-zinc-300">validate_token()</span> function. Running tests now.</span>
+            </div>
+
+            <!-- tool_call: shell -->
+            <div class="flex gap-3 py-1.5 group hover:bg-zinc-900/50 rounded px-2 -mx-2">
+                <span class="mono text-xs text-zinc-600 w-16 shrink-0 pt-0.5">14:58:32</span>
+                <i class="fa-solid fa-terminal text-xs text-zinc-500 w-4 shrink-0 pt-0.5"></i>
+                <span class="text-xs text-zinc-300">
+                    <span class="mono bg-zinc-800 text-zinc-300 px-1 rounded">shell</span>
+                    <span class="mono text-zinc-400">pytest tests/test_auth.py -v</span>
+                </span>
+            </div>
+
+            <!-- tool_result: test output -->
+            <div class="flex gap-3 py-1.5 group hover:bg-zinc-900/50 rounded px-2 -mx-2">
+                <span class="mono text-xs text-zinc-600 w-16 shrink-0 pt-0.5">14:58:35</span>
+                <i class="fa-solid fa-check text-xs text-emerald-500/60 w-4 shrink-0 pt-0.5"></i>
+                <span class="text-xs">
+                    <span class="text-emerald-400">8 passed</span>
+                    <span class="text-zinc-500"> in 1.2s</span>
+                </span>
+            </div>
+
+            <!-- error -->
+            <div class="flex gap-3 py-1.5 group hover:bg-zinc-900/50 rounded px-2 -mx-2">
+                <span class="mono text-xs text-zinc-600 w-16 shrink-0 pt-0.5">14:58:36</span>
+                <i class="fa-solid fa-triangle-exclamation text-xs text-red-400/70 w-4 shrink-0 pt-0.5"></i>
+                <span class="text-xs text-red-400/90">Linting warning: unused import 'datetime' in src/auth.py</span>
+            </div>
+
+            <!-- state_change -->
+            <div class="flex gap-3 py-1.5 group hover:bg-zinc-900/50 rounded px-2 -mx-2">
+                <span class="mono text-xs text-zinc-600 w-16 shrink-0 pt-0.5">14:59:01</span>
+                <i class="fa-solid fa-bolt text-xs text-cyan-400 w-4 shrink-0 pt-0.5"></i>
+                <span class="text-xs text-cyan-400">mode changed: agent → assistant</span>
+            </div>
+
+            <!-- progress -->
+            <div class="flex gap-3 py-1.5 group hover:bg-zinc-900/50 rounded px-2 -mx-2">
+                <span class="mono text-xs text-zinc-600 w-16 shrink-0 pt-0.5">14:59:05</span>
+                <i class="fa-solid fa-list-check text-xs text-violet-400/70 w-4 shrink-0 pt-0.5"></i>
+                <span class="text-xs text-zinc-400">Task progress: Step 3 of 5 complete — "Add dark mode CSS variables"</span>
+            </div>
+
+            <!-- Live cursor indicator -->
+            <div class="flex gap-3 py-1.5">
+                <span class="mono text-xs text-zinc-600 w-16 shrink-0 pt-0.5">14:59:12</span>
+                <span class="w-4 shrink-0 pt-0.5">
+                    <span class="w-1.5 h-3 bg-zinc-500 animate-pulse inline-block"></span>
+                </span>
+                <span class="text-xs text-zinc-600 italic">waiting for events...</span>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Bottom indicator -->
+    <footer class="border-t border-zinc-800 px-6 py-2">
+        <div class="max-w-5xl mx-auto flex items-center justify-between text-xs text-zinc-600">
+            <span><i class="fa-solid fa-circle text-emerald-400 text-[6px] mr-1.5"></i>Connected · SSE stream</span>
+            <span>auto-scroll on</span>
+        </div>
+    </footer>
+
+</body>
+</html>

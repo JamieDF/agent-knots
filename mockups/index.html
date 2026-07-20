@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>agentjam — UI Mockups</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg:            oklch(9% 0.005 260);
+            --surface:       oklch(14% 0.006 260);
+            --surface-raised: oklch(18% 0.008 260);
+            --surface-hover: oklch(20% 0.008 260);
+            --fg:            oklch(92% 0.003 260);
+            --fg-soft:       oklch(78% 0.005 260);
+            --muted:         oklch(58% 0.012 260);
+            --muted-2:       oklch(42% 0.012 260);
+            --border:        oklch(22% 0.006 260);
+            --border-subtle: oklch(16% 0.004 260);
+            --info:          oklch(68% 0.12 235);
+            --running:       oklch(72% 0.16 155);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'DM Sans', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--fg);
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+            padding: 56px 32px;
+        }
+        .mono { font-family: 'DM Mono', monospace; font-variant-numeric: tabular-nums; }
+        a { color: inherit; text-decoration: none; }
+
+        .wrap { max-width: 1080px; margin: 0 auto; }
+
+        header { margin-bottom: 40px; }
+        h1 {
+            font-size: 26px;
+            font-weight: 600;
+            letter-spacing: -0.015em;
+            color: var(--fg);
+            display: flex; align-items: center; gap: 10px;
+        }
+        h1 svg { color: var(--running); }
+        .sub {
+            font-size: 14px;
+            color: var(--muted);
+            margin-top: 6px;
+            line-height: 1.5;
+        }
+        .sub strong { color: var(--fg); font-weight: 500; }
+        .sub code {
+            font-family: 'DM Mono', monospace;
+            font-size: 12px;
+            background: var(--surface);
+            color: var(--fg-soft);
+            padding: 2px 7px;
+            border-radius: 4px;
+        }
+
+        .meta-row {
+            display: flex; gap: 24px;
+            margin-top: 18px;
+            font-size: 12px;
+            color: var(--muted);
+        }
+        .meta-row .stat {
+            display: flex; flex-direction: column;
+            gap: 2px;
+        }
+        .meta-row .stat .n {
+            font-family: 'DM Mono', monospace;
+            font-size: 16px;
+            color: var(--fg);
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.01em;
+        }
+        .meta-row .stat .l {
+            font-size: 10px;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .divider {
+            height: 1px;
+            background: var(--border-subtle);
+            margin: 36px 0 28px;
+        }
+
+        .section-label {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 16px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 14px;
+        }
+
+        .card {
+            display: block;
+            background: var(--surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 18px 18px 16px;
+            transition: background 0.15s, border-color 0.15s, transform 0.15s;
+        }
+        .card:hover {
+            background: var(--surface-raised);
+            border-color: var(--border);
+        }
+        .card-head {
+            display: flex; align-items: flex-start; justify-content: space-between;
+            gap: 12px; margin-bottom: 10px;
+        }
+        .card-id {
+            font-family: 'DM Mono', monospace;
+            font-size: 12px;
+            color: var(--muted-2);
+        }
+        .card-badge {
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 99px;
+            font-weight: 500;
+            letter-spacing: 0.02em;
+            white-space: nowrap;
+        }
+        .card-badge.consolidated {
+            background: oklch(68% 0.12 235 / 0.15);
+            color: oklch(80% 0.12 235);
+        }
+        .card-badge.kept {
+            background: oklch(72% 0.16 155 / 0.15);
+            color: oklch(82% 0.16 155);
+        }
+        .card-badge.shell {
+            background: var(--surface-raised);
+            color: var(--fg-soft);
+            border: 1px solid var(--border-subtle);
+        }
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--fg);
+            margin-bottom: 6px;
+            letter-spacing: -0.01em;
+        }
+        .card-desc {
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+        .card-tags {
+            margin-top: 14px;
+            display: flex; gap: 4px;
+            flex-wrap: wrap;
+        }
+        .tag {
+            font-size: 10px;
+            padding: 3px 7px;
+            border-radius: 4px;
+            background: var(--bg);
+            color: var(--muted);
+            font-family: 'DM Mono', monospace;
+            border: 1px solid var(--border-subtle);
+        }
+        .tag.accent {
+            color: oklch(82% 0.12 235);
+            border-color: oklch(68% 0.12 235 / 0.3);
+            background: oklch(68% 0.12 235 / 0.08);
+        }
+
+        footer {
+            margin-top: 56px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border-subtle);
+            font-size: 12px;
+            color: var(--muted-2);
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        footer code {
+            font-family: 'DM Mono', monospace;
+            color: var(--muted);
+            background: var(--surface);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+
+        @media (max-width: 640px) {
+            body { padding: 32px 18px; }
+            .meta-row { flex-wrap: wrap; gap: 16px; }
+            header { margin-bottom: 28px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+
+        <header>
+            <h1>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+                </svg>
+                agentjam — UI mockups
+            </h1>
+            <p class="sub">
+                Cockpit for orchestrating coding agents. <strong>5 surfaces</strong> cover the whole product — start at <code>10 Overview</code>, then drill into an agent, jump to a task, or open the new-task dialog.
+            </p>
+            <div class="meta-row">
+                <div class="stat"><span class="n">5</span><span class="l">Surfaces</span></div>
+                <div class="stat"><span class="n">5</span><span class="l">Mockups</span></div>
+                <div class="stat"><span class="n">9 → 5</span><span class="l">Consolidation</span></div>
+                <div class="stat"><span class="n">0</span><span class="l">Variants</span></div>
+            </div>
+        </header>
+
+        <div class="divider"></div>
+
+        <div class="section-label">Surfaces — click any card to open</div>
+
+        <div class="grid">
+
+            <!-- 10 Overview (consolidated 01 + 04) -->
+            <a href="10-overview.html" class="card" data-od-id="card-overview">
+                <div class="card-head">
+                    <span class="card-id mono">10</span>
+                    <span class="card-badge consolidated">consolidated · idle + live</span>
+                </div>
+                <h2 class="card-title">Overview</h2>
+                <p class="card-desc">The single home surface. Idle view shows greeting, blocker, working/ planned/ done lists. Live view shows active agents with goals + progress + blocked replies. Toggle in the header.</p>
+                <div class="card-tags">
+                    <span class="tag accent">toggle</span>
+                    <span class="tag">3-panel</span>
+                    <span class="tag">live feed</span>
+                    <span class="tag">timeline</span>
+                    <span class="tag">⌘B sidebar</span>
+                </div>
+            </a>
+
+            <!-- 11 Agent Focus (consolidated 05 + 06, B variant locked-in) -->
+            <a href="11-agent-focus.html" class="card" data-od-id="card-agent-focus">
+                <div class="card-head">
+                    <span class="card-id mono">11</span>
+                    <span class="card-badge kept">locked-in · detailed</span>
+                </div>
+                <h2 class="card-title">Agent Focus</h2>
+                <p class="card-desc">Single shell. Header: back, agent identity, mode pill (watching / driving), stats, Assume. Body: agent context left, three-pane thread center, working context right. Tool calls (bash / read / edit) earn bordered cards — conversation and thinking flow inline as prose rows with leading avatar and timestamp. Sub-agent thread nests inside the delegation card. Chat input pinned to viewport bottom with a blocked overlay in watching mode.</p>
+                <div class="card-tags">
+                    <span class="tag accent">viewport-locked</span>
+                    <span class="tag">cards for tools</span>
+                    <span class="tag">prose for chat</span>
+                    <span class="tag">collapsible thinking</span>
+                    <span class="tag">sub-agent nested</span>
+                </div>
+            </a>
+
+            <!-- 07 Task List -->
+            <a href="07-task-list.html" class="card" data-od-id="card-task-list">
+                <div class="card-head">
+                    <span class="card-id mono">07</span>
+                    <span class="card-badge kept">kept as-is</span>
+                </div>
+                <h2 class="card-title">Task List</h2>
+                <p class="card-desc">Filterable table. Workspaces nav left, full-width task table center. Inline blocker response with one-click Answer, progress bars, status filters.</p>
+                <div class="card-tags">
+                    <span class="tag">2-panel shell</span>
+                    <span class="tag">filter</span>
+                    <span class="tag">blocker reply</span>
+                </div>
+            </a>
+
+            <!-- 08 Task Detail -->
+            <a href="08-task-detail.html" class="card" data-od-id="card-task-detail">
+                <div class="card-head">
+                    <span class="card-id mono">08</span>
+                    <span class="card-badge kept">kept as-is</span>
+                </div>
+                <h2 class="card-title">Task Detail</h2>
+                <p class="card-desc">Full-width main flow (description → steps → progress timeline). Sidebar content (progress, files, tools, criteria, metadata) reflows as a 3-column grid below.</p>
+                <div class="card-tags">
+                    <span class="tag">2-panel shell</span>
+                    <span class="tag">steps</span>
+                    <span class="tag">criteria</span>
+                    <span class="tag">timeline</span>
+                </div>
+            </a>
+
+            <!-- 09 New Task (modal) -->
+            <a href="09-task-create.html" class="card" data-od-id="card-task-create">
+                <div class="card-head">
+                    <span class="card-id mono">09</span>
+                    <span class="card-badge kept">kept as-is</span>
+                </div>
+                <h2 class="card-title">New Task</h2>
+                <p class="card-desc">Compact modal dialog. Title, description, steps, acceptance criteria, priority, project, tags. Single primary action (Create) with cancel + escape.</p>
+                <div class="card-tags">
+                    <span class="tag">modal</span>
+                    <span class="tag">form</span>
+                    <span class="tag">validation</span>
+                </div>
+            </a>
+
+        </div>
+
+        <footer>
+            <span>Consolidation map: 01 + 04 → <code>10</code> · 05 + 06 → <code>11</code> (detailed variant locked-in) · 02 + 03 dropped (covered by 10 / 11)</span>
+            <span class="mono">v4 · 5 mockups · 5 surfaces · A/B/C variants retired</span>
+        </footer>
+
+    </div>
+</body>
+</html>

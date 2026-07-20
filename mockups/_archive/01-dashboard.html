@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>agentjam — Home</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:            oklch(9% 0.005 260);
+      --surface:       oklch(14% 0.006 260);
+      --surface-raised: oklch(18% 0.008 260);
+      --surface-hover: oklch(20% 0.008 260);
+      --fg:            oklch(92% 0.003 260);
+      --fg-soft:       oklch(78% 0.005 260);
+      --muted:         oklch(58% 0.012 260);
+      --muted-2:       oklch(42% 0.012 260);
+      --border:        oklch(22% 0.006 260);
+      --border-subtle: oklch(16% 0.004 260);
+
+      --running:    oklch(72% 0.16 155);
+      --blocked:    oklch(76% 0.14 65);
+      --assumed:    oklch(76% 0.16 75);
+      --info:       oklch(68% 0.12 235);
+      --done:       oklch(64% 0.06 155);
+
+      --tag-bg:     oklch(22% 0.008 260);
+      --tag-fg:     oklch(72% 0.008 260);
+
+      --blocked-bg:  oklch(76% 0.14 65 / 0.06);
+      --blocked-bd:  oklch(76% 0.14 65 / 0.22);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'DM Sans', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      display: flex;
+      flex-direction: column;
+    }
+    .mono { font-family: 'DM Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+    a { color: inherit; text-decoration: none; }
+    button { font-family: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+
+    /* ── Topbar (matches 04 canvas) ─────────────────────── */
+    .topbar {
+      height: 52px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 24px;
+      background: var(--bg);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .topbar-brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--fg);
+    }
+    .topbar-brand svg { color: var(--running); }
+    .topbar-sep { width: 1px; height: 20px; background: var(--border-subtle); }
+    .topbar-nav {
+      display: flex;
+      gap: 2px;
+    }
+    .topbar-nav a {
+      font-size: 13px;
+      color: var(--muted);
+      padding: 5px 10px;
+      border-radius: 6px;
+      transition: color .12s, background .12s;
+    }
+    .topbar-nav a:hover { color: var(--fg); background: var(--surface); }
+    .topbar-nav a.active { color: var(--fg); background: var(--surface); }
+    .topbar-meta {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .meta-item { display: flex; align-items: center; gap: 6px; }
+    .meta-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .topbar-actions { margin-left: auto; display: flex; gap: 8px; }
+    .btn {
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--border-subtle);
+    }
+    .btn-ghost:hover { background: var(--surface); color: var(--fg); }
+    .btn-primary {
+      background: var(--fg);
+      color: var(--bg);
+    }
+    .btn-primary:hover { opacity: 0.88; }
+
+    /* ── Canvas 3-panel layout (matches 04) ─────────────── */
+    .canvas {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 240px 1fr 320px;
+      overflow: hidden;
+      min-height: 0;
+      transition: grid-template-columns 0.22s cubic-bezier(.4,0,.2,1);
+    }
+    .canvas.collapsed { grid-template-columns: 52px 1fr 320px; }
+
+    /* ── Left panel: status snapshot ─────────────────────── */
+    .left-panel {
+      position: relative;
+    }
+    .left-panel {
+      border-right: 1px solid var(--border-subtle);
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 18px 14px;
+      transition: padding 0.22s cubic-bezier(.4,0,.2,1);
+    }
+    .left-panel.collapsed { padding: 14px 8px; }
+    .panel-toggle {
+      position: absolute;
+      top: 10px; right: 6px;
+      width: 22px; height: 22px;
+      border-radius: 5px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--muted);
+      transition: color .12s, background .12s;
+      z-index: 5;
+    }
+    .panel-toggle:hover { color: var(--fg); background: var(--surface-hover); }
+    .panel-toggle svg { transition: transform 0.22s cubic-bezier(.4,0,.2,1); }
+    .left-panel.collapsed .panel-toggle svg { transform: rotate(180deg); }
+    .left-panel .expand-anchor {
+      position: sticky;
+      bottom: 0;
+      margin: 14px -8px -14px;
+      padding: 10px 8px;
+      background: linear-gradient(to top, var(--bg) 60%, transparent);
+      display: none;
+      justify-content: center;
+    }
+    .left-panel.collapsed .expand-anchor { display: flex; }
+    .expand-anchor button {
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--muted);
+      border: 1px solid var(--border-subtle);
+      background: var(--surface);
+      transition: color .12s, background .12s, border-color .12s;
+    }
+    .expand-anchor button:hover { color: var(--fg); background: var(--surface-hover); border-color: var(--border); }
+      border-right: 1px solid var(--border-subtle);
+      overflow-y: auto;
+      padding: 18px 12px;
+    }
+    .panel-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 10px;
+      padding: 0 4px;
+    }
+
+    /* Status snapshot cards */
+    .status-block {
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 10px;
+    }
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+      font-size: 13px;
+    }
+    .status-row + .status-row { border-top: 1px solid var(--border-subtle); }
+    .status-row .label { color: var(--muted); display: flex; align-items: center; gap: 8px; }
+    .status-row .val { font-family: 'DM Mono', monospace; color: var(--fg); font-variant-numeric: tabular-nums; }
+    .status-row .val.running { color: var(--running); }
+    .status-row .val.blocked { color: var(--blocked); }
+
+    /* Collapsed panel — hide text, keep icons + counts as badges */
+    .left-panel.collapsed .panel-label { display: none; }
+    .left-panel.collapsed .status-block {
+      padding: 8px 0;
+      background: transparent;
+      border: none;
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+      margin-bottom: 18px;
+    }
+    .left-panel.collapsed .status-row {
+      padding: 0;
+      justify-content: center;
+      border: none !important;
+      flex-direction: column; gap: 2px; align-items: center;
+      position: relative;
+    }
+    .left-panel.collapsed .status-row .label { display: none; }
+    .left-panel.collapsed .status-row .val {
+      position: absolute; top: -6px; right: -8px;
+      background: var(--surface-raised);
+      color: var(--fg);
+      font-size: 9px;
+      padding: 1px 4px;
+      border-radius: 6px;
+      min-width: 14px; text-align: center;
+      border: 1px solid var(--border-subtle);
+    }
+    .left-panel.collapsed .workspace-item,
+    .left-panel.collapsed .quick-filter {
+      padding: 8px;
+      justify-content: center;
+      display: flex;
+      align-items: center;
+      position: relative;
+    }
+    .left-panel.collapsed .workspace-name,
+    .left-panel.collapsed .filter-label,
+    .left-panel.collapsed .workspace-meta { display: none; }
+    .left-panel.collapsed .workspace-item svg,
+    .left-panel.collapsed .quick-filter svg { margin: 0; }
+    .status-row .val.assumed { color: var(--assumed); }
+
+    /* Workspaces (parity with canvas) */
+    .workspace-item {
+      padding: 10px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.12s;
+      margin-bottom: 2px;
+      display: block;
+    }
+    .workspace-item:hover { background: var(--surface); }
+    .workspace-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--fg);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .workspace-name svg { color: var(--muted); flex-shrink: 0; }
+    .workspace-meta {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .workspace-dots { display: flex; gap: 3px; margin-left: 4px; }
+    .mini-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .mini-dot.running { background: var(--running); }
+    .mini-dot.blocked { background: var(--blocked); }
+    .mini-dot.assumed { background: var(--assumed); }
+
+    .quick-filter {
+      padding: 7px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-bottom: 2px;
+      display: block;
+    }
+    .quick-filter:hover { background: var(--surface); }
+    .quick-filter .filter-label {
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* ── Center panel: dashboard ─────────────────────────── */
+    .center-panel {
+      overflow-y: auto;
+      padding: 24px 28px;
+    }
+    .center-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      gap: 24px;
+    }
+    .greeting-title {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.015em;
+      color: var(--fg);
+    }
+    .greeting-sub {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .greeting-sub .accent { color: var(--blocked); font-weight: 500; }
+    .center-stats {
+      display: flex;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+    .ctr-stat {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 2px;
+    }
+    .ctr-stat .n {
+      font-family: 'DM Mono', monospace;
+      font-size: 16px;
+      font-variant-numeric: tabular-nums;
+      color: var(--fg);
+      letter-spacing: -0.01em;
+    }
+    .ctr-stat .l {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    /* Sections */
+    .section { margin-bottom: 28px; }
+    .section-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .section-label.alert { color: var(--blocked); }
+    .section-count {
+      font-size: 11px;
+      color: var(--muted-2);
+      font-variant-numeric: tabular-nums;
+    }
+    .section-divider { flex: 1; height: 1px; background: var(--border-subtle); }
+    .section-action {
+      font-size: 11px;
+      color: var(--muted);
+      padding: 3px 8px;
+      border-radius: 5px;
+      transition: color .12s, background .12s;
+    }
+    .section-action:hover { color: var(--fg); background: var(--surface); }
+
+    /* Blocker card (loud, at top) */
+    .blocker {
+      background: var(--blocked-bg);
+      border: 1px solid var(--blocked-bd);
+      border-radius: 10px;
+      padding: 16px 18px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 14px 18px;
+      align-items: center;
+    }
+    .blocker-meta {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--blocked);
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .blocker-meta .pulse {
+      width: 6px; height: 6px;
+      background: var(--blocked);
+      border-radius: 50%;
+      animation: pulse 2s ease-out infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.8); opacity: 0.6; }
+      100% { transform: scale(1.8); opacity: 0; }
+    }
+    .blocker-title {
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--fg);
+      line-height: 1.35;
+    }
+    .blocker-question {
+      font-size: 13px;
+      color: var(--fg-soft);
+      line-height: 1.55;
+      margin-top: 4px;
+      padding-left: 12px;
+      border-left: 2px solid oklch(76% 0.14 65 / 0.4);
+    }
+    .blocker-question code {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      background: oklch(76% 0.14 65 / 0.12);
+      padding: 1px 5px;
+      border-radius: 3px;
+      color: var(--fg);
+    }
+    .blocker-actions { display: flex; gap: 8px; }
+    .btn-amber {
+      background: var(--blocked);
+      color: oklch(15% 0.02 75);
+    }
+    .btn-amber:hover { background: oklch(80% 0.14 65); }
+
+    /* Task list (the consistent grammar from 01) */
+    .list {
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 18px 1fr auto;
+      gap: 14px;
+      align-items: center;
+      padding: 12px 14px;
+      transition: background .12s;
+      cursor: pointer;
+      position: relative;
+    }
+    .row + .row { border-top: 1px solid var(--border-subtle); }
+    .row:hover { background: var(--surface-hover); }
+
+    .state-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--muted-2);
+      justify-self: center;
+      position: relative;
+    }
+    .state-dot.running { background: var(--running); }
+    .state-dot.running::after {
+      content: '';
+      position: absolute;
+      inset: -3px;
+      border-radius: 50%;
+      background: var(--running);
+      opacity: 0.25;
+      animation: pulse 2s ease-out infinite;
+    }
+    .state-dot.assumed { background: var(--assumed); }
+    .state-dot.planned { background: transparent; border: 1.5px solid var(--muted-2); }
+    .state-dot.done { background: var(--done); opacity: 0.7; }
+
+    .row-main { min-width: 0; }
+    .row-title {
+      font-size: 14px;
+      color: var(--fg);
+      line-height: 1.35;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .row-title.dim { color: var(--muted); }
+    .row-title.done {
+      color: var(--muted);
+      text-decoration: line-through;
+      text-decoration-color: var(--muted-2);
+    }
+    .row-sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 3px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .row-sub .filename {
+      font-family: 'DM Mono', monospace;
+      color: var(--fg-soft);
+      font-size: 11px;
+    }
+    .row-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .progress-text {
+      font-variant-numeric: tabular-nums;
+      color: var(--fg-soft);
+    }
+    .progress-bar {
+      width: 64px;
+      height: 3px;
+      background: var(--border-subtle);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--running);
+      border-radius: 2px;
+    }
+    .progress-fill.assumed { background: var(--assumed); }
+    .tag {
+      font-size: 11px;
+      color: var(--tag-fg);
+      background: var(--tag-bg);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-family: 'DM Mono', monospace;
+    }
+    .tag.amber {
+      color: var(--assumed);
+      background: oklch(76% 0.16 75 / 0.12);
+    }
+    .session-id {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--muted-2);
+    }
+    .dot-sep {
+      width: 3px; height: 3px;
+      background: var(--muted-2);
+      border-radius: 50%;
+    }
+
+    .empty {
+      padding: 24px;
+      text-align: center;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .empty strong { color: var(--fg); font-weight: 500; }
+    .empty code {
+      font-family: 'DM Mono', monospace;
+      background: var(--surface);
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 12px;
+      color: var(--fg-soft);
+    }
+
+    /* ── Right panel: live feed (parity with 04) ────────── */
+    .feed-panel {
+      border-left: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .feed-header {
+      padding: 16px 16px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .feed-title { font-size: 12px; font-weight: 600; }
+    .feed-filter {
+      display: flex;
+      gap: 4px;
+      background: var(--surface);
+      border-radius: 6px;
+      padding: 2px;
+    }
+    .filter-btn {
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      color: var(--muted);
+      border: none;
+      background: none;
+      transition: all 0.12s;
+    }
+    .filter-btn.active { background: var(--surface-raised); color: var(--fg); }
+    .feed-body {
+      flex: 1;
+      overflow-y: auto;
+    }
+    .feed-event {
+      padding: 9px 16px;
+      display: flex;
+      gap: 10px;
+      font-size: 11px;
+      line-height: 1.45;
+      border-bottom: 1px solid var(--border-subtle);
+      transition: background 0.1s;
+    }
+    .feed-event:hover { background: var(--surface); }
+    .feed-event.thinking { border-left: 2px solid var(--info); }
+    .feed-event.tool { border-left: 2px solid var(--running); }
+    .feed-event.result { border-left: 2px solid var(--muted); }
+    .feed-event.blocked { border-left: 2px solid var(--blocked); }
+    .feed-event.user { border-left: 2px solid var(--assumed); }
+    .feed-event.done { border-left: 2px solid var(--done); }
+    .event-time {
+      font-family: 'DM Mono', monospace;
+      color: var(--muted);
+      font-size: 10px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .event-content { flex: 1; min-width: 0; }
+    .event-agent { font-weight: 600; margin-bottom: 2px; }
+    .event-text { color: var(--muted); }
+    .event-text code {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      background: var(--surface-raised);
+      padding: 1px 4px;
+      border-radius: 3px;
+      color: var(--fg);
+    }
+
+    /* ── Timeline strip (parity with 04) ─────────────────── */
+    .timeline-strip {
+      height: 32px;
+      border-top: 1px solid var(--border-subtle);
+      background: var(--surface);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      flex-shrink: 0;
+    }
+    .timeline-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 12px;
+      font-size: 11px;
+      color: var(--muted);
+      border-right: 1px solid var(--border-subtle);
+      height: 100%;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .timeline-item:first-child { padding-left: 0; }
+    .timeline-item.now { border-right: none; }
+    .timeline-time { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); }
+    .timeline-label { color: var(--fg); font-weight: 500; }
+    .timeline-item.you { border-left: 2px solid var(--assumed); }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* ── Responsive ─────────────────────────────────────── */
+    @media (max-width: 1100px) {
+      .canvas { grid-template-columns: 1fr; }
+      .left-panel, .feed-panel { display: none; }
+      .topbar-nav { display: none; }
+    }
+    @media (max-width: 640px) {
+      .topbar { padding: 0 14px; gap: 12px; }
+      .topbar-meta { display: none; }
+      .center-panel { padding: 18px 16px; }
+      .center-header { flex-direction: column; align-items: flex-start; gap: 14px; }
+      .center-stats { align-self: stretch; justify-content: space-between; }
+      .blocker { grid-template-columns: 1fr; }
+      .blocker-actions { flex-direction: row; }
+      .progress-bar { display: none; }
+    }
+  </style>
+  <script>
+    (function() {
+      var KEY = 'agentjam.leftPanel.collapsed';
+      var panel = document.querySelector('.left-panel');
+      var canvas = document.querySelector('.canvas');
+      if (!panel || !canvas) return;
+      var stored = null;
+      try { stored = localStorage.getItem(KEY); } catch (e) {}
+      var collapsed = stored === '1';
+      function apply(state) {
+        panel.classList.toggle('collapsed', state);
+        canvas.classList.toggle('collapsed', state);
+        var btns = document.querySelectorAll('.panel-toggle, .panel-toggle-top, .expand-btn');
+        btns.forEach(function(b) {
+          b.setAttribute('aria-label', state ? 'Expand sidebar' : 'Collapse sidebar');
+          b.setAttribute('title', (state ? 'Expand' : 'Collapse') + ' sidebar (⌘B)');
+        });
+      }
+      apply(collapsed);
+      document.addEventListener('click', function(e) {
+        if (e.target.closest('.panel-toggle, .panel-toggle-top, .expand-btn')) {
+          var next = !panel.classList.contains('collapsed');
+          apply(next);
+          try { localStorage.setItem(KEY, next ? '1' : '0'); } catch (err) {}
+        }
+      });
+      document.addEventListener('keydown', function(e) {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+          e.preventDefault();
+          var n = !panel.classList.contains('collapsed');
+          apply(n);
+          try { localStorage.setItem(KEY, n ? '1' : '0'); } catch (err) {}
+        }
+      });
+      window.addEventListener('storage', function(e) {
+        if (e.key === KEY) apply(e.newValue === '1');
+      });
+    })();
+  </script>
+</head>
+<body>
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-brand">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+      </svg>
+      agentjam
+    </div>
+    <div class="topbar-sep"></div>
+    <nav class="topbar-nav">
+      <a href="#" class="active">Home</a>
+      <a href="07-task-list.html">Tasks</a>
+      <a href="04-session-canvas.html">Sessions</a>
+      <a href="#">Projects</a>
+    </nav>
+    <div class="topbar-meta">
+      <div class="meta-item"><div class="meta-dot" style="background: var(--running);"></div>3 agents</div>
+      <div class="meta-item">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        12m 34s
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-ghost panel-toggle-top" data-od-id="panel-toggle-top" aria-label="Collapse sidebar" title="Collapse sidebar (⌘B)">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 12 6 8 10 4"/></svg>
+      </button>
+
+      <button class="btn btn-ghost">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        New session
+      </button>
+      <a href="09-task-create.html" class="btn btn-primary" data-od-id="nav-new-task">+ New task</a>
+    </div>
+  </div>
+
+  <!-- Canvas -->
+  <div class="canvas">
+
+    <!-- LEFT: status snapshot + workspaces + filters -->
+    <aside class="left-panel" data-od-id="left-panel">
+      <button class="panel-toggle" data-od-id="panel-toggle" aria-label="Collapse sidebar" title="Collapse sidebar (⌘B)">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="10 12 6 8 10 4"/></svg>
+      </button>
+      <div class="panel-label">Status</div>
+      <div class="status-block" data-od-id="status-block">
+        <div class="status-row">
+          <span class="label"><div class="meta-dot" style="background: var(--running);"></div>Running</span>
+          <span class="val running">3</span>
+        </div>
+        <div class="status-row">
+          <span class="label"><div class="meta-dot" style="background: var(--blocked);"></div>Blocked</span>
+          <span class="val blocked">1</span>
+        </div>
+        <div class="status-row">
+          <span class="label"><div class="meta-dot" style="background: var(--assumed);"></div>Paired (you)</span>
+          <span class="val assumed">1</span>
+        </div>
+        <div class="status-row">
+          <span class="label">Done today</span>
+          <span class="val">7</span>
+        </div>
+      </div>
+
+      <div style="margin-top: 22px;">
+        <div class="panel-label">Workspaces</div>
+        <a href="04-session-canvas.html" class="workspace-item" data-od-id="workspace-1">
+          <div class="workspace-name">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            api-service
+          </div>
+          <div class="workspace-meta mono">./api-service <span class="workspace-dots"><span class="mini-dot running"></span><span class="mini-dot running"></span></span></div>
+        </a>
+        <a href="04-session-canvas.html" class="workspace-item" data-od-id="workspace-2">
+          <div class="workspace-name">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            web-frontend
+          </div>
+          <div class="workspace-meta mono">./web-frontend <span class="workspace-dots"><span class="mini-dot blocked"></span></span></div>
+        </a>
+        <a href="04-session-canvas.html" class="workspace-item" data-od-id="workspace-3">
+          <div class="workspace-name">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            infra
+          </div>
+          <div class="workspace-meta mono">./infra <span class="workspace-dots"><span class="mini-dot assumed"></span></span></div>
+        </a>
+      </div>
+
+      <div style="margin-top: 22px;">
+        <div class="panel-label">Quick filters</div>
+        <a href="07-task-list.html" class="quick-filter">
+          <div class="filter-label">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            Tasks waiting on me
+          </div>
+        </a>
+        <a href="07-task-list.html" class="quick-filter">
+          <div class="filter-label">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            Recently completed
+          </div>
+        </a>
+        <a href="07-task-list.html" class="quick-filter">
+          <div class="filter-label">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            All tasks
+          </div>
+        </a>
+      </div>
+
+      <div class="expand-anchor">
+        <button class="expand-btn" data-od-id="panel-expand" aria-label="Expand sidebar" title="Expand sidebar (⌘B)">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 4 10 8 6 12"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- CENTER: dashboard content -->
+    <main class="center-panel">
+
+      <header class="center-header">
+        <div>
+          <h1 class="greeting-title" data-od-id="page-title">Good afternoon, Jamie</h1>
+          <p class="greeting-sub"><span class="accent">1 thing needs your input</span> · 3 agents are working · 7 done today</p>
+        </div>
+        <div class="center-stats">
+          <div class="ctr-stat"><span class="n">11</span><span class="l">Tasks</span></div>
+          <div class="ctr-stat"><span class="n">5</span><span class="l">Active</span></div>
+          <div class="ctr-stat"><span class="n">7</span><span class="l">Today</span></div>
+        </div>
+      </header>
+
+      <!-- Needs your input -->
+      <section class="section" data-od-id="section-blockers">
+        <div class="section-head">
+          <span class="section-label alert">Needs your input</span>
+          <span class="section-count">1</span>
+          <span class="section-divider"></span>
+        </div>
+
+        <article class="blocker" data-od-id="blocker-1">
+          <div class="blocker-meta">
+            <span class="pulse"></span>
+            Blocked · waiting for you
+            <span class="dot-sep" style="background: var(--blocked); opacity: 0.4;"></span>
+            <span style="font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); font-family: 'DM Mono', monospace; font-size: 10px;">cli-145828-7o18</span>
+          </div>
+          <div>
+            <div class="blocker-title">Migrate Terraform state from S3 to GCS backend</div>
+            <div class="blocker-question">What GCS bucket naming convention should I use? Existing convention is <code>tf-state-{env}-{region}</code>.</div>
+          </div>
+          <div class="blocker-actions">
+            <a href="06-paired-mode.html" class="btn btn-amber" data-od-id="blocker-respond">Respond</a>
+            <button class="btn btn-ghost">Dismiss</button>
+          </div>
+        </article>
+      </section>
+
+      <!-- Working on now -->
+      <section class="section" data-od-id="section-running">
+        <div class="section-head">
+          <span class="section-label">Working on now</span>
+          <span class="section-count">3</span>
+          <span class="section-divider"></span>
+          <a href="04-session-canvas.html" class="section-action">Open canvas →</a>
+        </div>
+
+        <div class="list">
+
+          <a href="02-agent-detail.html" class="row" data-od-id="row-1">
+            <span class="state-dot running"></span>
+            <div class="row-main">
+              <div class="row-title">Fix token expiry bug in session middleware</div>
+              <div class="row-sub">
+                <span class="tag">backend-infra</span>
+                <span class="dot-sep"></span>
+                <span>editing <span class="filename">src/auth/session.go</span></span>
+                <span class="dot-sep"></span>
+                <span class="session-id">cli-145828-7o18</span>
+              </div>
+            </div>
+            <div class="row-meta">
+              <span class="progress-text">step 2/5</span>
+              <div class="progress-bar"><div class="progress-fill" style="width: 40%"></div></div>
+              <span style="font-size: 11px; color: var(--muted-2);">3m</span>
+            </div>
+          </a>
+
+          <a href="06-paired-mode.html" class="row" data-od-id="row-2">
+            <span class="state-dot assumed"></span>
+            <div class="row-main">
+              <div class="row-title">Validate auth test coverage</div>
+              <div class="row-sub">
+                <span class="tag amber">you paired</span>
+                <span class="dot-sep"></span>
+                <span>awaiting your input</span>
+                <span class="dot-sep"></span>
+                <span class="session-id">cli-146031-zm9p</span>
+              </div>
+            </div>
+            <div class="row-meta">
+              <span class="progress-text" style="color: var(--assumed);">step 3/7</span>
+              <div class="progress-bar"><div class="progress-fill assumed" style="width: 43%"></div></div>
+              <span style="font-size: 11px; color: var(--muted-2);">2m</span>
+            </div>
+          </a>
+
+          <a href="02-agent-detail.html" class="row" data-od-id="row-3">
+            <span class="state-dot running"></span>
+            <div class="row-main">
+              <div class="row-title">Refactor error handling across API layer</div>
+              <div class="row-sub">
+                <span class="tag">backend-infra</span>
+                <span class="dot-sep"></span>
+                <span>grepping <span class="filename">internal/api/errors.go</span></span>
+                <span class="dot-sep"></span>
+                <span class="session-id">cli-145701-qk2d</span>
+              </div>
+            </div>
+            <div class="row-meta">
+              <span class="progress-text">step 1/4</span>
+              <div class="progress-bar"><div class="progress-fill" style="width: 25%"></div></div>
+              <span style="font-size: 11px; color: var(--muted-2);">8m</span>
+            </div>
+          </a>
+
+        </div>
+      </section>
+
+      <!-- Planned -->
+      <section class="section" data-od-id="section-planned">
+        <div class="section-head">
+          <span class="section-label">Planned</span>
+          <span class="section-count">2</span>
+          <span class="section-divider"></span>
+          <a href="07-task-list.html" class="section-action">All tasks →</a>
+        </div>
+
+        <div class="list">
+
+          <a href="08-task-detail.html" class="row" data-od-id="row-4">
+            <span class="state-dot planned"></span>
+            <div class="row-main">
+              <div class="row-title dim">Add pre-commit hooks for lint + type-check</div>
+              <div class="row-sub">
+                <span class="tag">frontend-core</span>
+                <span class="dot-sep"></span>
+                <span>not started</span>
+              </div>
+            </div>
+            <div class="row-meta">
+              <span style="font-size: 11px; color: var(--muted-2);">3 steps</span>
+            </div>
+          </a>
+
+          <a href="08-task-detail.html" class="row" data-od-id="row-5">
+            <span class="state-dot planned"></span>
+            <div class="row-main">
+              <div class="row-title dim">Document vault template syntax</div>
+              <div class="row-sub">
+                <span class="tag">docs</span>
+                <span class="dot-sep"></span>
+                <span>not started</span>
+              </div>
+            </div>
+            <div class="row-meta">
+              <span style="font-size: 11px; color: var(--muted-2);">2 steps</span>
+            </div>
+          </a>
+
+        </div>
+      </section>
+
+      <!-- Recently done (compact) -->
+      <section class="section" data-od-id="section-done">
+        <div class="section-head">
+          <span class="section-label">Recently done</span>
+          <span class="section-count">2 of 7</span>
+          <span class="section-divider"></span>
+          <a href="07-task-list.html" class="section-action">See all →</a>
+        </div>
+
+        <div class="list">
+
+          <div class="row" style="cursor: default;" data-od-id="row-done-1">
+            <span class="state-dot done"></span>
+            <div class="row-main">
+              <div class="row-title done">Set up CI pipeline</div>
+              <div class="row-sub">
+                <span class="tag">backend-infra</span>
+                <span class="dot-sep"></span>
+                <span>completed 2h ago</span>
+                <span class="dot-sep"></span>
+                <span class="session-id">cli-144502-jt8w</span>
+              </div>
+            </div>
+            <div class="row-meta">
+              <span class="progress-text">5/5</span>
+            </div>
+          </div>
+
+          <div class="row" style="cursor: default;" data-od-id="row-done-2">
+            <span class="state-dot done"></span>
+            <div class="row-main">
+              <div class="row-title done">Wire SSE endpoint for cockpit</div>
+              <div class="row-sub">
+                <span class="tag">cockpit</span>
+                <span class="dot-sep"></span>
+                <span>completed 4h ago</span>
+                <span class="dot-sep"></span>
+                <span class="session-id">cli-141208-mn4q</span>
+              </div>
+            </div>
+            <div class="row-meta">
+              <span class="progress-text">3/3</span>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+    </main>
+
+    <!-- RIGHT: live feed -->
+    <aside class="feed-panel" data-od-id="feed-panel">
+      <div class="feed-header">
+        <span class="feed-title">Live activity</span>
+        <div class="feed-filter">
+          <button class="filter-btn active">All</button>
+          <button class="filter-btn">Errors</button>
+        </div>
+      </div>
+      <div class="feed-body">
+
+        <div class="feed-event thinking">
+          <div class="event-time">12:34:02</div>
+          <div class="event-content">
+            <div class="event-agent">cli-146031-zm9p</div>
+            <div class="event-text">Thinking: need to check <code>RateLimitMiddleware</code> edge cases</div>
+          </div>
+        </div>
+
+        <div class="feed-event blocked">
+          <div class="event-time">12:34:01</div>
+          <div class="event-content">
+            <div class="event-agent">cli-145828-7o18</div>
+            <div class="event-text" style="color: var(--blocked);">Blocked: needs decision on GCS bucket naming</div>
+          </div>
+        </div>
+
+        <div class="feed-event tool">
+          <div class="event-time">12:33:58</div>
+          <div class="event-content">
+            <div class="event-agent">cli-145828-7o18</div>
+            <div class="event-text">Called <code>terraform validate</code> — passed</div>
+          </div>
+        </div>
+
+        <div class="feed-event user">
+          <div class="event-time">12:33:50</div>
+          <div class="event-content">
+            <div class="event-agent">you → cli-146031-zm9p</div>
+            <div class="event-text">"Add the failing test case you mentioned, then run the suite again"</div>
+          </div>
+        </div>
+
+        <div class="feed-event tool">
+          <div class="event-time">12:33:47</div>
+          <div class="event-content">
+            <div class="event-agent">cli-145701-qk2d</div>
+            <div class="event-text">Ran <code>grep -rn "errors.New" internal/api/</code></div>
+          </div>
+        </div>
+
+        <div class="feed-event result">
+          <div class="event-time">12:33:44</div>
+          <div class="event-content">
+            <div class="event-agent">cli-146031-zm9p</div>
+            <div class="event-text">Test result: <code>TestRateLimit_Retry</code> failed — backoff too aggressive</div>
+          </div>
+        </div>
+
+        <div class="feed-event done">
+          <div class="event-time">12:30:15</div>
+          <div class="event-content">
+            <div class="event-agent">cli-144502-jt8w</div>
+            <div class="event-text">Completed: Set up CI pipeline (5/5)</div>
+          </div>
+        </div>
+
+        <div class="feed-event thinking">
+          <div class="event-time">12:28:02</div>
+          <div class="event-content">
+            <div class="event-agent">cli-145701-qk2d</div>
+            <div class="event-text">Thinking: error wrapping should preserve <code>%w</code> verb in fmt.Errorf</div>
+          </div>
+        </div>
+
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- Timeline strip -->
+  <div class="timeline-strip">
+    <div class="timeline-item">
+      <span class="timeline-time">09:14</span>
+      <span>Started session</span>
+    </div>
+    <div class="timeline-item">
+      <span class="timeline-time">09:21</span>
+      <span>cli-144502-jt8w: done</span>
+    </div>
+    <div class="timeline-item">
+      <span class="timeline-time">09:48</span>
+      <span>cli-145828-7o18: started</span>
+    </div>
+    <div class="timeline-item you">
+      <span class="timeline-time">12:12</span>
+      <span style="color: var(--assumed);">You assumed cli-146031-zm9p</span>
+    </div>
+    <div class="timeline-item">
+      <span class="timeline-time">12:33</span>
+      <span>cli-145828-7o18: blocked</span>
+    </div>
+    <div class="timeline-item now">
+      <span class="timeline-time">now</span>
+      <span class="timeline-label">live</span>
+    </div>
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "mockups/10-overview.html",
+  "entry": "mockups/10-overview.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-07-02T17:10:53.003Z",
+  "updatedAt": "2026-07-02T17:10:53.003Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}
