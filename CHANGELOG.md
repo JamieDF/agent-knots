@@ -1,6 +1,15 @@
 # Changelog
 
-All notable changes to agentjam are documented here.
+All notable changes to agent-knots are documented here.
+
+## [Unreleased]
+
+### Changed
+- **Renamed project from "AgentJam" to "agent-knots".** Python package is
+  now `agent_knots` (import path), CLI binary is `agent-knots`. Default
+  data directory is now `~/.agent-knots/`. Legacy Go implementation
+  (`cmd/`, `internal/`, `go.mod`) removed — superseded by the Python
+  rebuild below.
 
 ## [Unreleased] — Python Rebuild (2026-07)
 

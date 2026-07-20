@@ -8,7 +8,7 @@
 
 ## Context
 
-`agentjam session start --container` runs an agent inside an isolated
+`agent-knots session start --container` runs an agent inside an isolated
 container. The container needs:
 
 - **Enough capability** to do real engineering work: run shell commands,
@@ -55,8 +55,8 @@ container session. Users who need looser settings opt in per-session.
 
 The agent sees ONLY its assigned worktree, plus the vault socket:
 
-- `/workspace` → `~/work/<project>/.agentjam/worktrees/<agent>/<repo>` (RW)
-- `/run/agentjam/vault.sock` → host unix socket (RW, but not the underlying
+- `/workspace` → `~/work/<project>/.agent-knots/worktrees/<agent>/<repo>` (RW)
+- `/run/agent-knots/vault.sock` → host unix socket (RW, but not the underlying
   secret files)
 - `/tmp` → tmpfs (RAM-backed, auto-cleaned)
 - Nothing else from the host is mounted. `~/.ssh`, `~/.aws`, `~/.config`,
@@ -99,10 +99,10 @@ process; the agent's session is marked `error` with reason
 ### Vault access
 
 The vault is on the host. The container's only host-side interaction is
-`/run/agentjam/vault.sock`. The vault daemon:
+`/run/agent-knots/vault.sock`. The vault daemon:
 
 - Listens on the unix socket **only**
-- Permissions on the socket: `0o660` with group `agentjam`
+- Permissions on the socket: `0o660` with group `agent-knots`
 - Validates the caller via SO_PEERCRED (the calling process's PID/UID)
 - Refuses connections from any UID other than the host user
 - **Never** reads back from the container; only the container can ask
@@ -124,12 +124,12 @@ The raw token never appears on the container's filesystem, env, or network.
 - `--privileged` containers
 - `--network host`
 - Mounting arbitrary host paths (we only allow the worktree dir computed by
-  agentjam)
+  agent-knots)
 - Disabling seccomp
 - Running as root inside the container
 
 If a user needs any of these, they should run the agent outside of
-agentjam's container mode and accept the threat model themselves. We're not
+agent-knots's container mode and accept the threat model themselves. We're not
 going to expose footguns in the CLI.
 
 ### Image strategy
@@ -138,11 +138,11 @@ We ship per-stack default images and allow override:
 
 | Stack | Default image |
 | --- | --- |
-| Node.js / TypeScript | `agentjam-agent-node:20` |
-| Python | `agentjam-agent-python:3.12` |
-| Go | `agentjam-agent-go:1.23` |
-| Rust | `agentjam-agent-rust:1.82` |
-| Generic | `agentjam-agent-base:latest` |
+| Node.js / TypeScript | `agent-knots-agent-node:20` |
+| Python | `agent-knots-agent-python:3.12` |
+| Go | `agent-knots-agent-go:1.23` |
+| Rust | `agent-knots-agent-rust:1.82` |
+| Generic | `agent-knots-agent-base:latest` |
 
 The project's `container.image` field overrides (point to your own image).
 The project's `container.dockerfile` field triggers a build on first use

@@ -35,7 +35,7 @@ coverage.html
 .DS_Store
 
 # Local config and state
-.agentjam/
+.agent-knots/
 *.log
 
 # Go (legacy — will be removed when Go code is deleted)

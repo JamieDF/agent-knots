@@ -6,14 +6,14 @@ import { join } from 'path'
 const BASE = 'http://127.0.0.1:8090'
 
 function getToken(): string {
-  const tokenPath = join(homedir(), '.agentjam', 'cockpit.token')
+  const tokenPath = join(homedir(), '.agent-knots', 'cockpit.token')
   return readFileSync(tokenPath, 'utf-8').trim()
 }
 
 async function authPage(page: any) {
   const token = getToken()
   await page.context().addCookies([{
-    name: 'agentjam-session',
+    name: 'agent-knots-session',
     value: token,
     domain: '127.0.0.1',
     path: '/',
@@ -105,9 +105,9 @@ test.describe('SPA overview', () => {
 
   test('overview loads with cockpit branding', async ({ page }) => {
     await page.goto(BASE)
-    await page.waitForSelector('text=agentjam', { timeout: 5000 })
+    await page.waitForSelector('text=agent-knots', { timeout: 5000 })
     // Either the React SPA or inline shell renders.
-    const count = await page.locator('text=agentjam').count()
+    const count = await page.locator('text=agent-knots').count()
     expect(count).toBeGreaterThanOrEqual(1)
   })
 
@@ -115,8 +115,8 @@ test.describe('SPA overview', () => {
     await page.goto(BASE)
     // Should show either "No agents running" or the setup wizard.
     const hasEmpty = await page.locator('text=No agents running').count()
-    const hasWizard = await page.locator('text=Welcome to agentjam').count()
-    const hasCockpit = await page.locator('text=agentjam').count()
+    const hasWizard = await page.locator('text=Welcome to agent-knots').count()
+    const hasCockpit = await page.locator('text=agent-knots').count()
     expect(hasEmpty + hasWizard + hasCockpit).toBeGreaterThanOrEqual(1)
   })
 

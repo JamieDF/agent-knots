@@ -1,5 +1,5 @@
 name: Feature request
-about: Suggest a feature for agentjam
+about: Suggest a feature for agent-knots
 title: "[Feature] "
 labels: enhancement
 assignees: ''

@@ -10,7 +10,7 @@
           "ANTHROPIC_API_KEY": "$value"
         }
       },
-      "cli": "agentjam vault template add anthropic/api --name anthropic_env --env '{\"ANTHROPIC_API_KEY\": \"$value\"}'"
+      "cli": "agent-knots vault template add anthropic/api --name anthropic_env --env '{\"ANTHROPIC_API_KEY\": \"$value\"}'"
     },
 
     "curl_bearer": {

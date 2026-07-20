@@ -1,6 +1,6 @@
 /** Workspace context — persisted to localStorage for the active workspace. */
 
-const KEY = 'agentjam-active-workspace'
+const KEY = 'agent-knots-active-workspace'
 
 export function getActiveWorkspace(): string {
   return localStorage.getItem(KEY) || ''

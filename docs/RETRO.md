@@ -1,4 +1,4 @@
-# Retrospective — where agentjam actually is
+# Retrospective — where agent-knots actually is
 
 **Last updated:** 2026-07-02
 **Codebase:** ~10.9K source LOC, ~5.4K test LOC, 21 commits, 26 packages
@@ -142,4 +142,4 @@ written but has never run against a live `opencode serve`.
 ## The one-sentence version
 
 The orchestration layer is real and tested; the agent layer (OpenCode driver)
-is the critical missing piece to make agentjam useful with real LLM agents.
+is the critical missing piece to make agent-knots useful with real LLM agents.

@@ -74,7 +74,7 @@ function SetupWizard({ onComplete }: Props) {
         background: 'var(--surface)', border: '1px solid var(--border)',
         borderRadius: 12, padding: 32, maxWidth: 480, width: '100%',
       }}>
-        <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>⚡ Welcome to agentjam</h2>
+        <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>⚡ Welcome to agent-knots</h2>
         <p style={{ color: 'var(--muted)', fontSize: 13, marginBottom: 24 }}>
           Configure your model provider to get started.
         </p>
@@ -142,7 +142,7 @@ function SetupWizard({ onComplete }: Props) {
         </button>
 
         <p style={{ color: 'var(--muted)', fontSize: 11, marginTop: 16, textAlign: 'center' }}>
-          Your API key is stored encrypted at ~/.agentjam/settings.yaml
+          Your API key is stored encrypted at ~/.agent-knots/settings.yaml
         </p>
       </div>
     </div>

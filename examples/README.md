@@ -28,14 +28,14 @@ examples/
 
 ```bash
 # Copy a task to your tasks dir and customize
-cp examples/tasks/feature-add.yaml ~/.agentjam/tasks/my-app/
+cp examples/tasks/feature-add.yaml ~/.agent-knots/tasks/my-app/
 
 # Add vault templates
-agentjam vault template add github/personal --name gh_cli_env \
+agent-knots vault template add github/personal --name gh_cli_env \
     --env "$(cat examples/templates/github.json | jq -r '.templates.gh_cli_env.injection.env')"
 
 # Create a project from the polyrepo example
-agentjam project create my-app \
+agent-knots project create my-app \
     --name "My App" \
     --repo "[email protected]:me/web.git"
 ```

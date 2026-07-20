@@ -14,48 +14,48 @@ This walkthrough gets you from zero to a running agent in five minutes.
 From source:
 
 ```bash
-git clone https://github.com/agentjam/agentjam.git
-cd agentjam
-go build -o ~/.local/bin/agentjam ./cmd/agentjam
+git clone https://github.com/jamiedf/agent-knots.git
+cd agent-knots
+go build -o ~/.local/bin/agent-knots ./cmd/agent-knots
 export PATH=$PATH:~/.local/bin
 ```
 
 Verify:
 
 ```bash
-agentjam version
-# agentjam 0.1.0 (commit dev)
+agent-knots version
+# agent-knots 0.1.0 (commit dev)
 ```
 
 ## Set up data directory
 
-agentjam stores everything under `~/.agentjam/` by default. Override with
-`AGENTJAM_HOME=/some/path`.
+agent-knots stores everything under `~/.agent-knots/` by default. Override with
+`AGENT_KNOTS_HOME=/some/path`.
 
 The first run creates the directory structure:
 
 ```bash
-agentjam version
-ls ~/.agentjam/
+agent-knots version
+ls ~/.agent-knots/
 # logs/  modes/  projects/  tasks/  vault/
 ```
 
 ## Initialize the vault
 
 ```bash
-agentjam vault init
+agent-knots vault init
 # Choose a passphrase: ********
 # Confirm passphrase: ********
 # Vault initialized.
 ```
 
-The vault is now unlocked for this session. Lock it with `agentjam vault lock`,
-unlock with `agentjam vault unlock`.
+The vault is now unlocked for this session. Lock it with `agent-knots vault lock`,
+unlock with `agent-knots vault unlock`.
 
 ## Add a credential
 
 ```bash
-agentjam vault add github/work \
+agent-knots vault add github/work \
   --description "GitHub PAT for work" \
   --tag github --tag work
 # Value: ********
@@ -65,7 +65,7 @@ agentjam vault add github/work \
 ## Add a template so the agent can use it
 
 ```bash
-agentjam vault template add github/work \
+agent-knots vault template add github/work \
   --name gh_cli_env \
   --env '{"GH_TOKEN": "$value"}'
 # Added template "gh_cli_env".
@@ -78,28 +78,28 @@ process's environment.
 ## Create a project
 
 ```bash
-agentjam project create my-app \
+agent-knots project create my-app \
   --name "My Cool App" \
   --repo [email protected]:you/my-app.git \
   --branch main \
   --role frontend
 # Created project "my-app".
 
-agentjam project switch my-app
+agent-knots project switch my-app
 # Switched to project "my-app".
 ```
 
 For multi-repo projects:
 
 ```yaml
-# Edit ~/.agentjam/projects/my-app.yaml directly for advanced config.
+# Edit ~/.agent-knots/projects/my-app.yaml directly for advanced config.
 # See docs/architecture.md for the full schema.
 ```
 
 ## Create a task
 
 ```bash
-agentjam task new \
+agent-knots task new \
   --title "Add dark mode toggle to settings" \
   --project my-app \
   --priority medium \
@@ -112,7 +112,7 @@ agentjam task new \
 ## Spawn an agent on the task
 
 ```bash
-agentjam agent spawn --task T-2026-06-30-... --mode agent
+agent-knots agent spawn --task T-2026-06-30-... --mode agent
 ```
 
 The agent starts in `agent` mode (autonomous, spec-driven) and begins
@@ -130,7 +130,7 @@ Streaming events (Ctrl-C to stop):
 ## Watch progress
 
 ```bash
-agentjam task show T-2026-06-30-...
+agent-knots task show T-2026-06-30-...
 ```
 
 You'll see the task's progress log fill up as the agent logs each action.
@@ -140,6 +140,6 @@ You'll see the task's progress log fill up as the agent logs each action.
 - **Read [docs/architecture.md](architecture.md)** to understand the
   design.
 - **Browse [modes/](../modes/)** to see the default modes. Add your own
-  by dropping a markdown file in `~/.agentjam/modes/`.
+  by dropping a markdown file in `~/.agent-knots/modes/`.
 - **Check [docs/roadmap.md](roadmap.md)** for what's coming next.
 - **Open an issue** if you find a bug or want a feature.

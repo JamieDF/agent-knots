@@ -1,5 +1,5 @@
 name: Bug report
-about: Report a bug in agentjam
+about: Report a bug in agent-knots
 title: "[Bug] "
 labels: bug
 assignees: ''
@@ -24,7 +24,7 @@ What actually happened.
 **Environment**
 - OS: [e.g. macOS 14, Ubuntu 24.04]
 - Go version: [e.g. 1.23.4]
-- agentjam version: [output of `agentjam version`]
+- agent-knots version: [output of `agent-knots version`]
 - OpenCode version: [if relevant]
 - Podman version: [if relevant]
 

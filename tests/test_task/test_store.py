@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agentjam.task.models import (
+from agent_knots.task.models import (
     Blocker,
     Priority,
     ProgressEntry,
@@ -14,7 +14,7 @@ from agentjam.task.models import (
     TaskStatus,
     new_task_id,
 )
-from agentjam.task.store import TaskStore
+from agent_knots.task.store import TaskStore
 
 
 @pytest.fixture

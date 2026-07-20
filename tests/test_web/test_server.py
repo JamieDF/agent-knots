@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agentjam.cockpit.web.server import create_app, format_event_html
-from agentjam.events import Event, EventType, ToolCall
-from agentjam.session.manager import SessionManager
+from agent_knots.cockpit.web.server import create_app, format_event_html
+from agent_knots.events import Event, EventType, ToolCall
+from agent_knots.session.manager import SessionManager
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ class TestAuth:
     async def test_login_page(self, client):
         resp = await client.get("/login")
         assert resp.status_code == 200
-        assert "agentjam cockpit" in resp.text
+        assert "agent-knots cockpit" in resp.text
 
     @pytest.mark.asyncio
     async def test_protected_redirects_to_login(self, client):

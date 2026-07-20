@@ -2,7 +2,7 @@
   "name": "pi-mode-swap",
   "version": "0.1.0",
   "private": true,
-  "description": "Pi extension for agentjam: runtime mode/persona swap",
+  "description": "Pi extension for agent-knots: runtime mode/persona swap",
   "main": "dist/index.js",
   "types": "index.ts",
   "scripts": {

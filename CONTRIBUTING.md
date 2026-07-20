@@ -1,6 +1,6 @@
-# Contributing to agentjam
+# Contributing to agent-knots
 
-Thanks for your interest in contributing! agentjam is a young project and
+Thanks for your interest in contributing! agent-knots is a young project and
 contributions of all kinds are welcome — code, documentation, bug reports,
 feature ideas.
 
@@ -22,10 +22,10 @@ Be respectful, assume good faith, focus on the technical. We follow the
 ## Development setup
 
 ```bash
-git clone https://github.com/agentjam/agentjam.git
-cd agentjam
+git clone https://github.com/jamiedf/agent-knots.git
+cd agent-knots
 go test ./...
-go build -o agentjam ./cmd/agentjam
+go build -o agent-knots ./cmd/agent-knots
 ```
 
 You'll need Go 1.23+ (the project uses `go 1.23.4` in `go.mod`; the toolchain
@@ -39,7 +39,7 @@ work, install Podman: <https://podman.io>.
 See [`docs/architecture.md`](docs/architecture.md#package-layout) for the
 full layout. The short version:
 
-- `cmd/agentjam/` — CLI commands (one file per subcommand)
+- `cmd/agent-knots/` — CLI commands (one file per subcommand)
 - `internal/<package>/` — implementation (locked from external import)
 - `internal/<package>/filestore/` — file-backed implementations
 - `modes/` — default mode markdown files

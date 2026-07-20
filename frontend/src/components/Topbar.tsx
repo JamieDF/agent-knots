@@ -33,7 +33,7 @@ function Topbar({ agents }: Props) {
 
   return (
     <header className="topbar">
-      <div className="topbar-brand">⚡ agentjam</div>
+      <div className="topbar-brand">⚡ agent-knots</div>
       <nav className="topbar-nav">
         <NavLink to="/" end>Overview</NavLink>
 

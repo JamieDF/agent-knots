@@ -1,6 +1,6 @@
-> **Note:** This document was originally authored under the prior project name "harness"; references to "agentjam" reflect the rename. See CHANGELOG.
+> **Note:** This document was originally authored under the prior project name "harness"; references to "agent-knots" reflect the rename. See CHANGELOG.
 
-# Retrospective — where agentjam actually is vs the spec
+# Retrospective — where agent-knots actually is vs the spec
 
 **Date:** 2026-06-30
 **Codebase:** ~12K LOC Go, 8 commits, ~3.7K LOC tests, ~32 tests passing
@@ -68,7 +68,7 @@ building more scaffolding.**
 ### 1. Sessions don't have an event-stream API
 
 `session.Session` records have no live `Events()` channel. `sessionStartCmd`
-in `cmd/agentjam/session.go` doesn't store a handle to the live driver. The
+in `cmd/agent-knots/session.go` doesn't store a handle to the live driver. The
 CLI's `streamEvents()` is a heartbeat loop that returns after 1 second.
 
 The work in `opencode.forwardEvents` exists — it streams from
@@ -76,8 +76,8 @@ The work in `opencode.forwardEvents` exists — it streams from
 session record can't reach it. To attach to a running session you'd need a
 process-locator + WS or shared file descriptor.
 
-**Concretely:** I cannot run `agentjam session start --detach` in one
-terminal and `agentjam session logs <id>` in another and see events. The
+**Concretely:** I cannot run `agent-knots session start --detach` in one
+terminal and `agent-knots session logs <id>` in another and see events. The
 detach path returns and the events are unreachable.
 
 ### 2. `session stop` doesn't stop anything
@@ -124,7 +124,7 @@ return wt, nil
 ```
 
 That's an empty directory. ADR-002 said per-agent worktrees at
-`~/work/<project>/.agentjam/worktrees/<agent>/<repo>/` with branches
+`~/work/<project>/.agent-knots/worktrees/<agent>/<repo>/` with branches
 `agent-<id>/<repo>`. **None of that exists.** The git plumbing (clone,
 checkout, branch, worktree add) needs `git` shell-outs or a Go git library;
 neither is wired.
@@ -145,7 +145,7 @@ direction.
 
 Plan §3 — "swap mode agent ↔ assistant = assume/relinquish control" — is the
 key UX idea. The OpenCode driver has `SetMode()` and accepts the call but
-**nothing surfaces it in any UI**. There's no `agentjam assume <session>`
+**nothing surfaces it in any UI**. There's no `agent-knots assume <session>`
 command, no TUI binding for "press `a` to take control", nothing.
 
 ### 8. No tests cover integration
@@ -201,7 +201,7 @@ way to detect "the whole thing assembled together actually works."
    v0.2.
 
 6. **No graceful shutdown.** Init/start paths don't install a signal
-   handler. Ctrl-C in `agentjam session start --detach` would orphan the
+   handler. Ctrl-C in `agent-knots session start --detach` would orphan the
    container.
 
 ---
@@ -212,10 +212,10 @@ way to detect "the whole thing assembled together actually works."
 - Real git worktree integration (clone, branch, worktree add per session)
 - Egress filter via iptables in container netns (or use podman firewalld)
 - Stop-driver-wiring in `session stop` (registry of live runtimes)
-- Event bus for `agentjam session logs <id>` (SSE to local UNIX socket)
+- Event bus for `agent-knots session logs <id>` (SSE to local UNIX socket)
 
 **Week 2 — make it usable:**
-- Take-over flow: `agentjam assume <session>`, TUI binding for `a`/`r`
+- Take-over flow: `agent-knots assume <session>`, TUI binding for `a`/`r`
 - Token counter / cost cap per session (driver-side; expose to UI)
 - Smoke test script (`scripts/smoke.sh`) that runs an end-to-end hello-world
 - macOS-on-Podman CI integration test

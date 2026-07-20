@@ -1,8 +1,8 @@
-# AgentJam
+# Agent Knots
 
 > Local-first orchestrator for AI coding agents. You stay in control.
 
-AgentJam runs AI coding agents in your workspace. Watch them work in real time
+Agent Knots runs AI coding agents in your workspace. Watch them work in real time
 from a browser or terminal. Take over any agent mid-task, hand control back.
 Manage tasks on a Kanban board. Agents have tools for reading/writing files,
 running shell commands, and managing structured tasks with progress tracking.
@@ -18,12 +18,12 @@ Configurable to use OpenAI, Anthropic, Ollama, or any OpenAI-compatible API.
 ```bash
 # Install
 git clone <repo>
-cd agentjam
+cd agent-knots
 uv sync
 
 # Configure your model provider (MiniMax, OpenAI, etc.)
-mkdir -p ~/.agentjam
-cat > ~/.agentjam/settings.yaml << 'EOF'
+mkdir -p ~/.agent-knots
+cat > ~/.agent-knots/settings.yaml << 'EOF'
 agent:
   default_model: minimax-m2.7
   base_url: https://api.minimax.io/v1
@@ -35,11 +35,11 @@ EOF
 cd frontend && npm install && npm run build && cd ..
 
 # Launch the web cockpit
-uv run agentjam cockpit launch --web --port 8080
+uv run agent-knots cockpit launch --web --port 8080
 # → http://127.0.0.1:8080/?token=...
 
 # Or launch the TUI cockpit
-uv run agentjam cockpit launch
+uv run agent-knots cockpit launch
 # → j/k navigate, Enter focus, a assume, r relinquish, t tools, d delete, q quit
 ```
 
@@ -70,7 +70,7 @@ uv run agentjam cockpit launch
 ## CLI Reference
 
 ```
-agentjam
+agent-knots
 ├── session
 │   ├── start [--task <id>] [--project <id>] [--mode agent|assistant]
 │   └── list
@@ -95,7 +95,7 @@ agentjam
 ## Architecture
 
 ```
-┌─ agentjam cockpit ──────────────────────────────┐
+┌─ agent-knots cockpit ──────────────────────────────┐
 │                                                   │
 │   Web UI (React SPA)    TUI (Textual)             │
 │       ↕ REST + SSE         ↕ asyncio.Queue        │
@@ -119,13 +119,13 @@ agentjam
 ## Project layout
 
 ```
-agentjam/
+agent-knots/
 ├── frontend/                  # Vite + React SPA
 │   └── src/
 │       ├── views/             # Overview, Board, Tasks, TaskDetail, Settings, ...
 │       ├── components/        # Topbar, AgentCard, CreateTaskDialog, ...
 │       └── lib/               # API client, SSE client, workspace context
-├── src/agentjam/
+├── src/agent-knots/
 │   ├── cli/                   # Typer CLI entry point + commands
 │   ├── cockpit/
 │   │   ├── tui/               # Textual TUI (overview, focus, tools)

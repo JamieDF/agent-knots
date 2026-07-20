@@ -5,7 +5,7 @@
 
 ## Context
 
-agentjam needs to drive an AI coding agent. The orchestrator is the
+agent-knots needs to drive an AI coding agent. The orchestrator is the
 interesting part (multi-agent, vault, tasks, projects) — the agent loop
 itself is well-trodden ground. We need a reliable, well-tested agent
 backend that integrates cleanly with our Go orchestrator.
@@ -63,7 +63,7 @@ as a future option, but it is no longer the default.
 ## Architecture
 
 ```
-AgentJam session subprocess (host)
+Agent Knots session subprocess (host)
   ├── Spawns: pi --mode rpc [args]
   ├── readLoop: reads Pi stdout → translates JSONL → driver.Events
   ├── writeCmd: writes Pi stdin ← cockpit control messages
@@ -80,7 +80,7 @@ custom agent a package import + one registration line.
 For containerized sessions, the Pi driver runs inside a podman
 container. The container mounts the worktree and extensions, and pipes
 stdin/stdout to the host. Egress filtering, private network namespace,
-and resource caps apply as before. The container image (`agentjam-agent-node:20`)
+and resource caps apply as before. The container image (`agent-knots-agent-node:20`)
 is built from `containers/agent/Dockerfile` and includes Node 20 + Pi.
 
 ## Tradeoffs
@@ -89,7 +89,7 @@ is built from `containers/agent/Dockerfile` and includes Node 20 + Pi.
   Acceptable — our session subprocess manages the lifecycle.
 
 - **System prompt at startup only (without extension).** Without the
-  agentjam-switch Pi extension, mode swap changes only thinking level.
+  agent-knots-switch Pi extension, mode swap changes only thinking level.
   With the extension (shipped in `extensions/pi-mode-swap/`), full
   persona swap is supported at runtime.
 

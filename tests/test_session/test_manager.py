@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from agentjam.events import Event, EventType, ToolCall
-from agentjam.session.manager import Session, SessionManager
+from agent_knots.events import Event, EventType, ToolCall
+from agent_knots.session.manager import Session, SessionManager
 
 
 @pytest.fixture

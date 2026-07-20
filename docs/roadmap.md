@@ -1,8 +1,8 @@
-> **Note:** This document was originally authored under the prior project name "harness"; references to "agentjam" reflect the rename. See CHANGELOG.
+> **Note:** This document was originally authored under the prior project name "harness"; references to "agent-knots" reflect the rename. See CHANGELOG.
 
 # Roadmap
 
-This is a high-level sketch of where agentjam is headed. It's not a
+This is a high-level sketch of where agent-knots is headed. It's not a
 commitment — features get added, dropped, and reordered based on what
 users actually need.
 
@@ -37,7 +37,7 @@ Foundation. Core interfaces, file-backed implementations, CLI, modes.
   responsibility — typical setup is a Cloudflare Tunnel with Auth in
   front of the localhost port.
 - [ ] Token-based auth: one token generated on first start, saved to
-  `~/.agentjam/cockpit.token` (mode 0600). Browser prompts once, cookie
+  `~/.agent-knots/cockpit.token` (mode 0600). Browser prompts once, cookie
   issued after (`Secure`, `HttpOnly`, `SameSite=Strict`). All
   authenticated requests carry the cookie; SSE connections revalidate.
 - [ ] Real-time event streaming via Server-Sent Events (SSE) — single
@@ -91,7 +91,7 @@ These are interesting ideas we may or may not pursue. Not committed.
 
 - **Multi-user support.** Per-user vaults, audit logs, RBAC.
 - **Cloud sync.** Optional encrypted sync via user's own cloud storage.
-- **Cloud-hosted version.** A hosted agentjam for teams.
+- **Cloud-hosted version.** A hosted agent-knots for teams.
 - **Mobile companion.** Mobile UI for monitoring agents on the go.
 - **IDE plugins.** VSCode, JetBrains.
 - **WASM agent sandboxes.** Faster, lighter isolation than containers.

@@ -10,7 +10,7 @@
           "OPENAI_API_KEY": "$value"
         }
       },
-      "cli": "agentjam vault template add openai/api --name openai_env --env '{\"OPENAI_API_KEY\": \"$value\"}'"
+      "cli": "agent-knots vault template add openai/api --name openai_env --env '{\"OPENAI_API_KEY\": \"$value\"}'"
     },
 
     "openai_org_env": {
