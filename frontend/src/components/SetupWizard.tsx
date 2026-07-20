@@ -142,7 +142,8 @@ function SetupWizard({ onComplete }: Props) {
         </button>
 
         <p style={{ color: 'var(--muted)', fontSize: 11, marginTop: 16, textAlign: 'center' }}>
-          Your API key is stored encrypted at ~/.agent-knots/settings.yaml
+          Stored in plain text at ~/.agent-knots/settings.yaml. For encrypted
+          credential storage, use the Vault instead.
         </p>
       </div>
     </div>

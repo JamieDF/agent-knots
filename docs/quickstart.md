@@ -1,13 +1,18 @@
 # Quickstart
 
-This walkthrough goes a bit deeper than the README's quickstart: vault,
-tasks, and a full session lifecycle from the CLI.
+The GUI is the primary way to use agent-knots — `./install.sh` then
+`agent-knots cockpit launch --web` gets you a setup wizard in the browser
+with no manual config. This walkthrough goes a bit deeper than that: vault,
+tasks, and a full session lifecycle from the CLI, for scripting and
+automation.
 
 ## Prerequisites
 
-- **Python 3.14+** and [`uv`](https://docs.astral.sh/uv/)
-- **Node.js** (to build the web cockpit frontend; optional if you only use
-  the TUI)
+- `git`, and either an internet connection for `install.sh` to fetch
+  [`uv`](https://docs.astral.sh/uv/) or `uv` already installed
+- **Node.js** (to build the web cockpit frontend; skipped with a warning
+  if missing — the CLI/TUI still work, but the web cockpit falls back to
+  a minimal shell with no setup wizard)
 - An **LLM API key** for any OpenAI-compatible provider (MiniMax, OpenAI,
   Ollama, etc.)
 
@@ -16,23 +21,34 @@ tasks, and a full session lifecycle from the CLI.
 ```bash
 git clone https://github.com/jamiedf/agent-knots.git
 cd agent-knots
-uv sync
-
-# Optional: build the web cockpit frontend
-cd frontend && npm install && npm run build && cd ..
+./install.sh
 ```
 
-Verify:
+This installs `uv` if it's missing, runs `uv sync`, builds the web
+frontend, and installs the `agent-knots` command globally via
+`uv tool install`. Safe to re-run. Verify:
 
 ```bash
-uv run agent-knots version
+agent-knots version
 # agent-knots 0.1.0
 ```
 
+If you're working from source without running `install.sh` (e.g.
+contributing), prefix commands with `uv run` instead — `uv run agent-knots
+version`, etc.
+
 ## Configure a model provider
 
-Settings resolve in this order: CLI flags → `AGENT_KNOTS_*` env vars →
-`~/.agent-knots/settings.yaml`.
+**Via the GUI:** `agent-knots cockpit launch --web` opens a setup wizard
+automatically on first launch — pick a provider preset (OpenAI, MiniMax,
+Anthropic, Ollama, or custom), paste an API key, done. No manual file
+editing.
+
+**Via the CLI/config, e.g. for scripted installs or CI** — settings
+resolve in this order: CLI flags → `AGENT_KNOTS_*` env vars →
+`~/.agent-knots/settings.yaml`. Any of these also skips the GUI wizard
+(it checks the same resolution order), so pre-seeding either one gives
+you a "zero-touch" install:
 
 ```bash
 mkdir -p ~/.agent-knots
@@ -60,7 +76,7 @@ All persistent state lives under `~/.agent-knots/` (override with
 ## Initialize the vault
 
 ```bash
-uv run agent-knots vault init
+agent-knots vault init
 # Choose a passphrase: ********
 # Confirm passphrase: ********
 # Vault initialized and unlocked.
@@ -72,24 +88,24 @@ unlock`.
 ## Add a credential
 
 ```bash
-uv run agent-knots vault add github-work --description "GitHub PAT for work" --tag github --tag work
+agent-knots vault add github-work --description "GitHub PAT for work" --tag github --tag work
 # Credential value: ********
 # Confirm value: ********
 # Credential 'github-work' added.
 
-uv run agent-knots vault list
-uv run agent-knots vault audit
+agent-knots vault list
+agent-knots vault audit
 ```
 
 Credentials are encrypted at rest (AES-256-GCM, argon2id-derived keys).
 Attach an injection template so a tool knows how to consume it:
 
 ```bash
-uv run agent-knots vault template add github-work \
+agent-knots vault template add github-work \
   --name gh_cli_env --env '{"GH_TOKEN": "$value"}'
 
-uv run agent-knots vault template list github-work
-uv run agent-knots vault template show github-work gh_cli_env
+agent-knots vault template list github-work
+agent-knots vault template show github-work gh_cli_env
 ```
 
 > Templates are stored metadata today — there's no agent-callable
@@ -102,18 +118,18 @@ uv run agent-knots vault template show github-work gh_cli_env
 ## Create a project
 
 ```bash
-uv run agent-knots project create my-app \
+agent-knots project create my-app \
   --name "My App" --repo "[email protected]:me/my-app.git"
 # Project created: my-app
 
-uv run agent-knots project list
-uv run agent-knots project show my-app
+agent-knots project list
+agent-knots project show my-app
 ```
 
 ## Create a task
 
 ```bash
-uv run agent-knots task create "Add dark mode toggle to settings" \
+agent-knots task create "Add dark mode toggle to settings" \
   --project my-app \
   --priority medium \
   --criteria "Toggle visible in /settings/appearance" \
@@ -122,14 +138,14 @@ uv run agent-knots task create "Add dark mode toggle to settings" \
 ```
 
 ```bash
-uv run agent-knots task list
-uv run agent-knots task show T-...
+agent-knots task list
+agent-knots task show T-...
 ```
 
 ## Start a session
 
 ```bash
-uv run agent-knots session start --task T-... --mode agent \
+agent-knots session start --task T-... --mode agent \
   --prompt "Add the dark mode toggle described in the task."
 ```
 
@@ -138,13 +154,13 @@ The session runs in the foreground and streams events to your terminal.
 multiple sessions and monitor them without blocking your shell.)
 
 ```bash
-uv run agent-knots session list
+agent-knots session list
 ```
 
 ## Watch progress
 
 ```bash
-uv run agent-knots task show T-...
+agent-knots task show T-...
 ```
 
 The task's progress log fills in as the agent logs each meaningful action
@@ -155,11 +171,11 @@ needed from a well-behaved agent).
 
 ```bash
 # TUI (default)
-uv run agent-knots cockpit launch
+agent-knots cockpit launch
 # → j/k navigate, Enter focus, a assume, r relinquish, t tools, d delete, q quit
 
 # Web
-uv run agent-knots cockpit launch --web --port 8080
+agent-knots cockpit launch --web --port 8080
 # → http://127.0.0.1:8080/?token=...
 ```
 

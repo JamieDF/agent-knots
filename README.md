@@ -16,32 +16,31 @@ Configurable to use OpenAI, Anthropic, Ollama, or any OpenAI-compatible API.
 ## Quickstart
 
 ```bash
-# Install
-git clone <repo>
+git clone https://github.com/jamiedf/agent-knots.git
 cd agent-knots
-uv sync
+./install.sh
 
-# Configure your model provider (MiniMax, OpenAI, etc.)
-mkdir -p ~/.agent-knots
-cat > ~/.agent-knots/settings.yaml << 'EOF'
-agent:
-  default_model: minimax-m2.7
-  base_url: https://api.minimax.io/v1
-  api_key: <your-api-key>
-  runtime: inprocess
-EOF
-
-# Build the frontend
-cd frontend && npm install && npm run build && cd ..
-
-# Launch the web cockpit
-uv run agent-knots cockpit launch --web --port 8080
+# Launch the web cockpit — GUI is the primary surface.
+agent-knots cockpit launch --web --port 8080
 # → http://127.0.0.1:8080/?token=...
+# First launch opens a setup wizard in the browser to configure your
+# model provider (API key, model, base URL). No manual config needed.
 
 # Or launch the TUI cockpit
-uv run agent-knots cockpit launch
+agent-knots cockpit launch
 # → j/k navigate, Enter focus, a assume, r relinquish, t tools, d delete, q quit
 ```
+
+`install.sh` installs [`uv`](https://docs.astral.sh/uv/) if missing, syncs
+Python dependencies, builds the web frontend (needs Node.js — skipped with
+a warning if not found), and installs the `agent-knots` command globally
+via `uv tool install`. Safe to re-run.
+
+**Skipping the setup wizard** (scripted installs, CI, containers): export
+`AGENT_KNOTS_API_KEY` / `AGENT_KNOTS_MODEL` / `AGENT_KNOTS_BASE_URL` before
+first launch, or write `~/.agent-knots/settings.yaml` directly — either
+way, `configured` is true before the wizard would even ask. See
+[`docs/quickstart.md`](docs/quickstart.md) for the settings file format.
 
 ---
 

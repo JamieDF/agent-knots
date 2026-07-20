@@ -54,6 +54,14 @@ async def raw_client(session_manager):
         yield c
 
 
+@pytest.fixture
+async def authed_client(client, auth_token):
+    """A `client` that's already logged in, for tests that don't care
+    about auth itself and just need past it."""
+    client.cookies.set("agent-knots-session", auth_token)
+    return client
+
+
 class TestHealth:
     @pytest.mark.asyncio
     async def test_health(self, client):
@@ -152,6 +160,55 @@ class TestAuth:
         # The cookie actually works on a follow-up request.
         resp2 = await raw_client.get("/api/agents")
         assert resp2.status_code == 200
+
+
+class TestSettingsAPI:
+    """"configured" must reflect resolve_provider()'s full precedence
+    (env vars included), not just the settings file — otherwise a GUI
+    user who configured via AGENT_KNOTS_API_KEY gets stuck behind the
+    setup wizard, and POST /api/sessions refuses to start a session that
+    would actually have worked."""
+
+    @pytest.mark.asyncio
+    async def test_not_configured_by_default(self, authed_client):
+        resp = await authed_client.get("/api/settings")
+        assert resp.json()["configured"] is False
+
+    @pytest.mark.asyncio
+    async def test_configured_via_settings_file(self, authed_client):
+        await authed_client.put("/api/settings", json={
+            "default_model": "openai/gpt-4o-mini", "api_key": "sk-test",
+        })
+        resp = await authed_client.get("/api/settings")
+        assert resp.json()["configured"] is True
+
+    @pytest.mark.asyncio
+    async def test_configured_via_env_var_without_settings_file(self, authed_client, monkeypatch):
+        """Regression: this used to only check the settings file, so an
+        env-var-only setup (common for containers/CI) left the GUI
+        thinking it wasn't configured at all."""
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-from-env")
+        resp = await authed_client.get("/api/settings")
+        assert resp.json()["configured"] is True
+
+    @pytest.mark.asyncio
+    async def test_create_session_blocked_when_unconfigured(self, authed_client):
+        resp = await authed_client.post("/api/sessions", json={"prompt": "hi"})
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_create_session_not_blocked_by_configured_check_via_env(self, authed_client, monkeypatch):
+        """Regression: POST /api/sessions used to refuse to even try
+        starting a session if the settings *file* had no api_key, even
+        when env vars would have made SessionManager.start() succeed."""
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-from-env")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake")
+        resp = await authed_client.post("/api/sessions", json={"prompt": ""})
+        # No prompt means no background agent task is spawned (no network
+        # call) — we only care that the pre-flight "not configured" 400
+        # didn't fire; a real 200 here confirms the check passed.
+        assert resp.status_code != 400
 
 
 class TestEventFormatting:

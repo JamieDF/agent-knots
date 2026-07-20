@@ -18,8 +18,9 @@
 - [x] Full task workflow — Draft → Open → In Progress → Agent works → Done. Auto status transitions
 - [x] Agent-task integration — Agents create, read, update, log progress on tasks via tools
 - [x] Settings page — Model config, tool management, workspace management in one place
-- [x] Playwright e2e tests — 30 browser tests covering full UI flows
-- [x] Python unit tests — 106 tests across vault, session, task, web
+- [x] Install script — `./install.sh`: installs uv, syncs deps, builds frontend, installs the `agent-knots` command globally
+- [x] Playwright e2e tests — 43 browser tests covering full UI flows
+- [x] Python unit tests — 176 tests across vault, session, task, web, sandbox, auth
 
 ## Next
 
@@ -32,3 +33,5 @@
 - [ ] Cost tracking — Real token counting and cost estimation per session
 - [ ] Provider expansion — More direct LLM provider integrations
 - [ ] Mobile-responsive layout — Full mobile support for the web cockpit
+- [ ] Zero-clone installer — `curl <url>/install.sh | bash` without a
+  manual `git clone` first (the script would self-clone); Windows support

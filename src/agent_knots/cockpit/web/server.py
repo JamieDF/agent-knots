@@ -23,6 +23,7 @@ from agent_knots.cockpit.web.auth import Auth, COOKIE_NAME, load_or_create_token
 from agent_knots.config import cockpit_token_file, tasks_dir
 from agent_knots.events import Event, EventType
 from agent_knots.session.manager import Session, SessionManager
+from agent_knots import provider as provider_module
 from agent_knots import settings
 from agent_knots.task.store import TaskStore
 from agent_knots.task.models import Task, TaskStatus, Priority, new_task_id
@@ -250,10 +251,18 @@ def create_app(
 
     @app.get("/api/settings")
     async def get_settings():
-        """Return current settings (API key masked)."""
+        """Return current settings (API key masked).
+
+        "configured" reflects whether a session could actually be started
+        right now — CLI flags aren't relevant here, but env vars are, so
+        this checks the same resolve_provider() precedence SessionManager
+        uses rather than only the settings file. Otherwise a GUI user who
+        configured via AGENT_KNOTS_API_KEY would get stuck behind the
+        setup wizard even though sessions would actually work.
+        """
         s = settings.load()
         return {
-            "configured": settings.is_configured(),
+            "configured": provider_module.resolve_provider().is_configured,
             "agent": {
                 "default_model": s.agent.default_model,
                 "api_key": settings.mask_key(s.agent.api_key),
@@ -282,14 +291,14 @@ def create_app(
             s.agent.api_key = body.api_key
 
         settings.save(s)
-        return {"status": "ok", "configured": settings.is_configured()}
+        return {"status": "ok", "configured": provider_module.resolve_provider().is_configured}
 
     # ── session management API ────────────────────────────────────────────
 
     @app.post("/api/sessions")
     async def create_session(body: CreateSessionRequest):
         """Start a new agent session in the background."""
-        if not settings.is_configured():
+        if not provider_module.resolve_provider().is_configured:
             raise HTTPException(status_code=400, detail="Settings not configured. Run setup first.")
 
         s = settings.load()

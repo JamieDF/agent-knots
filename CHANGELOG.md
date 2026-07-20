@@ -5,6 +5,11 @@ All notable changes to agent-knots are documented here.
 ## [Unreleased]
 
 ### Added
+- **`install.sh`.** One script, run after `git clone`: installs `uv` if
+  missing, `uv sync`s Python dependencies, builds the web cockpit
+  frontend (skipped with a clear warning if Node isn't available), and
+  installs the `agent-knots` command globally via `uv tool install`.
+  Idempotent — safe to re-run.
 - **Acceptance-criteria enforcement.** `Task.criteria_met` tracks which
   acceptance criteria have been explicitly marked satisfied via the new
   `mark_criterion_met` task tool/CLI. `TaskStore` now refuses a transition
@@ -67,6 +72,20 @@ All notable changes to agent-knots are documented here.
   enforced — no tool exists for it to gate, and the shell tool's
   unrestricted network access would have made a URL allowlist on some
   future tool meaningless anyway.
+- **The GUI setup wizard now honors `AGENT_KNOTS_*` env vars, not just
+  the settings file.** `GET/PUT /api/settings`'s `configured` flag and
+  `POST /api/sessions`'s pre-flight check both used to call
+  `settings.is_configured()`, which only looks at
+  `~/.agent-knots/settings.yaml`. A user configured entirely via env vars
+  (common for containers/CI) would see the wizard every time and
+  literally could not start a session from the web GUI — the 400 fired
+  before `SessionManager.start()` ever got a chance to resolve the env
+  vars itself. Both now use `provider.resolve_provider().is_configured`,
+  matching the CLI's actual precedence (flags → env vars → file).
+- **The setup wizard no longer claims your API key is "stored
+  encrypted."** It's plain-text YAML in `settings.yaml` — only the vault
+  encrypts anything. Fixed the copy to say so and point at the vault for
+  actual encrypted storage.
 
 ### Removed
 - **`save_checkpoint`/`load_checkpoint`.** Implemented but never called
