@@ -89,6 +89,8 @@ def read_task(task_id: str) -> dict:
         "status": task.status.value,
         "priority": task.priority.value,
         "acceptance_criteria": task.acceptance_criteria,
+        "criteria_met": task.criteria_met,
+        "unmet_criteria": task.unmet_criteria(),
         "steps": [{"id": s.id, "title": s.title, "status": s.status.value} for s in task.steps],
         "progress_count": len(task.progress),
         "assigned_to": task.assigned_to,
@@ -123,7 +125,7 @@ def list_tasks(status: str = "") -> dict:
     }
 
 
-@tool(description="Update a task's status. Use this to move tasks through the workflow.")
+@tool(description="Update a task's status. Use this to move tasks through the workflow. Moving to 'done' requires every acceptance criterion to already be marked met via mark_criterion_met — otherwise this returns an error listing what's still unmet.")
 def update_task_status(task_id: str, status: str) -> dict:
     """Update a task's status.
 
@@ -133,10 +135,14 @@ def update_task_status(task_id: str, status: str) -> dict:
                 'in_progress', 'blocked', 'review', 'done', 'abandoned'.
 
     Returns:
-        Updated task details.
+        Updated task details, or an error if the transition isn't allowed
+        (e.g. unmet acceptance criteria for 'done').
     """
     store = _store()
-    task = store.set_status(task_id, TaskStatus(status))
+    try:
+        task = store.set_status(task_id, TaskStatus(status))
+    except ValueError as e:
+        return {"error": str(e)}
     return {
         "id": task.id,
         "title": task.title,
@@ -196,7 +202,7 @@ def update_task(
     }
 
 
-@tool(description="Log progress on a task. Call this after every meaningful action so progress survives context loss.")
+@tool(description="Log progress on a task. Call this after every meaningful action so progress survives context loss. The status field can also move the task forward, subject to the same rules as update_task_status (e.g. 'done' needs all acceptance criteria marked met first).")
 def log_progress(
     task_id: str,
     entry: str,
@@ -218,7 +224,8 @@ def log_progress(
         resolution: How a blocker was resolved (if applicable).
 
     Returns:
-        Confirmation with updated progress count.
+        Confirmation with updated progress count, or an error if the
+        status change isn't allowed (e.g. unmet acceptance criteria).
     """
     store = _store()
     pe = ProgressEntry(
@@ -228,12 +235,41 @@ def log_progress(
         resolution=resolution,
         caller="agent",
     )
-    task = store.log_progress(task_id, pe)
+    try:
+        task = store.log_progress(task_id, pe)
+    except ValueError as e:
+        return {"error": str(e)}
     return {
         "id": task.id,
         "title": task.title,
         "status": task.status.value,
         "progress_entries": len(task.progress),
+    }
+
+
+@tool(description="Mark one acceptance criterion of a task as satisfied. All criteria must be marked met before the task can be moved to 'done' — update_task_status/log_progress will refuse a 'done' transition otherwise. Only mark a criterion met once you've actually verified it (e.g. ran the test, confirmed the behavior) — don't mark it met just because you attempted it.")
+def mark_criterion_met(task_id: str, criterion: str) -> dict:
+    """Mark a single acceptance criterion as satisfied.
+
+    Args:
+        task_id: The task ID.
+        criterion: The exact criterion text (must match one of the task's
+            acceptance_criteria) that you've verified is now true.
+
+    Returns:
+        The task's current criteria status.
+    """
+    store = _store()
+    try:
+        task = store.mark_criterion_met(task_id, criterion)
+    except ValueError as e:
+        return {"error": str(e)}
+    return {
+        "id": task.id,
+        "acceptance_criteria": task.acceptance_criteria,
+        "criteria_met": task.criteria_met,
+        "unmet_criteria": task.unmet_criteria(),
+        "all_criteria_met": task.all_criteria_met(),
     }
 
 
@@ -269,4 +305,5 @@ ALL_TASK_TOOLS = [
     update_task,
     log_progress,
     add_step,
+    mark_criterion_met,
 ]

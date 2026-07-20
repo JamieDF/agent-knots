@@ -143,13 +143,18 @@ def load_checkpoint(session_id: str) -> dict | None:
 
 
 def register_steering_hook(agent: Any, task_id: str) -> None:
-    """Register a hook that validates tool outputs against acceptance criteria.
+    """Register a hook that nudges the agent toward marking criteria met.
 
-    When a tool finishes, checks if the output satisfies any pending
-    acceptance criteria. If it does, auto-marks them as met.
+    When a tool finishes, checks if the output looks like it satisfies a
+    pending (not-yet-met) acceptance criterion. This is advisory only — a
+    simple keyword match, not real verification — so it logs a suggestion
+    rather than calling mark_criterion_met itself. The actual DONE gate
+    (TaskStore._validate_transition) only respects explicit
+    mark_criterion_met calls, precisely so a keyword match can't quietly
+    satisfy real enforcement. Production would want LLM-based evaluation
+    here instead of keyword matching.
     """
     from agent_knots.task.store import TaskStore
-    from agent_knots.task.models import TaskStatus
 
     def on_tool(event: AfterToolCallEvent) -> None:
         if not task_id:
@@ -166,20 +171,23 @@ def register_steering_hook(agent: Any, task_id: str) -> None:
         elif hasattr(event, "exception") and event.exception:
             return  # Tool failed — don't check criteria.
 
-        # Check each pending criterion against the tool output.
-        for i, criterion in enumerate(task.acceptance_criteria):
+        # Check each pending (not-yet-met) criterion against the tool output.
+        for criterion in task.unmet_criteria():
             # Simple keyword match — production would use LLM evaluation.
             keywords = criterion.lower().split()
             matches = all(kw in tool_output for kw in keywords if len(kw) > 3)
             if matches:
                 from agent_knots.task.models import ProgressEntry
                 entry = ProgressEntry(
-                    entry=f"✓ Criterion met: {criterion}",
+                    entry=(
+                        f"Possible match for criterion {criterion!r} — "
+                        "verify and call mark_criterion_met if confirmed."
+                    ),
                     status=task.status,
-                    caller=f"agent:steering",
+                    caller="agent:steering",
                 )
                 store.log_progress(task_id, entry)
-                break  # One criterion per tool call.
+                break  # One suggestion per tool call.
 
     agent.add_hook(on_tool, AfterToolCallEvent)
 

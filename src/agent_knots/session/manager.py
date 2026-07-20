@@ -172,13 +172,33 @@ class SessionManager:
             if memory_block:
                 full_prompt = full_prompt + "\n\n" + memory_block
 
+        # Determine working directory: explicit > workspace repo > cwd.
+        resolved_working_dir = working_dir
+        if not resolved_working_dir and project_id:
+            # Look up the workspace's repository path.
+            from agent_knots.project.store import ProjectStore
+            from agent_knots.config import projects_dir as _projects_dir
+            ps = ProjectStore(_projects_dir())
+            proj = ps.get(project_id)
+            if proj and proj.repository:
+                resolved_working_dir = proj.repository
+
         # Always include default tools + enabled custom tools from registry.
+        # Custom (shell-command) tools are bound to resolved_working_dir here
+        # since, unlike the built-in shell/editor tools below, they have no
+        # separate sandboxed-swap step.
         from agent_knots.tools.defaults import DEFAULT_TOOLS, auto_approve_tools
         from agent_knots.tools.registry import ToolRegistry
 
         auto_approve_tools()
         registry = ToolRegistry()
-        all_tools = list(tools or []) + registry.list_enabled()
+        all_tools = list(tools or []) + registry.list_enabled(cwd=resolved_working_dir)
+
+        # Add delegate_task tool for multi-agent delegation. Must happen
+        # before the Agent is constructed below — Strands reads the tools
+        # list at construction time, so appending afterward has no effect.
+        from agent_knots.session.features import make_delegate_tool
+        all_tools.append(make_delegate_tool(self))
 
         # Create the model. Strands expects a model instance, not a config dict.
         # For OpenAI-compatible providers, use OpenAIModel with client_args.
@@ -194,17 +214,6 @@ class SessionManager:
             model_id=provider.model,
             client_args=client_args or None,
         )
-
-        # Determine working directory: explicit > workspace repo > cwd.
-        resolved_working_dir = working_dir
-        if not resolved_working_dir and project_id:
-            # Look up the workspace's repository path.
-            from agent_knots.project.store import ProjectStore
-            from agent_knots.config import projects_dir as _projects_dir
-            ps = ProjectStore(_projects_dir())
-            proj = ps.get(project_id)
-            if proj and proj.repository:
-                resolved_working_dir = proj.repository
 
         # Swap in sandboxed shell/editor tools if we have a workspace.
         ws_sandbox = None
@@ -259,10 +268,6 @@ class SessionManager:
             from agent_knots.session.features import register_steering_hook
             register_steering_hook(agent, task_id)
 
-        # Add delegate_task tool for multi-agent delegation.
-        from agent_knots.session.features import make_delegate_tool
-        all_tools.append(make_delegate_tool(self))
-
         # Resolve runtime: explicit > workspace setting > global setting.
         runtime_type = runtime_override  # explicit override from caller
         if not runtime_type and project_id:
@@ -275,23 +280,17 @@ class SessionManager:
         if not runtime_type:
             from agent_knots.session.runtime import get_runtime_type
             runtime_type = get_runtime_type()
-        if runtime_type == "subprocess":
-            from agent_knots.session.runtime import create_runtime
-            runtime = create_runtime()
-            await runtime.start(session, {
-                "model": provider.model,
-                "api_key": provider.api_key,
-                "base_url": provider.base_url or "",
-                "workspace_dir": resolved_working_dir or "",
-                "system_prompt": full_prompt,
-                "task_description": task_description or "",
-            })
-        else:
-            # In-process: fire up the agent in a background task.
-            if task_description:
-                session._task = asyncio.create_task(
-                    self._run_agent(session, agent, task_description)
-                )
+
+        from agent_knots.session.runtime import create_runtime
+        runtime = create_runtime(self, runtime_type=runtime_type)
+        await runtime.start(session, {
+            "model": provider.model,
+            "api_key": provider.api_key,
+            "base_url": provider.base_url or "",
+            "workspace_dir": resolved_working_dir or "",
+            "system_prompt": full_prompt,
+            "task_description": task_description or "",
+        })
 
         return session
 
@@ -567,9 +566,17 @@ def _build_task_prompt(task: Any) -> str:
     if t.description:
         parts.append(f"\nDescription:\n{t.description}")
     if t.acceptance_criteria:
+        met = set(t.criteria_met)
         parts.append("\nAcceptance Criteria:")
         for c in t.acceptance_criteria:
-            parts.append(f"  - {c}")
+            parts.append(f"  {'✓' if c in met else '○'} {c}")
+        if t.unmet_criteria():
+            parts.append(
+                "\nEvery criterion above must be marked met via mark_criterion_met "
+                "(only once you've actually verified it) before update_task_status "
+                "or log_progress can move this task to 'done' — the tool call will "
+                "be refused otherwise."
+            )
     if t.steps:
         parts.append("\nSteps:")
         for s in t.steps:
@@ -579,7 +586,7 @@ def _build_task_prompt(task: Any) -> str:
         parts.append(f"\nProgress log ({len(t.progress)} entries, most recent last):")
         for p in t.progress[-5:]:
             parts.append(f"  [{p.status.value}] {p.entry}")
-    parts.append("\nUse the task tools (create_task, read_task, log_progress, update_task_status, add_step, list_tasks) to manage this task. Log progress after every meaningful action.")
+    parts.append("\nUse the task tools (create_task, read_task, log_progress, update_task_status, mark_criterion_met, add_step, list_tasks) to manage this task. Log progress after every meaningful action.")
     return "\n".join(parts)
 
 

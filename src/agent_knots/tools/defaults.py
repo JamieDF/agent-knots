@@ -21,6 +21,7 @@ from agent_knots.task.tools import (
     create_task,
     list_tasks,
     log_progress,
+    mark_criterion_met,
     read_task,
     update_task,
     update_task_status,
@@ -44,6 +45,7 @@ DEFAULT_TOOLS = [
     update_task,
     log_progress,
     add_step,
+    mark_criterion_met,
 ]
 
 

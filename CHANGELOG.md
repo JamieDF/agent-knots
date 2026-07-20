@@ -5,6 +5,22 @@ All notable changes to agent-knots are documented here.
 ## [Unreleased]
 
 ### Added
+- **Acceptance-criteria enforcement.** `Task.criteria_met` tracks which
+  acceptance criteria have been explicitly marked satisfied via the new
+  `mark_criterion_met` task tool/CLI. `TaskStore` now refuses a transition
+  to `done` (via `set_status` or a status-carrying `log_progress` call)
+  until every criterion is marked met. Previously nothing enforced this —
+  an agent could mark a task done with unmet criteria and nothing stopped
+  it.
+- **Real resource limits on shell/custom-tool execution.**
+  `sandbox_tools.run_confined()` applies CPU/memory limits and kills the
+  whole process group (not just the direct child) on timeout, fixing
+  orphaned background processes that the old `subprocess.run(timeout=...)`
+  could leave behind. This is not a full security sandbox — see
+  `sandbox_tools.py`'s module docstring for what it does and doesn't
+  cover.
+- Tests for `SessionManager.start()` and `session/runtime.py`, both
+  previously at zero coverage (31 new tests total this session).
 - **CLI: `project` subcommand group.** `create`, `list`, `show`, `update`,
   `delete` now wired to the existing `ProjectStore` (previously only
   `project list` existed, and only as a stub — the web cockpit already
@@ -15,6 +31,27 @@ All notable changes to agent-knots are documented here.
   that already backed the data model. Actually *using* a template to
   inject a credential into a spawned command (an agent-callable
   `vault_use` tool) is still not implemented — see roadmap.
+
+### Fixed
+- **`delegate_task` (multi-agent delegation) now actually reaches the
+  agent.** It was being appended to the tool list *after* the Strands
+  `Agent` was already constructed with the earlier list, so the tool
+  almost certainly never registered.
+- **`InProcessRuntime` was dead code.** `SessionManager.start()` never
+  constructed it and ran the agent loop directly instead, bypassing the
+  `SessionRuntime` abstraction. It's now wired through `create_runtime()`
+  like the subprocess path. Fixing this also surfaced and fixed a related
+  bug: `create_runtime()` ignored an explicitly resolved runtime type
+  (e.g. a per-project override) in favor of a possibly-stale global
+  setting.
+- **Disabling a built-in tool actually disables it now.**
+  `ToolRegistry.list_builtin()`/`list_enabled()` hardcoded every built-in
+  as enabled and never read the disabled-tools file — toggling one off
+  (from the web Settings page or TUI) persisted the change but had zero
+  effect on which tools an agent actually got.
+- **Custom tools now run in the session's workspace, not the server's own
+  cwd.** They previously ran via `subprocess.run()` with no `cwd` set at
+  all, silently ignoring whatever workspace was configured.
 
 ### Changed
 - **Renamed project from "AgentJam" to "agent-knots".** Python package is

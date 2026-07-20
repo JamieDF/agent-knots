@@ -115,6 +115,8 @@ def _task_to_dict(task: Task) -> dict[str, Any]:
         d["project"] = task.project
     if task.acceptance_criteria:
         d["acceptance_criteria"] = task.acceptance_criteria
+    if task.criteria_met:
+        d["criteria_met"] = task.criteria_met
     if task.out_of_scope:
         d["out_of_scope"] = task.out_of_scope
     if task.steps:
@@ -140,6 +142,7 @@ def _task_from_dict(d: dict[str, Any]) -> Task:
         tags=d.get("tags", []),
         project=d.get("project", ""),
         acceptance_criteria=d.get("acceptance_criteria", []),
+        criteria_met=d.get("criteria_met", []),
         out_of_scope=d.get("out_of_scope", []),
         steps=[_step_from_dict(s) for s in d.get("steps", [])],
         dependencies=d.get("dependencies", []),
@@ -224,8 +227,16 @@ class TaskStore:
     # ── operations ───────────────────────────────────────────────────────
 
     def log_progress(self, task_id: str, entry: ProgressEntry) -> Task:
-        """Append a progress entry."""
+        """Append a progress entry.
+
+        A progress entry can carry a status change (entry.status), which
+        goes through the same validation as set_status() — most notably
+        the DONE acceptance-criteria gate — since this is otherwise a
+        second path to change status that would bypass it.
+        """
         task = self._must_get(task_id)
+        if entry.status and entry.status != task.status:
+            self._validate_transition(task, entry.status)
         task.log_progress(entry)
         self._save(task)
         return task
@@ -240,11 +251,40 @@ class TaskStore:
     def set_status(self, task_id: str, status: TaskStatus) -> Task:
         """Transition task to a new status."""
         task = self._must_get(task_id)
-        if task.status.is_terminal():
-            raise ValueError(f"cannot change status of terminal task {task_id!r}")
+        self._validate_transition(task, status)
         task.status = status
         task.updated_at = time.time()
         self._save(task)
+        return task
+
+    def _validate_transition(self, task: Task, new_status: TaskStatus) -> None:
+        """Raise ValueError if transitioning to new_status isn't allowed."""
+        if task.status.is_terminal():
+            raise ValueError(f"cannot change status of terminal task {task.id!r}")
+        if new_status == TaskStatus.DONE and not task.all_criteria_met():
+            unmet = task.unmet_criteria()
+            raise ValueError(
+                f"cannot mark task {task.id!r} done — unmet acceptance criteria: {unmet}"
+            )
+
+    def mark_criterion_met(self, task_id: str, criterion: str) -> Task:
+        """Mark a single acceptance criterion as satisfied."""
+        task = self._must_get(task_id)
+        if criterion not in task.acceptance_criteria:
+            raise ValueError(f"{criterion!r} is not an acceptance criterion of {task_id!r}")
+        if criterion not in task.criteria_met:
+            task.criteria_met.append(criterion)
+            task.updated_at = time.time()
+            self._save(task)
+        return task
+
+    def unmark_criterion_met(self, task_id: str, criterion: str) -> Task:
+        """Undo a previous mark_criterion_met — e.g. if it turns out unmet."""
+        task = self._must_get(task_id)
+        if criterion in task.criteria_met:
+            task.criteria_met.remove(criterion)
+            task.updated_at = time.time()
+            self._save(task)
         return task
 
     def add_step(self, task_id: str, step: Step) -> Task:

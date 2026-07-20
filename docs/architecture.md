@@ -42,7 +42,7 @@ serve at least one of these:
 │   │  ┌──────────────────────────────────────────────┐  │   │
 │   │  │  Strands Agent (MiniMax/OpenAI/Anthropic/...)  │  │   │
 │   │  │  Tools: editor, shell, calculator, think,      │  │   │
-│   │  │         7 task tools, custom tools              │  │   │
+│   │  │         8 task tools, custom tools              │  │   │
 │   │  │  Sandbox: cwd isolation + path traversal guard │  │   │
 │   │  └──────────────────────────────────────────────┘  │   │
 │   └──────────────────────────────────────────────────┘   │
@@ -137,11 +137,19 @@ log.
 
 A persistent work record with structured progress logs
 (`task/models.py`, `task/store.py`, YAML-backed). Agents call task tools
-(`log_progress`, `update_task_status`, `add_step`, ...) after meaningful
-actions. `session/features.py` also injects recent progress from earlier
-sessions on the same task into the system prompt (`inject_memory`), so a
-new session picks up where the last one left off, and validates steering
-criteria against tool outputs after each tool call.
+(`log_progress`, `update_task_status`, `mark_criterion_met`, `add_step`,
+...) after meaningful actions. `session/features.py` also injects recent
+progress from earlier sessions on the same task into the system prompt
+(`inject_memory`), so a new session picks up where the last one left off.
+
+**Acceptance criteria are enforced, not advisory.** `Task.criteria_met`
+tracks which acceptance criteria have been explicitly marked satisfied via
+`mark_criterion_met`. `TaskStore._validate_transition` refuses to move a
+task to `done` (via either `set_status` or a status-carrying
+`log_progress` call) until every criterion is in that list. The steering
+hook's keyword-match against tool output is advisory only — it suggests a
+criterion might be met, it never marks one itself — so a fuzzy match can't
+quietly satisfy the gate.
 
 ### Project
 
@@ -162,7 +170,7 @@ for the original design sketch.
 ### Tool registry
 
 `tools/registry.py` tracks built-in tools (editor, shell, calculator,
-think, plus 7 task tools) and user-defined custom shell-command tools
+think, plus 8 task tools) and user-defined custom shell-command tools
 persisted to `~/.agent-knots/settings.yaml`. Each session's `Agent` is built
 from whichever tools are currently enabled.
 

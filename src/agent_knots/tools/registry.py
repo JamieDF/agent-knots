@@ -55,9 +55,17 @@ class CustomTool:
     enabled: bool = True
     created_at: float = field(default_factory=time.time)
 
-    def to_strands_tool(self):
-        """Convert to a Strands DecoratedFunctionTool."""
+    def to_strands_tool(self, cwd: str | None = None):
+        """Convert to a Strands DecoratedFunctionTool.
+
+        Args:
+            cwd: Workspace directory to run the command in. Without this,
+                the command runs in the server process's own working
+                directory, which ignores any session workspace entirely.
+        """
         from strands.tools import tool as _tool_dec
+
+        from agent_knots.sandbox_tools import run_confined
 
         cmd = self.command
         params = self.parameters
@@ -65,7 +73,6 @@ class CustomTool:
 
         # Build a function that executes the command.
         def _custom_tool(**kwargs: Any) -> dict:
-            import subprocess
             # Substitute parameters into the command.
             resolved = cmd
             for p in params:
@@ -73,17 +80,7 @@ class CustomTool:
                 val = kwargs.get(key, "")
                 resolved = resolved.replace("{" + key + "}", str(val))
 
-            try:
-                result = subprocess.run(
-                    resolved, shell=True, capture_output=True, text=True, timeout=60
-                )
-                return {
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "exit_code": result.returncode,
-                }
-            except Exception as e:
-                return {"error": str(e)}
+            return run_confined(resolved, cwd=cwd)
 
         _custom_tool.__name__ = self.name
         _custom_tool.__doc__ = desc
@@ -111,15 +108,15 @@ class ToolRegistry:
 
     # ── built-in tools ───────────────────────────────────────────────────
 
-    @staticmethod
-    def list_builtin() -> list[ToolInfo]:
-        """Return metadata for all built-in tools."""
+    def list_builtin(self) -> list[ToolInfo]:
+        """Return metadata for all built-in tools, reflecting disabled state."""
+        disabled = self._load_disabled_builtins()
         return [
             ToolInfo(
                 name=t.__name__,
                 description=(t.__doc__ or "").split("\n")[0][:120] if t.__doc__ else "",
                 builtin=True,
-                enabled=True,
+                enabled=t.__name__ not in disabled,
             )
             for t in DEFAULT_TOOLS
         ]
@@ -134,8 +131,16 @@ class ToolRegistry:
             builtins[name] = ct.to_info()
         return sorted(builtins.values(), key=lambda t: (not t.builtin, t.name))
 
-    def list_enabled(self) -> list[Any]:
-        """Return the actual tool objects for all enabled tools."""
+    def list_enabled(self, cwd: str | None = None) -> list[Any]:
+        """Return the actual tool objects for all enabled tools.
+
+        Args:
+            cwd: Workspace directory to run custom (shell-command) tools
+                in. Built-in shell/editor tools are swapped for sandboxed
+                versions separately by the session manager once a
+                workspace is resolved; custom tools have no such swap
+                step, so their workspace binding happens here instead.
+        """
         auto_approve_tools()
         tools = []
 
@@ -148,7 +153,7 @@ class ToolRegistry:
         # Custom tools.
         for ct in self._custom.values():
             if ct.enabled:
-                tools.append(ct.to_strands_tool())
+                tools.append(ct.to_strands_tool(cwd=cwd))
 
         return tools
 

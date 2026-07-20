@@ -82,8 +82,11 @@ class Task:
     tags: list[str] = field(default_factory=list)
     project: str = ""
 
-    # What "done" means.
+    # What "done" means. criteria_met holds the subset of
+    # acceptance_criteria that have been explicitly marked satisfied —
+    # required before the task can transition to DONE.
     acceptance_criteria: list[str] = field(default_factory=list)
+    criteria_met: list[str] = field(default_factory=list)
     out_of_scope: list[str] = field(default_factory=list)
 
     # Structured plan.
@@ -120,6 +123,16 @@ class Task:
 
     def is_terminal(self) -> bool:
         return self.status.is_terminal()
+
+    def unmet_criteria(self) -> list[str]:
+        """Acceptance criteria not yet marked met."""
+        met = set(self.criteria_met)
+        return [c for c in self.acceptance_criteria if c not in met]
+
+    def all_criteria_met(self) -> bool:
+        """True if every acceptance criterion has been marked met (or
+        there are none)."""
+        return not self.unmet_criteria()
 
 
 def new_task_id(project_id: str = "") -> str:

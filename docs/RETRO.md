@@ -1,14 +1,72 @@
 # Retrospective — where agent-knots actually is
 
 **Date:** 2026-07-20
-**Codebase:** ~6.0K src LOC (Python) + ~2.1K frontend LOC (TSX/TS), 106 Python
-unit tests, 43 Playwright e2e tests
+**Codebase:** ~6.0K src LOC (Python) + ~2.1K frontend LOC (TSX/TS), 137 Python
+unit tests (106 at the start of this audit, +31 added same day covering the
+fixes below), 43 Playwright e2e tests
 **Goal:** honest self-audit — what's real, what's stubbed, what's untested,
 where docs oversell the code
 
 This supersedes the old Go-era `RETRO.md` (deleted in the Python rebuild
 cleanup). Everything below was verified by reading the actual code, not by
 re-reading docs.
+
+---
+
+## Fixed since this audit (same day, backend-fixes pass)
+
+TUI-specific findings (items 3 and 4 under "Real bugs") were explicitly
+deprioritized — GUI is getting a redesign, TUI isn't a current focus — so
+left as-is. Everything else frontend-agnostic got fixed:
+
+- **`delegate_task` ordering bug (Real bugs #1)** — fixed. The tool is now
+  appended to `all_tools` before the `Agent` is constructed.
+- **Dead `InProcessRuntime` (Real bugs #2)** — fixed. `InProcessRuntime.
+  start()` now actually starts the agent task; `SessionManager.start()`
+  goes through `create_runtime()` for both runtime types instead of
+  special-casing subprocess. Also fixed a related bug this surfaced:
+  `create_runtime()` only ever consulted the *global* runtime-type
+  setting, ignoring a per-project override that had already been
+  resolved by the caller — a project configured for `subprocess` could
+  silently get `inprocess` instead if the global default differed.
+- **TUI built-in tool toggle (Real bugs #3, backend half)** — fixed at the
+  root: `ToolRegistry.list_builtin()`/`list_enabled()` now actually read
+  the disabled-builtins file. This was framed as a TUI bug, but it's a
+  `tools/registry.py` bug — it also silently broke the web Settings
+  page's built-in tool toggle. Fixed for all surfaces, not just the TUI.
+- **Unconfined shell sandbox (Security gaps #1)** — *improved, not fully
+  solved*. Added real resource limits (CPU time + memory via
+  `resource.setrlimit`) and process-group cleanup on timeout (the old
+  code only killed the direct child, leaking any background processes a
+  command spawned). Command-string-level path confinement was
+  deliberately **not** attempted — regex/blocklist validation of
+  arbitrary `shell=True` input is not real security and would create a
+  false sense of safety. `sandbox_tools.py`'s module docstring now says
+  this plainly. Real containment still needs the container runtime on
+  the roadmap.
+- **Custom tools bypassing the sandbox (Security gaps #2)** — fixed.
+  `CustomTool.to_strands_tool()` and `ToolRegistry.list_enabled()` now
+  thread a `cwd` through from `SessionManager.start()`'s resolved
+  workspace directory, and custom tools go through the same resource-
+  limited `run_confined()` helper as the sandboxed shell tool.
+- **No acceptance-criteria enforcement (Security gaps #5)** — fixed as a
+  hard block, per explicit decision. `Task.criteria_met` now tracks which
+  criteria have been explicitly marked satisfied via the new
+  `mark_criterion_met` tool/store method. `TaskStore._validate_transition`
+  (used by both `set_status` and status-carrying `log_progress` calls —
+  both paths, not just one) refuses a `done` transition until every
+  criterion is marked met. The steering hook's keyword match stays
+  advisory-only by design, so a fuzzy match can't quietly satisfy the
+  gate. 12 new tests added in `tests/test_task/test_store.py`.
+
+`SessionManager.start()` and `session/runtime.py` now have real test
+coverage (`tests/test_session/test_manager.py::TestSessionManagerStart`,
+`tests/test_session/test_runtime.py`) — 18 new tests covering exactly the
+bugs above: delegate_task actually reaching the constructed `Agent`,
+disabled built-ins actually being excluded, custom tools actually binding
+to the session workspace, and `InProcessRuntime.start()` actually creating
+the background task. None of it needs network — no `task_description` is
+passed, so the in-process runtime never invokes the real agent loop.
 
 ---
 
@@ -147,6 +205,10 @@ frontend sends that the backend model doesn't have.
 ---
 
 ## Test coverage: the real gap
+
+> **Update:** `SessionManager.start()` and `session/runtime.py` are no
+> longer zero-coverage — see "Fixed since this audit" above. The rest of
+> this section (as originally written) still stands.
 
 **`SessionManager.start()` — the ~200-line method that resolves the
 provider, builds the system prompt, assembles tools, wires the sandbox,

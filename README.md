@@ -58,7 +58,7 @@ uv run agent-knots cockpit launch
 | **Task system** | ✅ YAML-backed. Draft → Open → In Progress → Review → Done. Progress logs, acceptance criteria, steps |
 | **Kanban board** | ✅ 6-column board. Expand cards, status changes, start session from card |
 | **Vault** | ✅ AES-256-GCM, argon2id KDF, injection templates, audit log. Ported from Go |
-| **Agent tools** | ✅ 11 built-in: editor, shell, calculator, think + 7 task tools. Custom tools via settings |
+| **Agent tools** | ✅ 12 built-in: editor, shell, calculator, think + 8 task tools. Custom tools via settings |
 | **Task tools** | ✅ Agent can create, read, update, log progress, add steps on tasks |
 | **Workspaces** | ✅ Multi-project workspaces. Task filtering, session grouping, path isolation |
 | **Runtime modes** | ✅ In-process (fast) + subprocess (isolated) per workspace/session |
@@ -118,7 +118,7 @@ agent-knots
 │   │  InProcessRuntime or SubprocessRuntime      │ │
 │   │  ┌──────────────────────────────────────┐  │ │
 │   │  │  Strands Agent (MiniMax/OpenAI/...)   │  │ │
-│   │  │  14 tools: editor, shell, task mgmt   │  │ │
+│   │  │  12 tools: editor, shell, task mgmt   │  │ │
 │   │  │  Sandbox: cwd isolation + path guard  │  │ │
 │   │  └──────────────────────────────────────┘  │ │
 │   └────────────────────────────────────────────┘ │
@@ -148,7 +148,7 @@ agent-knots/
 │   ├── provider.py            # Model provider resolution (CLI/env/settings)
 │   ├── isolation.py           # Workspace sandbox config
 │   └── sandbox_tools.py       # Sandboxed shell/editor tools
-├── tests/                     # Python unit tests (106)
+├── tests/                     # Python unit tests (137)
 ├── mockups/                   # HTML design mockups
 ├── docs/                      # ADRs, architecture, plan
 └── pyproject.toml
@@ -159,13 +159,13 @@ agent-knots/
 ## Testing
 
 ```bash
-# Python unit tests (106)
+# Python unit tests (137)
 uv run --with pytest pytest tests/ -q
 
 # Playwright e2e tests (43)
 cd frontend && npx playwright test
 
-# Total: 149 tests
+# Total: 180 tests
 ```
 
 ---

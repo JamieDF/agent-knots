@@ -53,8 +53,12 @@ class InProcessRuntime(SessionRuntime):
         self._mgr = session_manager
 
     async def start(self, session: Session, config: dict) -> None:
-        # Delegates to the existing _run_agent method.
-        pass
+        """Fire up the agent in a background asyncio task on this process."""
+        task_description = config.get("task_description", "")
+        if task_description and session._agent is not None:
+            session._task = asyncio.create_task(
+                self._mgr._run_agent(session, session._agent, task_description)
+            )
 
     async def stop(self, session: Session) -> None:
         await session.cancel()
@@ -229,8 +233,15 @@ def get_runtime_type() -> str:
     return _RUNTIME_TYPE
 
 
-def create_runtime(session_manager: Any = None) -> SessionRuntime:
-    """Create a runtime based on the current setting."""
-    if _RUNTIME_TYPE == "subprocess":
+def create_runtime(session_manager: Any = None, runtime_type: str | None = None) -> SessionRuntime:
+    """Create a runtime for the given type, or the global setting if omitted.
+
+    Callers that have already resolved a runtime type (e.g. from a project
+    override) should pass it explicitly rather than relying on the global —
+    the global reflects only the last call to set_runtime_type() and can be
+    stale relative to a per-session/per-project resolution.
+    """
+    rt = runtime_type or _RUNTIME_TYPE
+    if rt == "subprocess":
         return SubprocessRuntime()
     return InProcessRuntime(session_manager)

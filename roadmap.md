@@ -9,7 +9,7 @@
 - [x] TUI cockpit — Textual: agent list, focus view, tools manager, keyboard shortcuts
 - [x] Task system — YAML-backed with progress logs, steps, acceptance criteria
 - [x] Kanban board — 6-column board with status chips, priority indicators, inline editing
-- [x] Agent tools — 11 built-in (editor, shell, calculator, think + 7 task tools)
+- [x] Agent tools — 12 built-in (editor, shell, calculator, think + 8 task tools)
 - [x] Custom tools — User-defined shell command tools, enable/disable per tool
 - [x] Workspaces — Multi-project grouping with task/agent filtering, path isolation
 - [x] Runtime modes — In-process (fast) + subprocess (isolated). Configurable per workspace/session
