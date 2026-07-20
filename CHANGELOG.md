@@ -1,12 +1,34 @@
 # Changelog
 
-All notable changes to agentjam are documented here. The format is based on
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
-adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable changes to agentjam are documented here.
 
-## [Unreleased]
+## [Unreleased] — Python Rebuild (2026-07)
 
-### Added — Session Lifecycle & IPC
+### Added
+- **Python rebuild** — Complete rewrite from Go to Python on Strands Agents SDK
+- **Web cockpit** — Vite + React SPA with agent cards, Kanban board, task detail, settings
+- **TUI cockpit** — Textual TUI with agent list, focus view, tools manager, keyboard shortcuts
+- **Task system** — YAML-backed tasks with progress logs, steps, acceptance criteria
+- **Kanban board** — 6-column board with status chips, priority indicators
+- **Vault** — AES-256-GCM encrypted credential store (ported from Go)
+- **Agent tools** — 11 built-in: editor, shell, calculator, think + 7 task tools
+- **Custom tools** — User-defined shell command tools via settings
+- **Workspaces** — Multi-project grouping with task/agent filtering, path isolation
+- **Runtime modes** — In-process (fast) + subprocess (isolated), per workspace/session
+- **Assume/Relinquish** — Mode switching with tool gating via Strands Interventions
+- **Multi-turn chat** — Sequential conversation with context retention
+- **Agent panels** — Terminal, Review, Code, Browser tabs in focus view
+- **Memory** — Cross-session progress injection into system prompt
+- **Multi-agent** — `delegate_task` tool for spawning sub-agents
+- **Checkpoint** — Session state save/load for pause/resume
+- **Steering** — Tool outputs validated against task acceptance criteria
+- **Structured output** — Task data validation (title, status, priority)
+- **Real token tracking** — Model call hooks report actual token usage + cost
+- **Auto progress logging** — Tool calls auto-log to task progress
+
+### Tests
+- 106 Python unit tests (vault, session, task, web)
+- 43 Playwright e2e tests (cockpit flow, task CRUD, board, settings, panels, runtime)
 
 - **Per-session subprocess management.** `session start --detach` forks a
   child process (`agentjam session run <id>`) that holds the driver alive,
