@@ -1,14 +1,15 @@
-/** Board/List stage config — EXPLICITLY STUBBED for Phase 1.
- *
- * The real Workflows screen (Phase 4) will let users configure/reorder
- * stages and persist them via a backend store. Until then this is a
- * hardcoded client-side mirror of the design handoff's default stage
- * set (README §3: "default Draft / Open / In progress / Review / Done;
- * Abandoned exists but is off by default").
+import { useEffect, useState } from 'react'
+import { fetchStages } from './api'
+
+/** Board/List stage config — now backed by the Workflows screen's real
+ * config store (Phase 4). DEFAULT_STAGES is only the initial-paint
+ * fallback before the first fetch resolves, mirroring the backend's own
+ * defaults (agent_knots.workflows.models.DEFAULT_STAGES) so there's no
+ * visible flash of different content.
  *
  * Status→stage mapping: open+planned → Open, in_progress+blocked → In
  * progress — blocked/planned surface as card badges, not their own
- * columns (see README §3).
+ * columns (see design_handoff_atelier_cockpit/README.md §3).
  */
 
 export interface Stage {
@@ -16,21 +17,32 @@ export interface Stage {
   label: string
   statuses: string[]
   enabled: boolean
+  required: boolean
 }
 
-export const STAGES: Stage[] = [
-  { key: 'draft', label: 'Draft', statuses: ['draft'], enabled: true },
-  { key: 'open', label: 'Open', statuses: ['open', 'planned'], enabled: true },
-  { key: 'in_progress', label: 'In progress', statuses: ['in_progress', 'blocked'], enabled: true },
-  { key: 'review', label: 'Review', statuses: ['review'], enabled: true },
-  { key: 'done', label: 'Done', statuses: ['done'], enabled: true },
-  { key: 'abandoned', label: 'Abandoned', statuses: ['abandoned'], enabled: false },
+export const DEFAULT_STAGES: Stage[] = [
+  { key: 'draft', label: 'Draft', statuses: ['draft'], enabled: true, required: true },
+  { key: 'open', label: 'Open', statuses: ['open', 'planned'], enabled: true, required: false },
+  { key: 'in_progress', label: 'In progress', statuses: ['in_progress', 'blocked'], enabled: true, required: false },
+  { key: 'review', label: 'Review', statuses: ['review'], enabled: true, required: false },
+  { key: 'done', label: 'Done', statuses: ['done'], enabled: true, required: true },
+  { key: 'abandoned', label: 'Abandoned', statuses: ['abandoned'], enabled: false, required: false },
 ]
 
-export function enabledStages(): Stage[] {
-  return STAGES.filter(s => s.enabled)
+/** Fetches the real stage config on mount; components share the same
+ * shape whether they got the fallback or the real data. */
+export function useStages(): Stage[] {
+  const [stages, setStages] = useState<Stage[]>(DEFAULT_STAGES)
+  useEffect(() => {
+    fetchStages().then(d => setStages(d.stages)).catch(() => {})
+  }, [])
+  return stages
 }
 
-export function stageForStatus(status: string): Stage | undefined {
-  return STAGES.find(s => s.statuses.includes(status))
+export function enabledStages(stages: Stage[]): Stage[] {
+  return stages.filter(s => s.enabled)
+}
+
+export function stageForStatus(stages: Stage[], status: string): Stage | undefined {
+  return stages.find(s => s.statuses.includes(status))
 }

@@ -1,5 +1,7 @@
 """Tests for the web cockpit server."""
 
+import asyncio
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -420,6 +422,179 @@ class TestWorkspaceAPI:
         ws = next(w for w in resp.json()["workspaces"] if w["id"] == "ws2")
         assert ws["auto_assign"] is True
         assert ws["max_concurrent"] == 3
+
+
+class TestStagesAPI:
+    @pytest.mark.asyncio
+    async def test_list_returns_defaults(self, authed_client):
+        resp = await authed_client.get("/api/stages")
+        stages = resp.json()["stages"]
+        assert [s["key"] for s in stages] == ["draft", "open", "in_progress", "review", "done", "abandoned"]
+        abandoned = next(s for s in stages if s["key"] == "abandoned")
+        assert abandoned["enabled"] is False
+
+    @pytest.mark.asyncio
+    async def test_toggle_persists(self, authed_client):
+        await authed_client.post("/api/stages/abandoned/toggle", json={"enabled": True})
+        resp = await authed_client.get("/api/stages")
+        abandoned = next(s for s in resp.json()["stages"] if s["key"] == "abandoned")
+        assert abandoned["enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_toggle_required_stage_off_400s(self, authed_client):
+        resp = await authed_client.post("/api/stages/draft/toggle", json={"enabled": False})
+        assert resp.status_code == 400
+
+
+class TestRolesAPI:
+    @pytest.mark.asyncio
+    async def test_list_returns_defaults_all_disabled(self, authed_client):
+        resp = await authed_client.get("/api/roles")
+        roles = resp.json()["roles"]
+        assert [r["key"] for r in roles] == ["planner", "builder", "reviewer"]
+        assert all(not r["enabled"] for r in roles)
+
+    @pytest.mark.asyncio
+    async def test_update_persists(self, authed_client):
+        resp = await authed_client.patch("/api/roles/builder", json={"enabled": True, "model": "gpt-4o"})
+        assert resp.status_code == 200
+        assert resp.json()["enabled"] is True
+        assert resp.json()["model"] == "gpt-4o"
+
+        listed = await authed_client.get("/api/roles")
+        builder = next(r for r in listed.json()["roles"] if r["key"] == "builder")
+        assert builder["enabled"] is True
+        assert builder["model"] == "gpt-4o"
+
+    @pytest.mark.asyncio
+    async def test_update_unknown_role_404s(self, authed_client):
+        resp = await authed_client.patch("/api/roles/nonexistent", json={"enabled": True})
+        assert resp.status_code == 404
+
+
+class TestRoleTriggers:
+    @pytest.mark.asyncio
+    async def test_enabled_role_fires_on_matching_transition(self, authed_client, session_manager, monkeypatch):
+        """Enabling "builder" (trigger=is_started) and moving a task from
+        open to in_progress should auto-start a session — the trigger
+        wiring in update_task()'s PATCH handler."""
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        await authed_client.patch("/api/roles/builder", json={"enabled": True})
+        created = await authed_client.post("/api/tasks", json={"title": "Trigger test"})
+        task_id = created.json()["id"]
+
+        before = len(session_manager.active)
+        resp = await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "in_progress"})
+        assert resp.status_code == 200
+
+        # The trigger fires a fire-and-forget asyncio task — give the
+        # event loop a turn to run it before asserting.
+        for _ in range(5):
+            await asyncio.sleep(0.05)
+            if len(session_manager.active) > before:
+                break
+        assert len(session_manager.active) > before
+
+    @pytest.mark.asyncio
+    async def test_disabled_role_does_not_fire(self, authed_client, session_manager):
+        """Roles are disabled by default — no trigger should fire."""
+        created = await authed_client.post("/api/tasks", json={"title": "No trigger test"})
+        task_id = created.json()["id"]
+
+        before = len(session_manager.active)
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "in_progress"})
+        await asyncio.sleep(0.1)
+        assert len(session_manager.active) == before
+
+
+class TestReviewAPI:
+    @pytest.mark.asyncio
+    async def test_list_diffs_empty_when_no_workspaces(self, authed_client):
+        resp = await authed_client.get("/api/review/diffs")
+        assert resp.status_code == 200
+        assert resp.json()["diffs"] == []
+
+    @pytest.mark.asyncio
+    async def test_list_diffs_skips_workspace_without_git_repo(self, authed_client, tmp_path):
+        non_repo = tmp_path / "not-a-repo"
+        non_repo.mkdir()
+        await authed_client.post("/api/workspaces", json={"id": "w1", "name": "W1", "repository": str(non_repo)})
+        resp = await authed_client.get("/api/review/diffs")
+        assert resp.json()["diffs"] == []
+
+    @pytest.mark.asyncio
+    async def test_list_diffs_from_real_git_repo(self, authed_client, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\n")
+        subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\ntwo\n")
+
+        await authed_client.post("/api/workspaces", json={"id": "w2", "name": "W2", "repository": str(repo)})
+        resp = await authed_client.get("/api/review/diffs")
+        diffs = resp.json()["diffs"]
+        assert len(diffs) == 1
+        assert diffs[0]["file"] == "a.txt"
+        assert diffs[0]["added"] == 1
+
+    @pytest.mark.asyncio
+    async def test_approve_commits_the_file(self, authed_client, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\n")
+        subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\ntwo\n")
+
+        await authed_client.post("/api/workspaces", json={"id": "w3", "name": "W3", "repository": str(repo)})
+        resp = await authed_client.post("/api/review/approve", json={"workspace": "w3", "file": "a.txt"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "committed"
+
+        # No longer a pending diff, and git log shows the new commit.
+        diffs = (await authed_client.get("/api/review/diffs")).json()["diffs"]
+        assert diffs == []
+        log = subprocess.run(["git", "log", "--oneline"], cwd=repo, capture_output=True, text=True)
+        assert log.stdout.count("\n") == 2
+
+    @pytest.mark.asyncio
+    async def test_reject_does_not_discard_changes(self, authed_client, tmp_path):
+        """Reject must never run a destructive git operation — it only
+        acknowledges. Confirmed by checking the file is untouched."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\n")
+        subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\ntwo\n")
+
+        await authed_client.post("/api/workspaces", json={"id": "w4", "name": "W4", "repository": str(repo)})
+        resp = await authed_client.post("/api/review/reject", json={"workspace": "w4", "file": "a.txt"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "rejected"
+
+        # The uncommitted edit must still be there — reject didn't discard it.
+        assert (repo / "a.txt").read_text() == "one\ntwo\n"
+        diffs = (await authed_client.get("/api/review/diffs")).json()["diffs"]
+        assert len(diffs) == 1
+
+    @pytest.mark.asyncio
+    async def test_approve_unknown_workspace_404s(self, authed_client):
+        resp = await authed_client.post("/api/review/approve", json={"workspace": "nonexistent"})
+        assert resp.status_code == 404
 
 
 class TestEventSerialization:

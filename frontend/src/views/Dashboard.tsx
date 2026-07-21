@@ -5,7 +5,7 @@ import NewSessionDialog from '../components/NewSessionDialog'
 import DeskLayout from '../components/DeskLayout'
 import { Card, Chip, Toggle } from '../components/primitives'
 import { priorityColor } from '../lib/priorityColors'
-import { enabledStages, stageForStatus } from '../lib/stages'
+import { useStages, enabledStages, stageForStatus, type Stage } from '../lib/stages'
 import { useWorkspaceScope } from '../lib/workspaceContext'
 import {
   fetchAgents, fetchSettings, fetchTasks, fetchTask, fetchWorkspaces, deleteAgent, sendMessage,
@@ -24,6 +24,7 @@ function Dashboard() {
   const [showNewSession, setShowNewSession] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { workspace: scope } = useWorkspaceScope()
+  const allStages = useStages()
 
   useEffect(() => {
     fetchSettings().then(s => {
@@ -93,6 +94,7 @@ function Dashboard() {
               tasks={tasks.filter(t => (t.project || UNASSIGNED) === key)}
               onChanged={load}
               onNewSession={() => setShowNewSession(true)}
+              allStages={allStages}
             />
           ))}
         </>
@@ -103,15 +105,16 @@ function Dashboard() {
   )
 }
 
-function WorkspaceCluster({ workspace, agents, tasks, onChanged, onNewSession }: {
+function WorkspaceCluster({ workspace, agents, tasks, onChanged, onNewSession, allStages }: {
   workspace: Workspace | null
   agents: AgentInfo[]
   tasks: TaskSummary[]
   onChanged: () => void
   onNewSession: () => void
+  allStages: Stage[]
 }) {
   const navigate = useNavigate()
-  const openTasks = tasks.filter(t => stageForStatus(t.status)?.key === 'open')
+  const openTasks = tasks.filter(t => stageForStatus(allStages, t.status)?.key === 'open')
   const blockedTask = tasks.find(t => t.status === 'blocked')
   const upNext = tasks.filter(t => (t.status === 'open' || t.status === 'planned') && !t.assigned_to).slice(0, 5)
 
@@ -175,10 +178,10 @@ function WorkspaceCluster({ workspace, agents, tasks, onChanged, onNewSession }:
         </div>
         <div style={{ width: 220, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <Card style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>
-            {enabledStages().map(s => (
+            {enabledStages(allStages).map(s => (
               <div key={s.key} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
                 <span>{s.label}</span>
-                <span style={{ color: 'var(--ink2)' }}>{tasks.filter(t => stageForStatus(t.status)?.key === s.key).length}</span>
+                <span style={{ color: 'var(--ink2)' }}>{tasks.filter(t => stageForStatus(allStages, t.status)?.key === s.key).length}</span>
               </div>
             ))}
           </Card>

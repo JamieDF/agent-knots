@@ -2,21 +2,22 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchTasks, updateTask, createSession, type TaskSummary } from '../../lib/api'
 import { useWorkspaceScope } from '../../lib/workspaceContext'
-import { enabledStages, stageForStatus } from '../../lib/stages'
+import { useStages, enabledStages, stageForStatus, type Stage } from '../../lib/stages'
 import { priorityColor } from '../../lib/priorityColors'
 import TaskDialog from '../../components/TaskDialog'
 
 const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 }
 
 /** Board tab of the Tasks screen — stage-driven columns per
- * design_handoff_atelier_cockpit/README.md §3. Stages are the Phase 1
- * stub set (lib/stages.ts) until Phase 4's real Workflows config. */
+ * design_handoff_atelier_cockpit/README.md §3, backed by the real
+ * Workflows stage config (Phase 4). */
 function Board() {
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [dialogStatus, setDialogStatus] = useState<string | null>(null)
   const { workspace } = useWorkspaceScope()
   const navigate = useNavigate()
+  const allStages = useStages()
 
   const load = useCallback(async () => {
     try {
@@ -41,10 +42,10 @@ function Board() {
     navigate(`/agent/${session.id}`)
   }
 
-  const stages = enabledStages()
+  const stages = enabledStages(allStages)
   const tasksForStage = (stageKey: string) =>
     tasks
-      .filter(t => stageForStatus(t.status)?.key === stageKey)
+      .filter(t => stageForStatus(allStages, t.status)?.key === stageKey)
       .sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 2) - (PRIORITY_ORDER[b.priority] ?? 2))
 
   return (
@@ -74,6 +75,7 @@ function Board() {
                   onMove={s => handleMove(task.id, s)}
                   onDetails={() => navigate(`/tasks/${task.id}`)}
                   onStart={() => handleStart(task)}
+                  allStages={allStages}
                 />
               ))}
               {items.length === 0 && (
@@ -96,15 +98,16 @@ function Board() {
   )
 }
 
-function TaskCard({ task, expanded, onExpand, onMove, onDetails, onStart }: {
+function TaskCard({ task, expanded, onExpand, onMove, onDetails, onStart, allStages }: {
   task: TaskSummary
   expanded: boolean
   onExpand: () => void
   onMove: (status: string) => void
   onDetails: () => void
   onStart: () => void
+  allStages: Stage[]
 }) {
-  const stages = enabledStages()
+  const stages = enabledStages(allStages)
   return (
     <div
       onClick={onExpand}
@@ -138,8 +141,8 @@ function TaskCard({ task, expanded, onExpand, onMove, onDetails, onStart }: {
                 onClick={() => onMove(s.statuses[0])}
                 style={{
                   fontSize: 10, padding: '2px 7px', borderRadius: 6,
-                  background: stageForStatus(task.status)?.key === s.key ? 'var(--acc-soft)' : 'var(--card2)',
-                  color: stageForStatus(task.status)?.key === s.key ? 'var(--acc)' : 'var(--mut)',
+                  background: stageForStatus(allStages, task.status)?.key === s.key ? 'var(--acc-soft)' : 'var(--card2)',
+                  color: stageForStatus(allStages, task.status)?.key === s.key ? 'var(--acc)' : 'var(--mut)',
                 }}
               >
                 {s.label}

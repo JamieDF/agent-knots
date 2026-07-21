@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchTasks, type TaskSummary } from '../../lib/api'
 import { useWorkspaceScope } from '../../lib/workspaceContext'
-import { enabledStages, stageForStatus } from '../../lib/stages'
+import { useStages, enabledStages, stageForStatus } from '../../lib/stages'
 import { statusStyle } from '../../lib/statusColors'
 import { priorityColor } from '../../lib/priorityColors'
 import { Card, Chip } from '../../components/primitives'
@@ -30,9 +30,10 @@ function List() {
     return () => clearInterval(interval)
   }, [load])
 
-  const stages = enabledStages()
+  const allStages = useStages()
+  const stages = enabledStages(allStages)
   const filtered = stageFilter
-    ? tasks.filter(t => stageForStatus(t.status)?.key === stageFilter)
+    ? tasks.filter(t => stageForStatus(allStages, t.status)?.key === stageFilter)
     : tasks
 
   return (

@@ -47,6 +47,22 @@ All notable changes to agent-knots are documented here.
     right-rail tabs. New checkpoint/revert endpoints (broadcast-only,
     matching the design prototype's own no-op mock behavior). Verified
     against a real MiniMax M2.7 call, not just a fake test key.
+  - *Phase 4*: Workflows screen (board-stage toggles, a Planner/Builder/
+    Reviewer role registry with a model/trigger/prompt/tools config
+    dialog, a generated workflow diagram, pipeline-template shortcuts)
+    and a Review screen (pending diffs derived live from each
+    workspace's git status, expand-to-view-diff, approve/reject/
+    approve-all). New `workflows/` backend module (`Stage`/`Role`/
+    `Trigger` models, YAML-backed `StagesStore`/`RolesStore`) and
+    `_maybe_fire_role_triggers()`, which starts an enabled role's agent
+    session when a task's status crosses a configured stage boundary
+    (`leaves_draft`/`is_started`/`enters_review`) via the task-update
+    API — not yet wired to agent-tool-driven status changes, and every
+    role ships disabled by default since firing one spends real API
+    money. Review approve/reject is git-backed (`git add`+`git commit`
+    per file or whole workspace); reject deliberately never discards —
+    it only acknowledges, matching the project's stance of never
+    automating destructive git operations.
 
 ### Fixed
 - **`PATCH /api/tasks/{id}` silently dropped description/tags/
@@ -92,6 +108,17 @@ All notable changes to agent-knots are documented here.
   were fully confirmed broken against a real call; the same issue likely
   affects the default OpenAI preset and 2 of the other 3 Setup Wizard
   presets but needs its own dedicated look rather than a rushed fix here.
+- **`StagesStore`/`RolesStore` returned shared mutable defaults.**
+  `list()` did a shallow `list(DEFAULT_STAGES)`/`list(DEFAULT_ROLES)`,
+  which copies the list but not its `Stage`/`Role` elements — `update()`/
+  `toggle()` mutating a returned object corrupted the shared
+  module-level defaults for the rest of the process. Caught by a real
+  pytest cross-test contamination failure. Fixed with `copy.deepcopy()`.
+- **`POST /api/review/approve` didn't check `git add`/`git commit`'s
+  exit code.** A failing commit still returned `{"status":
+  "committed"}` to the client. Caught by a Playwright test expecting a
+  second commit that never landed. Now raises a 500 with the captured
+  stderr if either command fails.
 
 - **`install.sh`.** One script, run after `git clone`: installs `uv` if
   missing, `uv sync`s Python dependencies, builds the web cockpit

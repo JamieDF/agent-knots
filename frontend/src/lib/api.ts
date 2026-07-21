@@ -172,3 +172,57 @@ export async function deleteWorkspace(id: string): Promise<void> {
 export async function deleteAgent(id: string): Promise<void> {
   await fetch(`/api/agent/${id}`, { method: 'DELETE' })
 }
+
+// ── workflows: stages + roles ────────────────────────────────────────────────
+
+export interface StageInfo {
+  key: string; label: string; statuses: string[]; enabled: boolean; required: boolean
+}
+
+export async function fetchStages(): Promise<{ stages: StageInfo[] }> {
+  const res = await fetch('/api/stages'); if (!res.ok) throw new Error(''); return res.json()
+}
+
+export async function toggleStage(key: string, enabled: boolean): Promise<{ stages: StageInfo[] }> {
+  const res = await fetch(`/api/stages/${key}/toggle`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) })
+  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }; return res.json()
+}
+
+export interface RoleInfo {
+  key: string; name: string; icon: string; description: string
+  model: string; trigger: string; prompt: string; tools: string[]; enabled: boolean
+}
+
+export async function fetchRoles(): Promise<{ roles: RoleInfo[] }> {
+  const res = await fetch('/api/roles'); if (!res.ok) throw new Error(''); return res.json()
+}
+
+export async function updateRole(key: string, data: { model?: string; trigger?: string; prompt?: string; enabled?: boolean }): Promise<RoleInfo> {
+  const res = await fetch(`/api/roles/${key}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+  if (!res.ok) throw new Error(''); return res.json()
+}
+
+// ── review ───────────────────────────────────────────────────────────────────
+
+export interface ReviewDiff {
+  workspace: string; workspace_name: string; file: string; added: number; deleted: number
+}
+
+export async function fetchReviewDiffs(): Promise<{ diffs: ReviewDiff[] }> {
+  const res = await fetch('/api/review/diffs'); if (!res.ok) throw new Error(''); return res.json()
+}
+
+export async function fetchReviewDiffText(workspace: string, file: string): Promise<{ diff: string }> {
+  const res = await fetch(`/api/review/diff?workspace=${encodeURIComponent(workspace)}&file=${encodeURIComponent(file)}`)
+  if (!res.ok) throw new Error(''); return res.json()
+}
+
+export async function approveReview(workspace: string, file?: string): Promise<void> {
+  const res = await fetch('/api/review/approve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace, file }) })
+  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }
+}
+
+export async function rejectReview(workspace: string, file?: string): Promise<void> {
+  const res = await fetch('/api/review/reject', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace, file }) })
+  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }
+}

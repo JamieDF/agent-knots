@@ -10,6 +10,7 @@ Serves:
 import asyncio
 import json
 import secrets
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -19,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agent_knots.cockpit.web.auth import Auth, COOKIE_NAME, load_or_create_token, verify_token
-from agent_knots.config import cockpit_token_file, tasks_dir
+from agent_knots.config import cockpit_token_file, tasks_dir, stages_file, roles_file
 from agent_knots.events import Event, EventType, serialize_event
 from agent_knots.session.manager import Session, SessionManager
 from agent_knots import provider as provider_module
@@ -30,6 +31,8 @@ from agent_knots.tools.registry import ToolRegistry, CustomTool
 from agent_knots.project.store import ProjectStore
 from agent_knots.project.models import Project
 from agent_knots.config import projects_dir as _projects_dir
+from agent_knots.workflows.models import Trigger, stage_for_status
+from agent_knots.workflows.store import RolesStore, StagesStore
 
 
 # ── request models (module-level so FastAPI can resolve them) ────────────────
@@ -84,6 +87,22 @@ class ToggleCriterionRequest(BaseModel):
 
 class DraftTaskRequest(BaseModel):
     title: str
+
+
+class ToggleRequest(BaseModel):
+    enabled: bool
+
+
+class UpdateRoleRequest(BaseModel):
+    model: Optional[str] = None
+    trigger: Optional[str] = None
+    prompt: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+class ReviewActionRequest(BaseModel):
+    workspace: str
+    file: Optional[str] = None  # omitted = every pending file in the workspace
 
 
 class CreateToolRequest(BaseModel):
@@ -457,6 +476,42 @@ def create_app(
         store.create(task)
         return _task_to_response(task)
 
+    def _maybe_fire_role_triggers(old_status: str, new_status: str, task: Task) -> None:
+        """Auto-start a session for any enabled default-agent role whose
+        trigger matches this status transition (Workflows screen).
+
+        Only wired at this API layer — a status change driven by an
+        agent tool (task/tools.py's update_task_status/log_progress)
+        does not fire triggers yet. Disclosed limitation, not silently
+        incomplete: covering the agent-tool path would need threading
+        SessionManager into the task-tools module, a bigger change
+        deferred past this phase.
+        """
+        stages = StagesStore(stages_file()).list()
+        old_stage = stage_for_status(stages, old_status)
+        new_stage = stage_for_status(stages, new_status)
+        if old_stage is None or new_stage is None or old_stage.key == new_stage.key:
+            return
+
+        trigger: Trigger | None = None
+        if old_stage.key == "draft" and new_stage.key != "draft":
+            trigger = Trigger.LEAVES_DRAFT
+        elif new_stage.key == "in_progress":
+            trigger = Trigger.IS_STARTED
+        elif new_stage.key == "review":
+            trigger = Trigger.ENTERS_REVIEW
+        if trigger is None:
+            return
+
+        for role in RolesStore(roles_file()).enabled_for_trigger(trigger):
+            asyncio.create_task(session_manager.start(
+                mode="agent",
+                model=role.model,
+                system_prompt=role.prompt,
+                task_id=task.id,
+                task_description=f"({role.name}) {task.title}",
+            ))
+
     @app.patch("/api/tasks/{task_id}")
     async def update_task(task_id: str, body: UpdateTaskRequest):
         """Update a task's status, priority, assignment, or content fields.
@@ -470,8 +525,10 @@ def create_app(
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
 
+        old_status = task.status.value
         if body.status:
             task = store.set_status(task_id, TaskStatus(body.status))
+            _maybe_fire_role_triggers(old_status, task.status.value, task)
         if body.priority:
             task.priority = Priority(body.priority)
             task = store.update(task)
@@ -759,6 +816,97 @@ def create_app(
             raise HTTPException(status_code=404, detail="Workspace not found")
         return {"status": "ok"}
 
+    # ── workflows API (stages + default agent roles) ────────────────────
+
+    @app.get("/api/stages")
+    async def list_stages():
+        return {"stages": [
+            {"key": s.key, "label": s.label, "statuses": s.statuses, "enabled": s.enabled, "required": s.required}
+            for s in StagesStore(stages_file()).list()
+        ]}
+
+    @app.post("/api/stages/{key}/toggle")
+    async def toggle_stage(key: str, body: ToggleRequest):
+        try:
+            stages = StagesStore(stages_file()).toggle(key, body.enabled)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"stages": [
+            {"key": s.key, "label": s.label, "statuses": s.statuses, "enabled": s.enabled, "required": s.required}
+            for s in stages
+        ]}
+
+    @app.get("/api/roles")
+    async def list_roles():
+        return {"roles": [_role_to_response(r) for r in RolesStore(roles_file()).list()]}
+
+    @app.patch("/api/roles/{key}")
+    async def update_role(key: str, body: UpdateRoleRequest):
+        try:
+            role = RolesStore(roles_file()).update(key, **body.model_dump(exclude_unset=True))
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        return _role_to_response(role)
+
+    # ── review API (post-hoc diffs derived live from git) ────────────────
+    #
+    # No separate diff-capture/staging layer — pending diffs are just
+    # each configured workspace's current uncommitted git changes,
+    # per WORKPLAN.md's Phase 4 decoupling note. Approve stages+commits
+    # a specific file (or everything pending, for approve-all). Reject
+    # deliberately does NOT discard the changes — git checkout/reset/
+    # clean against a real repo is a destructive action this won't
+    # automate; it only acknowledges, matching the design's own
+    # "Rejected — agent notified" copy (notifies, doesn't destroy).
+
+    @app.get("/api/review/diffs")
+    async def list_review_diffs():
+        items = []
+        for p in ProjectStore(_projects_dir()).list():
+            if not p.repository:
+                continue
+            repo = Path(p.repository)
+            if not (repo / ".git").is_dir():
+                continue
+            for f in _git_diff_stat(repo):
+                items.append({
+                    "workspace": p.id, "workspace_name": p.name,
+                    "file": f["path"], "added": f["added"], "deleted": f["deleted"],
+                })
+        return {"diffs": items}
+
+    @app.get("/api/review/diff")
+    async def get_review_diff(workspace: str = Query(...), file: str = Query(...)):
+        proj = ProjectStore(_projects_dir()).get(workspace)
+        if proj is None or not proj.repository:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        return {"diff": _git_diff_for_file(Path(proj.repository), file)}
+
+    @app.post("/api/review/approve")
+    async def approve_review(body: ReviewActionRequest):
+        repo = _review_repo_or_404(body.workspace)
+        add_result = _run_git(repo, ["add", "--", body.file] if body.file else ["add", "-A"])
+        if add_result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"git add failed: {add_result.stderr.strip()}")
+        commit_result = _run_git(repo, ["commit", "-m", "Approved via cockpit Review queue"])
+        if commit_result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"git commit failed: {commit_result.stderr.strip()}")
+        return {"status": "committed"}
+
+    @app.post("/api/review/reject")
+    async def reject_review(body: ReviewActionRequest):
+        _review_repo_or_404(body.workspace)  # validates the workspace exists
+        return {"status": "rejected", "note": "Not discarded — reject only acknowledges."}
+
+    def _review_repo_or_404(workspace_id: str) -> Path:
+        proj = ProjectStore(_projects_dir()).get(workspace_id)
+        if proj is None or not proj.repository:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        repo = Path(proj.repository)
+        if not (repo / ".git").is_dir():
+            raise HTTPException(status_code=400, detail="Not a git repository")
+        return repo
+
     @app.get("/api/health")
     async def health():
         return {"status": "ok", "agents": len(session_manager.active)}
@@ -787,6 +935,43 @@ def create_app(
 
 
 # ── serialization helpers ────────────────────────────────────────────────────
+
+
+def _role_to_response(role) -> dict:
+    return {
+        "key": role.key, "name": role.name, "icon": role.icon, "description": role.description,
+        "model": role.model, "trigger": role.trigger.value, "prompt": role.prompt,
+        "tools": role.tools, "enabled": role.enabled,
+    }
+
+
+def _run_git(repo: Path, args: list[str]) -> subprocess.CompletedProcess:
+    """Run a git command scoped to a workspace repo the user configured
+    themselves (Project.repository) — never an arbitrary path, never
+    shell=True (no injection risk from list-form subprocess args)."""
+    return subprocess.run(
+        ["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=10,
+    )
+
+
+def _git_diff_stat(repo: Path) -> list[dict]:
+    """Per-file added/deleted line counts for uncommitted changes."""
+    result = _run_git(repo, ["diff", "--numstat"])
+    items = []
+    for line in result.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3:
+            added, deleted, path = parts
+            items.append({
+                "path": path,
+                "added": int(added) if added.isdigit() else 0,
+                "deleted": int(deleted) if deleted.isdigit() else 0,
+            })
+    return items
+
+
+def _git_diff_for_file(repo: Path, path: str) -> str:
+    return _run_git(repo, ["diff", "--", path]).stdout
 
 
 def _task_to_response(task: Task) -> dict:

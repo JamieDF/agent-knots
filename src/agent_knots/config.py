@@ -57,3 +57,13 @@ def cockpit_token_file() -> Path:
 def worktrees_dir() -> Path:
     """Root directory for per-session git worktrees."""
     return _ensure_dir(_home() / "worktrees")
+
+
+def stages_file() -> Path:
+    """Path to the board-stages config YAML file (Workflows screen)."""
+    return _home() / "stages.yaml"
+
+
+def roles_file() -> Path:
+    """Path to the default-agent-roles config YAML file (Workflows screen)."""
+    return _home() / "roles.yaml"

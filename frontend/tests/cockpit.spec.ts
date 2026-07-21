@@ -1296,3 +1296,110 @@ test.describe('agent code panel', () => {
   })
 
 })
+
+// ── workflows screen ─────────────────────────────────────────────────────────
+
+test.describe('workflows screen', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('shows default stages and roles, all roles disabled', async ({ page }) => {
+    await page.goto(`${BASE}/workflows`)
+    await page.waitForTimeout(800)
+
+    await expect(page.locator('text=Current workflow')).toBeVisible()
+    await expect(page.locator('text=Board stages')).toBeVisible()
+    await expect(page.locator('text=Default agents')).toBeVisible()
+    // "Planner"/"Builder"/"Reviewer" also appear inside the pipeline
+    // template descriptions further down — .first() targets the role row.
+    await expect(page.locator('text=Planner').first()).toBeVisible()
+    await expect(page.locator('text=Builder').first()).toBeVisible()
+    await expect(page.locator('text=Reviewer').first()).toBeVisible()
+
+    // Auto-firing a real agent costs real API money — must be opt-in.
+    const roleSwitches = await page.getByRole('switch').all()
+    const roleStates = await Promise.all(roleSwitches.slice(-3).map(s => s.getAttribute('aria-checked')))
+    expect(roleStates.every(s => s === 'false')).toBe(true)
+  })
+
+  test('toggling a stage persists via the API', async ({ page }) => {
+    await page.goto(`${BASE}/workflows`)
+    await page.waitForTimeout(800)
+
+    await page.getByRole('switch').nth(5).click() // Abandoned — 6th stage switch
+    await page.waitForTimeout(300)
+
+    const resp = await page.request.get(`${BASE}/api/stages`)
+    const abandoned = (await resp.json()).stages.find((s: any) => s.key === 'abandoned')
+    expect(abandoned.enabled).toBe(true)
+
+    // Cleanup — restore default.
+    await page.request.post(`${BASE}/api/stages/abandoned/toggle`, { data: { enabled: false } })
+  })
+
+  test('configure dialog edits a role', async ({ page }) => {
+    await page.goto(`${BASE}/workflows`)
+    await page.waitForTimeout(800)
+
+    await page.locator('button:has-text("Configure")').first().click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=Configure Planner')).toBeVisible()
+
+    await page.getByLabel('Model').fill('gpt-4o')
+    await page.locator('button:has-text("Save")').click()
+    await page.waitForTimeout(300)
+
+    const resp = await page.request.get(`${BASE}/api/roles`)
+    const planner = (await resp.json()).roles.find((r: any) => r.key === 'planner')
+    expect(planner.model).toBe('gpt-4o')
+  })
+
+})
+
+// ── review screen ────────────────────────────────────────────────────────────
+
+test.describe('review screen', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('shows a pending diff from a real git repo and approve commits it', async ({ page }) => {
+    const { mkdtempSync, writeFileSync } = await import('fs')
+    const { tmpdir } = await import('os')
+    const { join } = await import('path')
+    const { execSync } = await import('child_process')
+
+    const repo = mkdtempSync(join(tmpdir(), 'review-test-'))
+    execSync('git init -q', { cwd: repo })
+    execSync('git config user.email t@example.com', { cwd: repo })
+    execSync('git config user.name T', { cwd: repo })
+    writeFileSync(join(repo, 'a.txt'), 'one\n')
+    execSync('git add a.txt', { cwd: repo })
+    execSync('git commit -q -m init', { cwd: repo })
+    writeFileSync(join(repo, 'a.txt'), 'one\ntwo\n')
+
+    await page.request.post(`${BASE}/api/workspaces`, {
+      data: { id: 'review-e2e', name: 'Review E2E', repository: repo },
+    })
+
+    await page.goto(`${BASE}/review`)
+    await page.waitForTimeout(800)
+    await expect(page.locator('text=a.txt')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=1 pending')).toBeVisible()
+
+    // "Approve all" also matches a plain has-text("Approve") locator —
+    // target the per-diff "✓ Approve" button specifically.
+    await page.locator('button:has-text("✓ Approve")').click()
+    await page.waitForTimeout(500)
+    await expect(page.locator('text=Approved — committed')).toBeVisible()
+
+    const log = execSync('git log --oneline', { cwd: repo }).toString()
+    expect(log.split('\n').filter(Boolean).length).toBe(2)
+
+    await page.request.delete(`${BASE}/api/workspaces/review-e2e`)
+  })
+
+})
