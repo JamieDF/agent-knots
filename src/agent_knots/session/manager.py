@@ -333,6 +333,18 @@ class SessionManager:
             message="Session stopped.",
         ))
 
+        if session.tokens_used > 0:
+            from agent_knots.config import usage_file
+            from agent_knots.usage import UsageEntry, record
+
+            record(usage_file(), UsageEntry(
+                session_id=session.id,
+                model=session.model,
+                task_id=session.task_id,
+                tokens=session.tokens_used,
+                cost_usd=session.cost_usd,
+            ))
+
     async def send(self, session_id: str, message: str) -> None:
         """Send a follow-up message to an agent session.
 

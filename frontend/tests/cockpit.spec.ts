@@ -1403,3 +1403,183 @@ test.describe('review screen', () => {
   })
 
 })
+
+// ── vault screen ─────────────────────────────────────────────────────────────
+
+const VAULT_PASSPHRASE = 'e2e-test-passphrase'
+
+test.describe('vault screen', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('locked card shows unlock form, unlocking reveals credentials + audit log', async ({ page }) => {
+    await page.request.post(`${BASE}/api/vault/lock`)
+    await page.goto(`${BASE}/vault`)
+    await page.waitForTimeout(500)
+
+    await expect(page.getByLabel('Passphrase')).toBeVisible()
+    await page.getByLabel('Passphrase').fill(VAULT_PASSPHRASE)
+    await page.locator('button:has-text("vault")').last().click() // "Unlock vault" / "Create vault"
+    await page.waitForTimeout(500)
+
+    // "Credentials" also matches the empty-state "No credentials yet."
+    await expect(page.locator('text=Credentials').first()).toBeVisible()
+    await expect(page.locator('text=UNLOCKED')).toBeVisible()
+    await expect(page.locator('text=Audit log')).toBeVisible()
+  })
+
+  test('add credential never leaks the value to the page, and Lock returns to the locked card', async ({ page }) => {
+    await page.request.post(`${BASE}/api/vault/unlock`, { data: { passphrase: VAULT_PASSPHRASE } })
+    await page.request.delete(`${BASE}/api/vault/credentials/e2e-cred`) // leftover from a prior interrupted run
+    await page.goto(`${BASE}/vault`)
+    await page.waitForTimeout(500)
+
+    await page.locator('button:has-text("+ Add credential")').click()
+    await page.waitForTimeout(300)
+    await page.getByLabel('Credential ID').fill('e2e-cred')
+    await page.getByLabel('Value').fill('super-secret-value-xyz')
+    await page.locator('button:text-is("Add")').click()
+    await page.waitForTimeout(500)
+
+    // Also appears in the audit-log row below the credential row.
+    await expect(page.locator('text=e2e-cred').first()).toBeVisible()
+    expect(await page.content()).not.toContain('super-secret-value-xyz')
+
+    await page.locator('button:has-text("Lock")').click()
+    await page.waitForTimeout(300)
+    await expect(page.getByLabel('Passphrase')).toBeVisible()
+
+    // Cleanup — re-unlock and remove the test credential.
+    await page.request.post(`${BASE}/api/vault/unlock`, { data: { passphrase: VAULT_PASSPHRASE } })
+    await page.request.delete(`${BASE}/api/vault/credentials/e2e-cred`)
+  })
+
+})
+
+// ── settings screen ──────────────────────────────────────────────────────────
+
+test.describe('settings screen', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('shows every settings section', async ({ page }) => {
+    await page.goto(`${BASE}/settings`)
+    await page.waitForTimeout(800)
+
+    for (const label of ['Usage', 'Model providers', 'Tools', 'Policies', 'MCP servers', 'Integrations']) {
+      await expect(page.locator(`text=${label}`).first()).toBeVisible()
+    }
+    // "Workspaces" alone also case-insensitively matches the topbar's
+    // "All workspaces" <option> — check the card's unique button instead.
+    await expect(page.locator('text=+ Add workspace')).toBeVisible()
+  })
+
+  test('add provider then set default persists via the API', async ({ page }) => {
+    // "Set default" intentionally overwrites the real agent.* settings
+    // (that's the whole point of the feature) — and there's no API to
+    // blank an api_key back out once set (PUT /api/settings treats an
+    // empty key as "leave unchanged", to protect against accidentally
+    // wiping a real key). So this test restores the raw settings.yaml
+    // afterward directly, rather than leaving a fake key that would
+    // flip every other test's "configured" check to true.
+    const { readFileSync, writeFileSync, existsSync, rmSync } = await import('fs')
+    const settingsPath = join(homedir(), '.agent-knots', 'settings.yaml')
+    const hadFile = existsSync(settingsPath)
+    const original = hadFile ? readFileSync(settingsPath, 'utf-8') : null
+
+    try {
+      await page.goto(`${BASE}/settings`)
+      await page.waitForTimeout(800)
+
+      await page.locator('button:has-text("+ Add provider")').click()
+      await page.waitForTimeout(300)
+      await page.getByLabel('Provider name').fill('e2e-provider')
+      await page.getByLabel('API key').fill('sk-e2e-test-key')
+      await page.locator('button:text-is("Add")').click()
+      await page.waitForTimeout(500)
+
+      await expect(page.locator('text=e2e-provider')).toBeVisible()
+      expect(await page.content()).not.toContain('sk-e2e-test-key')
+
+      await page.locator('button:has-text("Set default")').click()
+      await page.waitForTimeout(500)
+
+      const settings = await (await page.request.get(`${BASE}/api/settings`)).json()
+      expect(settings.default_provider).toBe('e2e-provider')
+
+      await page.request.delete(`${BASE}/api/settings/providers/e2e-provider`)
+    } finally {
+      if (hadFile) writeFileSync(settingsPath, original as string)
+      else if (existsSync(settingsPath)) rmSync(settingsPath)
+    }
+  })
+
+  test('toggling a policy persists via the API', async ({ page }) => {
+    await page.goto(`${BASE}/settings`)
+    await page.waitForTimeout(800)
+
+    await page.locator('text=No sudo').scrollIntoViewIfNeeded()
+    // "No sudo" labels the row's flex:1 text wrapper, not the row
+    // itself — the Toggle is a sibling one level further up.
+    const noSudoRow = page.locator('text=No sudo').locator('..').locator('..')
+    await noSudoRow.getByRole('switch').click()
+    await page.waitForTimeout(300)
+
+    const policies = await (await page.request.get(`${BASE}/api/policies`)).json()
+    expect(policies.policies.find((p: any) => p.key === 'no_sudo').enabled).toBe(true)
+
+    // Cleanup — restore default.
+    await page.request.patch(`${BASE}/api/policies/no_sudo`, { data: { enabled: false } })
+  })
+
+  test('add, toggle, and remove an MCP server', async ({ page }) => {
+    await page.goto(`${BASE}/settings`)
+    await page.waitForTimeout(800)
+
+    await page.locator('button:has-text("+ Add MCP server")').click()
+    await page.waitForTimeout(200)
+    await page.getByLabel('MCP server name').fill('e2e-mcp')
+    await page.locator('button:text-is("Add")').click()
+    await page.waitForTimeout(500)
+
+    await expect(page.locator('text=e2e-mcp')).toBeVisible()
+
+    const row = page.locator('text=e2e-mcp').locator('..')
+    await row.getByRole('switch').click()
+    await page.waitForTimeout(300)
+
+    const servers = await (await page.request.get(`${BASE}/api/mcp`)).json()
+    expect(servers.servers.find((s: any) => s.name === 'e2e-mcp').enabled).toBe(true)
+
+    await page.request.delete(`${BASE}/api/mcp/e2e-mcp`)
+  })
+
+  test('add, edit, and delete a workspace via the dialog', async ({ page }) => {
+    await page.goto(`${BASE}/settings`)
+    await page.waitForTimeout(800)
+
+    await page.locator('button:has-text("+ Add workspace")').click()
+    await page.waitForTimeout(200)
+    await page.getByLabel('Workspace ID').fill('e2e-ws')
+    await page.getByLabel('Workspace name').fill('E2E Workspace')
+    await page.locator('button:text-is("Add")').click()
+    await page.waitForTimeout(500)
+
+    await expect(page.locator('text=E2E Workspace')).toBeVisible()
+
+    const wsRow = page.locator('text=E2E Workspace').locator('..')
+    await wsRow.locator('button:has-text("Edit")').click()
+    await page.waitForTimeout(200)
+    await page.getByLabel('Workspace name').fill('E2E Workspace Renamed')
+    await page.locator('button:text-is("Save")').click()
+    await page.waitForTimeout(500)
+    await expect(page.locator('text=E2E Workspace Renamed')).toBeVisible()
+
+    await page.request.delete(`${BASE}/api/workspaces/e2e-ws`)
+  })
+
+})

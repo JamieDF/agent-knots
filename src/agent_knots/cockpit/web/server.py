@@ -20,11 +20,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agent_knots.cockpit.web.auth import Auth, COOKIE_NAME, load_or_create_token, verify_token
-from agent_knots.config import cockpit_token_file, tasks_dir, stages_file, roles_file
+from agent_knots.config import (
+    cockpit_token_file, tasks_dir, stages_file, roles_file,
+    vault_dir, usage_file, policies_file, mcp_servers_file,
+)
 from agent_knots.events import Event, EventType, serialize_event
 from agent_knots.session.manager import Session, SessionManager
 from agent_knots import provider as provider_module
 from agent_knots import settings
+from agent_knots import usage as usage_module
 from agent_knots.task.store import TaskStore
 from agent_knots.task.models import Task, TaskStatus, Priority, ReviewGate, Step, new_task_id
 from agent_knots.tools.registry import ToolRegistry, CustomTool
@@ -33,6 +37,9 @@ from agent_knots.project.models import Project
 from agent_knots.config import projects_dir as _projects_dir
 from agent_knots.workflows.models import Trigger, stage_for_status
 from agent_knots.workflows.store import RolesStore, StagesStore
+from agent_knots.policies.store import PolicyStore
+from agent_knots.mcp_servers import McpServer, McpServerStore
+from agent_knots.vault.store import Credential, LockState, VaultStore
 
 
 # ── request models (module-level so FastAPI can resolve them) ────────────────
@@ -105,6 +112,39 @@ class ReviewActionRequest(BaseModel):
     file: Optional[str] = None  # omitted = every pending file in the workspace
 
 
+class UnlockVaultRequest(BaseModel):
+    passphrase: str
+
+
+class AddCredentialRequest(BaseModel):
+    id: str
+    description: str = ""
+    tags: list = []
+    value: str
+
+
+class AddProviderRequest(BaseModel):
+    name: str
+    model: str = ""
+    api_key: str = ""
+    base_url: str = ""
+
+
+class UpdatePolicyRequest(BaseModel):
+    enabled: Optional[bool] = None
+    value: Optional[str] = None
+
+
+class AddMcpServerRequest(BaseModel):
+    name: str
+    url: str = ""
+
+
+class SaveIntegrationsRequest(BaseModel):
+    github_pr_on_review: Optional[bool] = None
+    phone_push: Optional[bool] = None
+
+
 class CreateToolRequest(BaseModel):
     name: str
     description: str = ""
@@ -135,6 +175,12 @@ def create_app(
     app = FastAPI(title="agent-knots cockpit")
 
     auth = Auth(cockpit_token_file())
+
+    # Instantiated once per app (not per-request, unlike ToolRegistry/
+    # ProjectStore/TaskStore above) because VaultStore's unlock state
+    # (the derived key) lives in memory on the instance itself — a
+    # fresh instance per request would forget it was ever unlocked.
+    vault = VaultStore(vault_dir())
 
     # ── auth middleware ──────────────────────────────────────────────────
 
@@ -360,6 +406,12 @@ def create_app(
                 "default_mode": s.agent.default_mode,
                 "runtime": s.agent.runtime,
             },
+            "providers": _providers_to_response(s),
+            "default_provider": s.default_provider,
+            "integrations": {
+                "github_pr_on_review": s.integrations.github_pr_on_review,
+                "phone_push": s.integrations.phone_push,
+            },
         }
 
     @app.put("/api/settings")
@@ -383,6 +435,164 @@ def create_app(
         settings.save(s)
         return {"status": "ok", "configured": provider_module.resolve_provider().is_configured}
 
+    @app.post("/api/settings/providers")
+    async def add_provider(body: AddProviderRequest):
+        """Save a named provider profile. Doesn't touch resolve_provider()'s
+        active config — only 'Set default' below does that."""
+        s = settings.load()
+        if any(p.name == body.name for p in s.providers):
+            raise HTTPException(status_code=409, detail=f"Provider {body.name!r} already exists")
+        s.providers.append(settings.ProviderProfile(
+            name=body.name, model=body.model, api_key=body.api_key, base_url=body.base_url,
+        ))
+        settings.save(s)
+        return {"providers": _providers_to_response(s)}
+
+    @app.delete("/api/settings/providers/{name}")
+    async def delete_provider(name: str):
+        s = settings.load()
+        remaining = [p for p in s.providers if p.name != name]
+        if len(remaining) == len(s.providers):
+            raise HTTPException(status_code=404, detail="Provider not found")
+        s.providers = remaining
+        if s.default_provider == name:
+            s.default_provider = ""
+        settings.save(s)
+        return {"providers": _providers_to_response(s)}
+
+    @app.post("/api/settings/providers/{name}/default")
+    async def set_default_provider(name: str):
+        """Make a saved provider profile the active one — copies its
+        model/key/url into `agent`, which is what resolve_provider()
+        actually reads. Never touches env-var precedence."""
+        s = settings.load()
+        profile = next((p for p in s.providers if p.name == name), None)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="Provider not found")
+        s.agent.default_model = profile.model
+        s.agent.api_key = profile.api_key
+        s.agent.base_url = profile.base_url
+        s.default_provider = name
+        settings.save(s)
+        return {"status": "ok", "default_provider": name}
+
+    @app.put("/api/integrations")
+    async def save_integrations(body: SaveIntegrationsRequest):
+        s = settings.load()
+        if body.github_pr_on_review is not None:
+            s.integrations.github_pr_on_review = body.github_pr_on_review
+        if body.phone_push is not None:
+            s.integrations.phone_push = body.phone_push
+        settings.save(s)
+        return {"status": "ok"}
+
+    # ── usage API ─────────────────────────────────────────────────────────
+
+    @app.get("/api/usage")
+    async def get_usage():
+        return usage_module.summary(usage_file())
+
+    # ── policies API ──────────────────────────────────────────────────────
+
+    @app.get("/api/policies")
+    async def list_policies():
+        return {"policies": [_policy_to_response(p) for p in PolicyStore(policies_file()).list()]}
+
+    @app.patch("/api/policies/{key}")
+    async def update_policy(key: str, body: UpdatePolicyRequest):
+        try:
+            policy = PolicyStore(policies_file()).update(key, **body.model_dump(exclude_unset=True))
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        return _policy_to_response(policy)
+
+    # ── MCP server registry API (config-only — no real client wiring) ────
+
+    @app.get("/api/mcp")
+    async def list_mcp_servers():
+        return {"servers": [_mcp_to_response(s) for s in McpServerStore(mcp_servers_file()).list()]}
+
+    @app.post("/api/mcp")
+    async def add_mcp_server(body: AddMcpServerRequest):
+        store = McpServerStore(mcp_servers_file())
+        try:
+            store.add(McpServer(name=body.name, url=body.url))
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return {"servers": [_mcp_to_response(s) for s in store.list()]}
+
+    @app.post("/api/mcp/{name}/toggle")
+    async def toggle_mcp_server(name: str, body: ToggleRequest):
+        store = McpServerStore(mcp_servers_file())
+        try:
+            server = store.toggle(name, body.enabled)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        return _mcp_to_response(server)
+
+    @app.delete("/api/mcp/{name}")
+    async def delete_mcp_server(name: str):
+        store = McpServerStore(mcp_servers_file())
+        try:
+            store.remove(name)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        return {"status": "ok"}
+
+    # ── vault API — metadata only, values never leave the store ─────────
+
+    @app.get("/api/vault/status")
+    async def vault_status():
+        return {"lock_state": vault.lock_state.value}
+
+    @app.post("/api/vault/unlock")
+    async def vault_unlock(body: UnlockVaultRequest):
+        try:
+            vault.unlock(body.passphrase)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"lock_state": vault.lock_state.value}
+
+    @app.post("/api/vault/lock")
+    async def vault_lock():
+        vault.lock()
+        return {"lock_state": vault.lock_state.value}
+
+    @app.get("/api/vault/credentials")
+    async def list_credentials():
+        if not vault.unlocked:
+            raise HTTPException(status_code=403, detail="Vault is locked")
+        return {"credentials": [_credential_to_response(c) for c in vault.list_credentials()]}
+
+    @app.post("/api/vault/credentials")
+    async def add_credential(body: AddCredentialRequest):
+        cred = Credential(id=body.id, description=body.description, tags=body.tags, value=body.value)
+        try:
+            vault.add_credential(cred)
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"status": "ok", "id": cred.id}
+
+    @app.delete("/api/vault/credentials/{cred_id}")
+    async def delete_credential(cred_id: str):
+        try:
+            vault.remove_credential(cred_id)
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"status": "ok"}
+
+    @app.get("/api/vault/audit")
+    async def vault_audit(limit: int = Query(50)):
+        from agent_knots.vault.store import AuditOptions
+        entries = vault.audit_log(AuditOptions(limit=limit))
+        return {"entries": [
+            {
+                "timestamp": e.timestamp, "credential": e.credential, "template": e.template,
+                "command": e.command, "caller": e.caller, "success": e.success, "error": e.error,
+            }
+            for e in entries
+        ]}
+
     # ── session management API ────────────────────────────────────────────
 
     @app.post("/api/sessions")
@@ -401,6 +611,20 @@ def create_app(
         """
         if not provider_module.resolve_provider().is_configured:
             raise HTTPException(status_code=400, detail="Settings not configured. Run setup first.")
+
+        spend_cap = PolicyStore(policies_file()).get("spend_cap")
+        if spend_cap is not None and spend_cap.enabled:
+            try:
+                cap = float(spend_cap.value)
+            except (TypeError, ValueError):
+                cap = 0.0
+            if cap > 0:
+                spent_today = usage_module.cost_since(usage_file(), usage_module.today_start())
+                if spent_today >= cap:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Daily spend cap of ${cap:.2f} reached (${spent_today:.2f} spent today).",
+                    )
 
         try:
             session = await session_manager.start(
@@ -942,6 +1166,55 @@ def _role_to_response(role) -> dict:
         "key": role.key, "name": role.name, "icon": role.icon, "description": role.description,
         "model": role.model, "trigger": role.trigger.value, "prompt": role.prompt,
         "tools": role.tools, "enabled": role.enabled,
+    }
+
+
+def _providers_to_response(s: "settings.Settings") -> list[dict]:
+    """Saved provider profiles, plus (if none are saved yet but a legacy
+    single-provider config already exists) a synthetic 'default' entry
+    so existing installs don't see an empty list. Never returns a raw
+    api_key — only whether one is set."""
+    if s.providers:
+        return [
+            {
+                "name": p.name, "model": p.model, "base_url": p.base_url,
+                "key_set": bool(p.api_key), "is_default": p.name == s.default_provider,
+            }
+            for p in s.providers
+        ]
+    if s.agent.api_key:
+        return [{
+            "name": "default", "model": s.agent.default_model, "base_url": s.agent.base_url,
+            "key_set": True, "is_default": True,
+        }]
+    return []
+
+
+def _policy_to_response(p) -> dict:
+    return {
+        "key": p.key, "label": p.label, "description": p.description,
+        "enabled": p.enabled, "value": p.value, "enforced": p.enforced,
+    }
+
+
+def _mcp_to_response(s) -> dict:
+    return {
+        "name": s.name, "url": s.url, "enabled": s.enabled,
+        "tool_count": s.tool_count, "created_at": s.created_at,
+    }
+
+
+def _credential_to_response(c) -> dict:
+    """Metadata only — deliberately does not reference c.value at all,
+    even though the store never populates it from list_credentials()."""
+    return {
+        "id": c.id, "description": c.description, "tags": c.tags,
+        "created_at": c.created_at, "last_used": c.last_used, "uses_total": c.uses_total,
+        "templates": [
+            {"name": t.name, "description": t.description, "env": t.env, "file_path": t.file_path,
+             "stdin": t.stdin, "command_wrapper": t.command_wrapper}
+            for t in c.templates
+        ],
     }
 
 

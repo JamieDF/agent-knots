@@ -640,3 +640,212 @@ class TestEventSerialization:
             data={"sub_session_id": "abc", "sub_task_id": "T-1"},
         )
         json.dumps(serialize_event(evt))  # should not raise
+
+
+class TestVaultAPI:
+    @pytest.mark.asyncio
+    async def test_status_uninitialized(self, authed_client):
+        resp = await authed_client.get("/api/vault/status")
+        assert resp.json()["lock_state"] == "uninitialized"
+
+    @pytest.mark.asyncio
+    async def test_unlock_initializes_on_first_use(self, authed_client):
+        resp = await authed_client.post("/api/vault/unlock", json={"passphrase": "hunter2"})
+        assert resp.status_code == 200
+        assert resp.json()["lock_state"] == "unlocked"
+
+    @pytest.mark.asyncio
+    async def test_credentials_require_unlock(self, authed_client):
+        resp = await authed_client.get("/api/vault/credentials")
+        assert resp.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_add_list_delete_credential_never_leaks_value(self, authed_client):
+        await authed_client.post("/api/vault/unlock", json={"passphrase": "hunter2"})
+
+        resp = await authed_client.post("/api/vault/credentials", json={
+            "id": "github", "description": "GH token", "tags": ["git"], "value": "ghp_secret123",
+        })
+        assert resp.status_code == 200
+
+        resp = await authed_client.get("/api/vault/credentials")
+        creds = resp.json()["credentials"]
+        assert len(creds) == 1
+        assert creds[0]["id"] == "github"
+        assert "value" not in creds[0]
+        assert "ghp_secret123" not in resp.text
+
+        resp = await authed_client.delete("/api/vault/credentials/github")
+        assert resp.status_code == 200
+        assert (await authed_client.get("/api/vault/credentials")).json()["credentials"] == []
+
+    @pytest.mark.asyncio
+    async def test_add_credential_while_locked_400s(self, authed_client):
+        await authed_client.post("/api/vault/unlock", json={"passphrase": "hunter2"})
+        await authed_client.post("/api/vault/lock")
+        resp = await authed_client.post("/api/vault/credentials", json={"id": "x", "value": "v"})
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_unlock_wrong_passphrase_400s(self, authed_client):
+        await authed_client.post("/api/vault/unlock", json={"passphrase": "correct"})
+        await authed_client.post("/api/vault/lock")
+        resp = await authed_client.post("/api/vault/unlock", json={"passphrase": "wrong"})
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_audit_log_records_credential_add(self, authed_client):
+        await authed_client.post("/api/vault/unlock", json={"passphrase": "hunter2"})
+        await authed_client.post("/api/vault/credentials", json={"id": "github", "value": "secret"})
+        resp = await authed_client.get("/api/vault/audit")
+        entries = resp.json()["entries"]
+        assert any(e["credential"] == "github" for e in entries)
+        assert "secret" not in resp.text
+
+
+class TestUsageAPI:
+    @pytest.mark.asyncio
+    async def test_empty_usage(self, authed_client):
+        resp = await authed_client.get("/api/usage")
+        data = resp.json()
+        assert data["today"]["tokens"] == 0
+        assert data["by_provider"] == []
+
+    @pytest.mark.asyncio
+    async def test_usage_reflects_recorded_session(self, authed_client, agent_knots_home):
+        from agent_knots.config import usage_file
+        from agent_knots.usage import UsageEntry, record
+
+        record(usage_file(), UsageEntry(model="minimax-m2.7", task_id="T-1", tokens=500, cost_usd=0.05))
+        resp = await authed_client.get("/api/usage")
+        data = resp.json()
+        assert data["today"]["tokens"] == 500
+        assert data["by_provider"][0]["provider"] == "minimax"
+
+
+class TestPoliciesAPI:
+    @pytest.mark.asyncio
+    async def test_list_defaults_all_disabled(self, authed_client):
+        resp = await authed_client.get("/api/policies")
+        policies = resp.json()["policies"]
+        assert all(not p["enabled"] for p in policies)
+
+    @pytest.mark.asyncio
+    async def test_update_persists(self, authed_client):
+        resp = await authed_client.patch("/api/policies/spend_cap", json={"enabled": True, "value": "2.50"})
+        assert resp.status_code == 200
+        assert resp.json()["enabled"] is True
+        assert resp.json()["value"] == "2.50"
+
+    @pytest.mark.asyncio
+    async def test_update_unknown_404s(self, authed_client):
+        resp = await authed_client.patch("/api/policies/nonexistent", json={"enabled": True})
+        assert resp.status_code == 404
+
+
+class TestSpendCapEnforcement:
+    @pytest.mark.asyncio
+    async def test_session_blocked_once_cap_reached(self, authed_client, monkeypatch):
+        from agent_knots.config import usage_file
+        from agent_knots.usage import UsageEntry, record
+
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+
+        await authed_client.patch("/api/policies/spend_cap", json={"enabled": True, "value": "1.00"})
+        record(usage_file(), UsageEntry(model="fake/model", tokens=1000, cost_usd=1.50))
+
+        resp = await authed_client.post("/api/sessions", json={"prompt": ""})
+        assert resp.status_code == 400
+        assert "spend cap" in resp.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_disabled_cap_does_not_block(self, authed_client, monkeypatch):
+        from agent_knots.config import usage_file
+        from agent_knots.usage import UsageEntry, record
+
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        record(usage_file(), UsageEntry(model="fake/model", tokens=1000, cost_usd=99.0))
+        resp = await authed_client.post("/api/sessions", json={"prompt": ""})
+        assert resp.status_code == 200
+
+
+class TestMcpServersAPI:
+    @pytest.mark.asyncio
+    async def test_empty_by_default(self, authed_client):
+        resp = await authed_client.get("/api/mcp")
+        assert resp.json()["servers"] == []
+
+    @pytest.mark.asyncio
+    async def test_add_toggle_delete(self, authed_client):
+        resp = await authed_client.post("/api/mcp", json={"name": "filesystem", "url": "stdio://fs"})
+        assert resp.status_code == 200
+        servers = resp.json()["servers"]
+        assert servers[0]["enabled"] is False
+
+        resp = await authed_client.post("/api/mcp/filesystem/toggle", json={"enabled": True})
+        assert resp.json()["enabled"] is True
+
+        resp = await authed_client.delete("/api/mcp/filesystem")
+        assert resp.status_code == 200
+        assert (await authed_client.get("/api/mcp")).json()["servers"] == []
+
+    @pytest.mark.asyncio
+    async def test_duplicate_name_409s(self, authed_client):
+        await authed_client.post("/api/mcp", json={"name": "filesystem"})
+        resp = await authed_client.post("/api/mcp", json={"name": "filesystem"})
+        assert resp.status_code == 409
+
+
+class TestProvidersAndIntegrationsAPI:
+    @pytest.mark.asyncio
+    async def test_no_providers_by_default(self, authed_client):
+        resp = await authed_client.get("/api/settings")
+        assert resp.json()["providers"] == []
+
+    @pytest.mark.asyncio
+    async def test_add_provider_never_returns_raw_key(self, authed_client):
+        resp = await authed_client.post("/api/settings/providers", json={
+            "name": "minimax", "model": "minimax-m2.7", "api_key": "sk-real-secret", "base_url": "https://api.minimax.io/v1",
+        })
+        assert resp.status_code == 200
+        assert "sk-real-secret" not in resp.text
+        providers = resp.json()["providers"]
+        assert providers[0]["key_set"] is True
+
+    @pytest.mark.asyncio
+    async def test_duplicate_provider_name_409s(self, authed_client):
+        await authed_client.post("/api/settings/providers", json={"name": "minimax", "api_key": "k"})
+        resp = await authed_client.post("/api/settings/providers", json={"name": "minimax", "api_key": "k2"})
+        assert resp.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_set_default_updates_agent_settings_and_resolve_provider(self, authed_client):
+        await authed_client.post("/api/settings/providers", json={
+            "name": "minimax", "model": "minimax-m2.7", "api_key": "sk-real", "base_url": "https://api.minimax.io/v1",
+        })
+        resp = await authed_client.post("/api/settings/providers/minimax/default")
+        assert resp.status_code == 200
+
+        settings_resp = await authed_client.get("/api/settings")
+        data = settings_resp.json()
+        assert data["agent"]["default_model"] == "minimax-m2.7"
+        assert data["default_provider"] == "minimax"
+        assert data["providers"][0]["is_default"] is True
+
+    @pytest.mark.asyncio
+    async def test_delete_unknown_provider_404s(self, authed_client):
+        resp = await authed_client.delete("/api/settings/providers/nonexistent")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_save_integrations_persists(self, authed_client):
+        resp = await authed_client.put("/api/integrations", json={"github_pr_on_review": True, "phone_push": True})
+        assert resp.status_code == 200
+        settings_resp = await authed_client.get("/api/settings")
+        integrations = settings_resp.json()["integrations"]
+        assert integrations["github_pr_on_review"] is True
+        assert integrations["phone_push"] is True

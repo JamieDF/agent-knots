@@ -1,210 +1,494 @@
-import { useEffect, useState } from 'react'
-import { fetchSettings, saveSettings, fetchTools, toggleTool, deleteTool, createTool, fetchWorkspaces, createWorkspace, deleteWorkspace, type ToolInfo, type Workspace } from '../lib/api'
+import { useEffect, useState, useCallback } from 'react'
+import DeskLayout from '../components/DeskLayout'
+import { Card, Chip, Toggle, SectionLabel, Dialog } from '../components/primitives'
+import {
+  fetchSettings, addProvider, deleteProvider, setDefaultProvider, saveIntegrations,
+  fetchUsage, fetchPolicies, updatePolicy,
+  fetchMcpServers, addMcpServer, toggleMcpServer, deleteMcpServer,
+  fetchTools, createTool, deleteTool, toggleTool,
+  fetchWorkspaces, createWorkspace, updateWorkspace, deleteWorkspace,
+  type ProviderInfo, type IntegrationsInfo, type UsageSummary, type PolicyInfo,
+  type McpServerInfo, type ToolInfo, type Workspace,
+} from '../lib/api'
 
 const PROVIDER_PRESETS: Record<string, { model: string; base_url: string }> = {
-  openai:    { model: 'gpt-4o-mini', base_url: '' },
-  minimax:   { model: 'minimax-m2.7', base_url: 'https://api.minimax.io/v1' },
+  openai: { model: 'gpt-4o-mini', base_url: '' },
+  minimax: { model: 'minimax-m2.7', base_url: 'https://api.minimax.io/v1' },
   anthropic: { model: 'claude-sonnet-4-20250514', base_url: '' },
-  ollama:    { model: 'llama3', base_url: 'http://localhost:11434/v1' },
-  custom:    { model: '', base_url: '' },
+  ollama: { model: 'llama3', base_url: 'http://localhost:11434/v1' },
+  custom: { model: '', base_url: '' },
 }
 
-export default function SettingsPage() {
-  // ── model config ──────────────────────────────────────────────────────
-  const [provider, setProvider] = useState('minimax')
-  const [model, setModel] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  const [baseUrl, setBaseUrl] = useState('')
-  const [configured, setConfigured] = useState(false)
-  const [savingModel, setSavingModel] = useState(false)
+/** Settings screen — one 800px scrolling column of cards, in the order
+ * specified by design_handoff_atelier_cockpit/README.md §8. First-run
+ * flow previews (item 8) are deferred to Phase 6, which is what
+ * actually builds the setup-wizard route these would link to. */
+function SettingsPage() {
+  return (
+    <DeskLayout width={800}>
+      <UsageCard />
+      <ProvidersCard />
+      <ToolsCard />
+      <PoliciesCard />
+      <McpServersCard />
+      <IntegrationsCard />
+      <WorkspacesCard />
+    </DeskLayout>
+  )
+}
 
-  // ── tools ─────────────────────────────────────────────────────────────
-  const [tools, setTools] = useState<ToolInfo[]>([])
-  const [newToolName, setNewToolName] = useState('')
-  const [newToolCmd, setNewToolCmd] = useState('')
-  const [newToolDesc, setNewToolDesc] = useState('')
-  const [showAddTool, setShowAddTool] = useState(false)
+// ── 1. Usage ─────────────────────────────────────────────────────────────────
 
-  // ── workspaces ────────────────────────────────────────────────────────
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
-  const [newWsId, setNewWsId] = useState('')
-  const [newWsName, setNewWsName] = useState('')
+function UsageCard() {
+  const [usage, setUsage] = useState<UsageSummary | null>(null)
 
-  // Load all data.
-  useEffect(() => {
-    fetchSettings().then(s => {
-      setConfigured(s.configured)
-      setModel(s.agent.default_model)
-      setBaseUrl(s.agent.base_url)
-      setApiKey(s.agent.api_key)
-      // Detect provider from base URL.
-      if (s.agent.base_url.includes('minimax')) setProvider('minimax')
-      else if (s.agent.base_url.includes('ollama')) setProvider('ollama')
-      else if (s.agent.default_model.includes('claude')) setProvider('anthropic')
-      else if (s.agent.base_url) setProvider('custom')
-      else setProvider('openai')
-    }).catch(() => {})
-    fetchTools().then(d => setTools(d.tools)).catch(() => {})
-    fetchWorkspaces().then(d => setWorkspaces(d.workspaces)).catch(() => {})
-  }, [])
+  useEffect(() => { fetchUsage().then(setUsage).catch(() => {}) }, [])
 
-  const handleProviderChange = (p: string) => {
-    setProvider(p)
-    const preset = PROVIDER_PRESETS[p]
-    if (preset) { setModel(preset.model); setBaseUrl(preset.base_url) }
-  }
+  if (!usage) return null
 
-  const handleSaveModel = async () => {
-    setSavingModel(true)
-    await saveSettings({ default_model: model, api_key: apiKey, base_url: baseUrl, default_mode: 'agent' })
-    setSavingModel(false); setConfigured(true)
-  }
-
-  const handleAddTool = async () => {
-    if (!newToolName.trim() || !newToolCmd.trim()) return
-    await createTool({ name: newToolName.trim(), command: newToolCmd.trim(), description: newToolDesc })
-    setNewToolName(''); setNewToolCmd(''); setNewToolDesc(''); setShowAddTool(false)
-    fetchTools().then(d => setTools(d.tools)).catch(() => {})
-  }
-
-  const handleAddWorkspace = async () => {
-    if (!newWsId.trim() || !newWsName.trim()) return
-    await createWorkspace({ id: newWsId.trim(), name: newWsName.trim() })
-    setNewWsId(''); setNewWsName('')
-    fetchWorkspaces().then(d => setWorkspaces(d.workspaces)).catch(() => {})
-  }
-
-  const sections = [
-    { id: 'model', label: 'Model Provider' },
-    { id: 'tools', label: 'Tools' },
-    { id: 'workspaces', label: 'Workspaces' },
-  ]
-  const [active, setActive] = useState('model')
+  const maxProviderTokens = Math.max(1, ...usage.by_provider.map(p => p.tokens))
+  const maxTaskTokens = Math.max(1, ...usage.top_tasks.map(t => t.tokens))
 
   return (
-    <div style={{ height: '100%', display: 'flex', overflow: 'hidden' }}>
-      {/* Left nav */}
-      <div style={{ width: 200, background: 'var(--surface)', borderRight: '1px solid var(--border)', padding: 16, flexShrink: 0 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>Settings</h2>
-        {sections.map(s => (
-          <button key={s.id} onClick={() => setActive(s.id)}
-            style={{
-              display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 6,
-              fontSize: 13, border: 0, cursor: 'pointer', fontFamily: 'inherit', marginBottom: 2,
-              background: active === s.id ? 'var(--surface-raised)' : 'transparent',
-              color: active === s.id ? 'var(--fg)' : 'var(--fg-soft)',
-            }}>{s.label}</button>
-        ))}
+    <Card style={{ marginBottom: 16 }}>
+      <SectionLabel>Usage</SectionLabel>
+      <div style={{ fontSize: 11.5, color: 'var(--mut)', margin: '4px 0 14px' }}>
+        Token counts are exact; cost is an estimate from each provider's pricing.
+      </div>
+      <div style={{ display: 'flex', gap: 24, marginBottom: 16 }}>
+        <Stat label="Tokens today" value={usage.today.tokens.toLocaleString()} />
+        <Stat label="Tokens this month" value={usage.month.tokens.toLocaleString()} />
+        <Stat label="~$ today" value={`$${usage.today.cost_usd.toFixed(2)}`} />
+        <Stat label="~$ this month" value={`$${usage.month.cost_usd.toFixed(2)}`} />
       </div>
 
-      {/* Content */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
-        {active === 'model' && <div>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Model Provider</h3>
-
-          <div style={{ marginBottom: 16 }}>
-            <label style={lbl}>Provider</label>
-            <select value={provider} onChange={e => handleProviderChange(e.target.value)} style={inp}>
-              <option value="openai">OpenAI</option>
-              <option value="minimax">MiniMax</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="ollama">Ollama (local)</option>
-              <option value="custom">Custom</option>
-            </select>
-          </div>
-
-          <div style={{ marginBottom: 16 }}>
-            <label style={lbl}>Model ID</label>
-            <input value={model} onChange={e => setModel(e.target.value)} placeholder="gpt-4o-mini" style={inp} />
-          </div>
-
-          <div style={{ marginBottom: 16 }}>
-            <label style={lbl}>API Key</label>
-            <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
-              placeholder={configured ? '•••••••• (unchanged)' : 'sk-...'} style={inp} />
-          </div>
-
-          <div style={{ marginBottom: 16 }}>
-            <label style={lbl}>Base URL</label>
-            <input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" style={inp} />
-          </div>
-
-          <button onClick={handleSaveModel} disabled={savingModel || !model} className="btn"
-            style={{ background: model ? 'var(--fg)' : 'var(--surface-raised)', color: model ? 'var(--bg)' : 'var(--muted)', fontWeight: 600, padding: '8px 16px' }}>
-            {savingModel ? 'Saving...' : 'Save'}
-          </button>
-          {configured && <span style={{ marginLeft: 10, fontSize: 12, color: 'var(--done)' }}>✓ Configured</span>}
-        </div>}
-
-        {active === 'tools' && <div>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Tools</h3>
-          <div style={{ marginBottom: 16 }}>
-            {tools.filter(t => t.builtin).map(t => (
-              <div key={t.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: 13 }}>
-                <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{t.name}</span>
-                <span style={{ fontSize: 10, color: 'var(--info)', background: 'oklch(68% 0.12 235 / 0.1)', padding: '1px 6px', borderRadius: 4 }}>built-in</span>
-                <button onClick={async () => { await toggleTool(t.name); fetchTools().then(d => setTools(d.tools)).catch(() => {}) }}
-                  style={toggleBtn(t.enabled)}>{t.enabled ? 'On' : 'Off'}</button>
-              </div>
-            ))}
-          </div>
-          <div style={{ marginTop: 8 }}>
-            {tools.filter(t => !t.builtin).map(t => (
-              <div key={t.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: 13 }}>
-                <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{t.name}</span>
-                <span style={{ fontSize: 11, color: 'var(--muted)' }}>{t.description || ''}</span>
-                <button onClick={async () => { await toggleTool(t.name); fetchTools().then(d => setTools(d.tools)).catch(() => {}) }}
-                  style={toggleBtn(t.enabled)}>{t.enabled ? 'On' : 'Off'}</button>
-                <button onClick={async () => { await deleteTool(t.name); fetchTools().then(d => setTools(d.tools)).catch(() => {}) }}
-                  style={{ color: 'var(--blocked)', cursor: 'pointer', border: 0, background: 'none', fontSize: 14 }}>✕</button>
-              </div>
-            ))}
-          </div>
-          {showAddTool ? (
-            <div style={{ marginTop: 12, padding: 12, background: 'var(--surface-raised)', borderRadius: 8 }}>
-              <input placeholder="Tool name" value={newToolName} onChange={e => setNewToolName(e.target.value)} style={{ ...inp, marginBottom: 8 }} />
-              <input placeholder="Shell command" value={newToolCmd} onChange={e => setNewToolCmd(e.target.value)} style={{ ...inp, marginBottom: 8 }} />
-              <input placeholder="Description (optional)" value={newToolDesc} onChange={e => setNewToolDesc(e.target.value)} style={{ ...inp, marginBottom: 8 }} />
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={handleAddTool} className="btn" style={{ background: 'var(--info)', color: 'var(--bg)', fontWeight: 600, fontSize: 12 }}>Add</button>
-                <button onClick={() => setShowAddTool(false)} className="btn btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
-              </div>
-            </div>
-          ) : (
-            <button onClick={() => setShowAddTool(true)} className="btn" style={{ marginTop: 12, background: 'var(--surface-raised)', color: 'var(--fg-soft)', fontSize: 12 }}>
-              + Add custom tool
-            </button>
-          )}
-        </div>}
-
-        {active === 'workspaces' && <div>
-          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Workspaces</h3>
-          {workspaces.map(w => (
-            <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--border-subtle)', fontSize: 13 }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--fg-soft)' }}>{w.id}</span>
-              <span style={{ flex: 1 }}>{w.name}</span>
-              <button onClick={async () => { await deleteWorkspace(w.id); fetchWorkspaces().then(d => setWorkspaces(d.workspaces)).catch(() => {}) }}
-                style={{ color: 'var(--blocked)', cursor: 'pointer', border: 0, background: 'none', fontSize: 14 }}>✕</button>
-            </div>
+      {usage.by_provider.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mut)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>By provider</div>
+          {usage.by_provider.map(p => (
+            <BarRow key={p.provider} label={p.provider} value={p.tokens} max={maxProviderTokens} suffix={`${p.tokens.toLocaleString()} tok · ~$${p.cost_usd.toFixed(2)}`} />
           ))}
-          <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-            <input placeholder="Workspace ID" value={newWsId} onChange={e => setNewWsId(e.target.value)} style={{ ...inp, flex: 1 }} />
-            <input placeholder="Name" value={newWsName} onChange={e => setNewWsName(e.target.value)} style={{ ...inp, flex: 1 }} />
-            <button onClick={handleAddWorkspace} className="btn" style={{ background: 'var(--info)', color: 'var(--bg)', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' }}>Add</button>
-          </div>
-        </div>}
-      </div>
+        </div>
+      )}
+
+      {usage.top_tasks.length > 0 && (
+        <div>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--mut)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Top tasks by tokens</div>
+          {usage.top_tasks.map(t => (
+            <BarRow key={t.task_id} label={t.task_id} value={t.tokens} max={maxTaskTokens} suffix={`${t.tokens.toLocaleString()} tok`} />
+          ))}
+        </div>
+      )}
+    </Card>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--ink)' }}>{value}</div>
+      <div style={{ fontSize: 10.5, color: 'var(--mut)' }}>{label}</div>
     </div>
   )
 }
 
-function toggleBtn(on: boolean): React.CSSProperties {
-  return {
-    fontSize: 11, padding: '3px 10px', borderRadius: 4, border: '1px solid var(--border)',
-    background: on ? 'oklch(72% 0.16 155 / 0.1)' : 'var(--surface-raised)',
-    color: on ? 'var(--running)' : 'var(--muted)', cursor: 'pointer', fontFamily: 'inherit',
-  }
+function BarRow({ label, value, max, suffix }: { label: string; value: number; max: number; suffix: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }}>
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink2)', minWidth: 90 }}>{label}</span>
+      <div style={{ flex: 1, height: 6, borderRadius: 3, background: 'var(--card2)', overflow: 'hidden' }}>
+        <div style={{ width: `${Math.max(2, (value / max) * 100)}%`, height: '100%', background: 'var(--acc)' }} />
+      </div>
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--mut)', minWidth: 120, textAlign: 'right' }}>{suffix}</span>
+    </div>
+  )
 }
 
-const lbl: React.CSSProperties = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--fg-soft)', marginBottom: 4 }
-const inp: React.CSSProperties = { width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--fg)', fontSize: 14, outline: 'none', fontFamily: 'inherit' }
+// ── 2. Model providers ───────────────────────────────────────────────────────
+
+function ProvidersCard() {
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [showAdd, setShowAdd] = useState(false)
+
+  const load = useCallback(() => { fetchSettings().then(s => setProviders(s.providers)).catch(() => {}) }, [])
+  useEffect(() => { load() }, [load])
+
+  const handleSetDefault = async (name: string) => { await setDefaultProvider(name); load() }
+  const handleDelete = async (name: string) => { try { await deleteProvider(name) } catch { /* synthetic legacy row, nothing to delete server-side */ } load() }
+
+  return (
+    <Card style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
+        <SectionLabel>Model providers</SectionLabel>
+        <button onClick={() => setShowAdd(true)} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: 'var(--acc)' }}>+ Add provider</button>
+      </div>
+
+      {providers.length === 0 && (
+        <div style={{ textAlign: 'center', padding: 16, color: 'var(--mut)', fontSize: 13 }}>No providers configured yet.</div>
+      )}
+
+      {providers.map(p => (
+        <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', minWidth: 90 }}>{p.name}</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--ink2)', flex: 1 }}>{p.model}</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--mut)', flex: 1 }}>{p.base_url || '—'}</span>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.key_set ? 'var(--ok)' : 'var(--mut)' }} title={p.key_set ? 'key set' : 'no key'} />
+          {p.is_default ? <Chip color="var(--acc)" soft>DEFAULT</Chip> : (
+            <button onClick={() => handleSetDefault(p.name)} style={{ fontSize: 11, fontWeight: 600, color: 'var(--acc)' }}>Set default</button>
+          )}
+          <button onClick={() => handleDelete(p.name)} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
+        </div>
+      ))}
+
+      <AddProviderDialog open={showAdd} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />
+    </Card>
+  )
+}
+
+function AddProviderDialog({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
+  const [preset, setPreset] = useState('minimax')
+  const [name, setName] = useState('')
+  const [model, setModel] = useState(PROVIDER_PRESETS.minimax.model)
+  const [apiKey, setApiKey] = useState('')
+  const [baseUrl, setBaseUrl] = useState(PROVIDER_PRESETS.minimax.base_url)
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const handlePreset = (p: string) => {
+    setPreset(p)
+    const cfg = PROVIDER_PRESETS[p]
+    if (cfg) { setModel(cfg.model); setBaseUrl(cfg.base_url) }
+    if (!name) setName(p)
+  }
+
+  const reset = () => { setName(''); setApiKey(''); setError(''); handlePreset('minimax') }
+
+  const handleSave = async () => {
+    if (!name.trim()) return
+    setSaving(true); setError('')
+    try {
+      await addProvider({ name: name.trim(), model, api_key: apiKey, base_url: baseUrl })
+      reset()
+      onSaved()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add provider')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onClose={() => { reset(); onClose() }} width={440}>
+      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>+ Add provider</div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+        {Object.keys(PROVIDER_PRESETS).map(p => (
+          <Chip key={p} color={preset === p ? 'var(--acc)' : undefined} soft={preset === p} onClick={() => handlePreset(p)}>{p}</Chip>
+        ))}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <Field label="Name"><input aria-label="Provider name" value={name} onChange={e => setName(e.target.value)} placeholder="minimax" style={inputStyle} /></Field>
+        <Field label="Model ID"><input aria-label="Model ID" value={model} onChange={e => setModel(e.target.value)} placeholder="minimax-m2.7" style={inputStyle} /></Field>
+        <Field label="API key"><input aria-label="API key" type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-..." style={inputStyle} /></Field>
+        <Field label="Base URL"><input aria-label="Base URL" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="optional" style={inputStyle} /></Field>
+        {error && <div style={{ fontSize: 11.5, color: 'var(--err)' }}>{error}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+          <button onClick={() => { reset(); onClose() }} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving || !name.trim()} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: saving || !name.trim() ? 0.6 : 1 }}>
+            {saving ? 'Adding…' : 'Add'}
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  )
+}
+
+// ── 3. Tools ─────────────────────────────────────────────────────────────────
+
+function ToolsCard() {
+  const [tools, setTools] = useState<ToolInfo[]>([])
+  const [showAdd, setShowAdd] = useState(false)
+
+  const load = useCallback(() => { fetchTools().then(d => setTools(d.tools)).catch(() => {}) }, [])
+  useEffect(() => { load() }, [load])
+
+  return (
+    <Card style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
+        <SectionLabel>Tools</SectionLabel>
+        <button onClick={() => setShowAdd(true)} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: 'var(--acc)' }}>+ Custom tool</button>
+      </div>
+      {tools.map(t => (
+        <div key={t.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: '1px solid var(--line)' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, color: 'var(--ink)', minWidth: 120 }}>{t.name}</span>
+          <span style={{ fontSize: 11.5, color: 'var(--mut)', flex: 1 }}>{t.description}</span>
+          <Chip soft color={t.builtin ? 'var(--mut)' : 'var(--acc)'}>{t.builtin ? 'BUILT-IN' : 'CUSTOM'}</Chip>
+          <Toggle checked={t.enabled} onChange={async () => { await toggleTool(t.name); load() }} />
+          {!t.builtin && <button onClick={async () => { await deleteTool(t.name); load() }} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>}
+        </div>
+      ))}
+      <CustomToolDialog open={showAdd} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />
+    </Card>
+  )
+}
+
+function CustomToolDialog({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [command, setCommand] = useState('')
+  const [params, setParams] = useState('')
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const reset = () => { setName(''); setDescription(''); setCommand(''); setParams(''); setError('') }
+
+  const parseParams = () => params.split(',').map(s => s.trim()).filter(Boolean).map(entry => {
+    const [pname, ptype] = entry.split(':').map(s => s.trim())
+    return { name: pname, type: ptype || 'string', description: '' }
+  })
+
+  const handleSave = async () => {
+    if (!name.trim() || !command.trim()) return
+    setSaving(true); setError('')
+    try {
+      await createTool({ name: name.trim(), description, command: command.trim(), parameters: parseParams() })
+      reset()
+      onSaved()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to create tool')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onClose={() => { reset(); onClose() }} width={460}>
+      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>+ Custom tool</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <Field label="Name"><input aria-label="Tool name" value={name} onChange={e => setName(e.target.value)} placeholder="run_tests" style={inputStyle} /></Field>
+        <Field label="Description"><input aria-label="Tool description" value={description} onChange={e => setDescription(e.target.value)} placeholder="optional" style={inputStyle} /></Field>
+        <Field label="Shell command"><input aria-label="Shell command" value={command} onChange={e => setCommand(e.target.value)} placeholder="pytest {path} -v" style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} /></Field>
+        <Field label="Params"><input aria-label="Params" value={params} onChange={e => setParams(e.target.value)} placeholder="path:string, verbose:boolean" style={inputStyle} /></Field>
+        {error && <div style={{ fontSize: 11.5, color: 'var(--err)' }}>{error}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+          <button onClick={() => { reset(); onClose() }} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving || !name.trim() || !command.trim()} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: saving || !name.trim() || !command.trim() ? 0.6 : 1 }}>
+            {saving ? 'Adding…' : 'Add'}
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  )
+}
+
+// ── 4. Policies ──────────────────────────────────────────────────────────────
+
+function PoliciesCard() {
+  const [policies, setPolicies] = useState<PolicyInfo[]>([])
+  const load = useCallback(() => { fetchPolicies().then(d => setPolicies(d.policies)).catch(() => {}) }, [])
+  useEffect(() => { load() }, [load])
+
+  return (
+    <Card style={{ marginBottom: 16 }}>
+      <SectionLabel>Policies</SectionLabel>
+      <div style={{ fontSize: 11, color: 'var(--mut)', margin: '4px 0 10px' }}>
+        Only the spend cap is actually enforced today — the rest are configured for later.
+      </div>
+      {policies.map(p => (
+        <div key={p.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{p.label}</div>
+            <div style={{ fontSize: 11, color: 'var(--mut)' }}>{p.description}</div>
+          </div>
+          {p.key === 'spend_cap' && (
+            <input
+              aria-label="Spend cap value"
+              value={p.value}
+              onChange={e => setPolicies(prev => prev.map(x => x.key === p.key ? { ...x, value: e.target.value } : x))}
+              onBlur={async e => { await updatePolicy(p.key, { value: e.target.value }); load() }}
+              style={{ ...inputStyle, width: 70, textAlign: 'right' }}
+            />
+          )}
+          {!p.enforced && <Chip soft color="var(--mut)">not enforced</Chip>}
+          <Toggle checked={p.enabled} onChange={async checked => { await updatePolicy(p.key, { enabled: checked }); load() }} />
+        </div>
+      ))}
+    </Card>
+  )
+}
+
+// ── 5. MCP servers ───────────────────────────────────────────────────────────
+
+function McpServersCard() {
+  const [servers, setServers] = useState<McpServerInfo[]>([])
+  const [showAdd, setShowAdd] = useState(false)
+  const [name, setName] = useState('')
+  const [url, setUrl] = useState('')
+
+  const load = useCallback(() => { fetchMcpServers().then(d => setServers(d.servers)).catch(() => {}) }, [])
+  useEffect(() => { load() }, [load])
+
+  const handleAdd = async () => {
+    if (!name.trim()) return
+    await addMcpServer({ name: name.trim(), url })
+    setName(''); setUrl(''); setShowAdd(false)
+    load()
+  }
+
+  return (
+    <Card style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
+        <SectionLabel>MCP servers</SectionLabel>
+      </div>
+      {servers.length === 0 && !showAdd && (
+        <div style={{ textAlign: 'center', padding: 12, color: 'var(--mut)', fontSize: 13 }}>No MCP servers configured.</div>
+      )}
+      {servers.map(s => (
+        <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: '1px solid var(--line)' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', flex: 1 }}>{s.name}</span>
+          <span style={{ fontSize: 11, color: 'var(--mut)' }}>{s.tool_count} tools exposed</span>
+          <Toggle checked={s.enabled} onChange={async checked => { await toggleMcpServer(s.name, checked); load() }} />
+          <button onClick={async () => { await deleteMcpServer(s.name); load() }} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
+        </div>
+      ))}
+      {showAdd ? (
+        <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+          <input aria-label="MCP server name" value={name} onChange={e => setName(e.target.value)} placeholder="filesystem" style={{ ...inputStyle, flex: 1 }} />
+          <input aria-label="MCP server URL" value={url} onChange={e => setUrl(e.target.value)} placeholder="stdio://..." style={{ ...inputStyle, flex: 1 }} />
+          <button onClick={handleAdd} style={{ fontSize: 12, fontWeight: 600, color: 'var(--acc-ink)', background: 'var(--acc)', padding: '6px 12px', borderRadius: 8, whiteSpace: 'nowrap' }}>Add</button>
+        </div>
+      ) : (
+        <button onClick={() => setShowAdd(true)} style={{ marginTop: 10, fontSize: 12, fontWeight: 600, color: 'var(--acc)' }}>+ Add MCP server</button>
+      )}
+    </Card>
+  )
+}
+
+// ── 6. Integrations ──────────────────────────────────────────────────────────
+
+function IntegrationsCard() {
+  const [integrations, setIntegrations] = useState<IntegrationsInfo | null>(null)
+  useEffect(() => { fetchSettings().then(s => setIntegrations(s.integrations)).catch(() => {}) }, [])
+
+  if (!integrations) return null
+
+  const update = async (patch: Partial<IntegrationsInfo>) => {
+    setIntegrations(prev => prev ? { ...prev, ...patch } : prev)
+    await saveIntegrations(patch)
+  }
+
+  return (
+    <Card style={{ marginBottom: 16 }}>
+      <SectionLabel>Integrations</SectionLabel>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid var(--line)' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>GitHub</div>
+          <div style={{ fontSize: 11, color: 'var(--mut)' }}>Not connected — open a PR automatically when a task enters review.</div>
+        </div>
+        <Toggle checked={integrations.github_pr_on_review} onChange={checked => update({ github_pr_on_review: checked })} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0' }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>Phone push</div>
+          <div style={{ fontSize: 11, color: 'var(--mut)' }}>Config only — no push infrastructure is wired up yet.</div>
+        </div>
+        <Toggle checked={integrations.phone_push} onChange={checked => update({ phone_push: checked })} />
+      </div>
+    </Card>
+  )
+}
+
+// ── 7. Workspaces ────────────────────────────────────────────────────────────
+
+function WorkspacesCard() {
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [editing, setEditing] = useState<Workspace | null>(null)
+  const [showAdd, setShowAdd] = useState(false)
+
+  const load = useCallback(() => { fetchWorkspaces().then(d => setWorkspaces(d.workspaces)).catch(() => {}) }, [])
+  useEffect(() => { load() }, [load])
+
+  return (
+    <Card>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
+        <SectionLabel>Workspaces</SectionLabel>
+        <button onClick={() => setShowAdd(true)} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: 'var(--acc)' }}>+ Add workspace</button>
+      </div>
+      {workspaces.map(w => (
+        <div key={w.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: '1px solid var(--line)' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--mut)', minWidth: 80 }}>{w.id}</span>
+          <span style={{ fontSize: 13, color: 'var(--ink)', flex: 1 }}>{w.name}</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--mut)' }}>{w.repository || '—'}</span>
+          <Chip mono soft>{w.runtime || 'global'}</Chip>
+          <button onClick={() => setEditing(w)} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>Edit</button>
+          <button onClick={async () => { await deleteWorkspace(w.id); load() }} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
+        </div>
+      ))}
+      {(showAdd || editing) && (
+        <WorkspaceDialog
+          workspace={editing}
+          onClose={() => { setShowAdd(false); setEditing(null) }}
+          onSaved={() => { setShowAdd(false); setEditing(null); load() }}
+        />
+      )}
+    </Card>
+  )
+}
+
+function WorkspaceDialog({ workspace, onClose, onSaved }: { workspace: Workspace | null; onClose: () => void; onSaved: () => void }) {
+  const [id, setId] = useState(workspace?.id || '')
+  const [name, setName] = useState(workspace?.name || '')
+  const [repository, setRepository] = useState(workspace?.repository || '')
+  const [runtime, setRuntime] = useState(workspace?.runtime || '')
+
+  const handleSave = async () => {
+    if (workspace) {
+      await updateWorkspace(workspace.id, { name, repository, runtime })
+    } else {
+      if (!id.trim() || !name.trim()) return
+      await createWorkspace({ id: id.trim(), name: name.trim(), repository, runtime })
+    }
+    onSaved()
+  }
+
+  return (
+    <Dialog open onClose={onClose} width={420}>
+      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>{workspace ? `Edit ${workspace.id}` : '+ Add workspace'}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {!workspace && <Field label="ID"><input aria-label="Workspace ID" value={id} onChange={e => setId(e.target.value)} style={inputStyle} /></Field>}
+        <Field label="Name"><input aria-label="Workspace name" value={name} onChange={e => setName(e.target.value)} style={inputStyle} /></Field>
+        <Field label="Repository"><input aria-label="Repository" value={repository} onChange={e => setRepository(e.target.value)} placeholder="/path/to/repo" style={inputStyle} /></Field>
+        <Field label="Runtime">
+          <select aria-label="Runtime" value={runtime} onChange={e => setRuntime(e.target.value)} style={inputStyle}>
+            <option value="">(use global)</option>
+            <option value="inprocess">In-process</option>
+            <option value="subprocess">Subprocess</option>
+          </select>
+        </Field>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+          <button onClick={onClose} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Cancel</button>
+          <button onClick={handleSave} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}>
+            {workspace ? 'Save' : 'Add'}
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  )
+}
+
+// ── shared ───────────────────────────────────────────────────────────────────
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--mut)' }}>{label}</label>
+      {children}
+    </div>
+  )
+}
+
+const inputStyle: React.CSSProperties = {
+  width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--line2)',
+  background: 'var(--card2)', color: 'var(--ink)', fontSize: 13, outline: 'none', fontFamily: 'inherit',
+}
+
+export default SettingsPage

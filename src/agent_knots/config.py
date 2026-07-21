@@ -67,3 +67,18 @@ def stages_file() -> Path:
 def roles_file() -> Path:
     """Path to the default-agent-roles config YAML file (Workflows screen)."""
     return _home() / "roles.yaml"
+
+
+def usage_file() -> Path:
+    """Path to the append-only token/cost usage ledger (JSONL)."""
+    return _home() / "usage.jsonl"
+
+
+def policies_file() -> Path:
+    """Path to the policy-rules config YAML file (Settings screen)."""
+    return _home() / "policies.yaml"
+
+
+def mcp_servers_file() -> Path:
+    """Path to the MCP server registry config YAML file (Settings screen)."""
+    return _home() / "mcp_servers.yaml"

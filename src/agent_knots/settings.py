@@ -25,8 +25,32 @@ class AgentSettings:
 
 
 @dataclass
+class ProviderProfile:
+    """A named, saved model-provider config. `agent` above always holds
+    whichever profile is currently active — "Set default" on the
+    Settings screen copies a profile's fields into `agent` rather than
+    resolve_provider() having to know about the list at all, so the
+    precedence logic hardened in Phase 3 stays untouched."""
+    name: str
+    model: str = ""
+    api_key: str = ""
+    base_url: str = ""
+
+
+@dataclass
+class IntegrationsSettings:
+    """Config-only — no OAuth flow or push infra exists yet. Persisted
+    so the Settings screen has something real to toggle and read back."""
+    github_pr_on_review: bool = False
+    phone_push: bool = False
+
+
+@dataclass
 class Settings:
     agent: AgentSettings = field(default_factory=AgentSettings)
+    providers: list[ProviderProfile] = field(default_factory=list)
+    default_provider: str = ""
+    integrations: IntegrationsSettings = field(default_factory=IntegrationsSettings)
 
 
 def load() -> Settings:
@@ -52,7 +76,27 @@ def load() -> Settings:
         runtime=agent_data.get("runtime", "inprocess"),
     )
 
-    return Settings(agent=agent)
+    providers = [
+        ProviderProfile(
+            name=p.get("name", ""), model=p.get("model", ""),
+            api_key=p.get("api_key", ""), base_url=p.get("base_url", ""),
+        )
+        for p in data.get("providers", [])
+        if isinstance(p, dict)
+    ]
+
+    integrations_data = data.get("integrations", {})
+    integrations = IntegrationsSettings(
+        github_pr_on_review=integrations_data.get("github_pr_on_review", False),
+        phone_push=integrations_data.get("phone_push", False),
+    )
+
+    return Settings(
+        agent=agent,
+        providers=providers,
+        default_provider=data.get("default_provider", ""),
+        integrations=integrations,
+    )
 
 
 def save(settings: Settings) -> None:
@@ -62,6 +106,9 @@ def save(settings: Settings) -> None:
 
     data = {
         "agent": asdict(settings.agent),
+        "providers": [asdict(p) for p in settings.providers],
+        "default_provider": settings.default_provider,
+        "integrations": asdict(settings.integrations),
     }
 
     tmp = path.with_suffix(".tmp")

@@ -63,6 +63,26 @@ All notable changes to agent-knots are documented here.
     per file or whole workspace); reject deliberately never discards —
     it only acknowledges, matching the project's stance of never
     automating destructive git operations.
+  - *Phase 5*: Vault screen (locked/unlocked card states, credential
+    list + add + delete, injection-template chips, audit log — new web
+    routes over the existing, unmodified `VaultStore`; credential
+    values never appear in a list/get response) and a rebuilt Settings
+    screen (Usage card backed by a new append-only JSONL usage ledger,
+    named Model-provider profiles with "Set default", consolidated
+    Tools, Policies, MCP server registry, Integrations, and Workspaces
+    CRUD). New `usage.py`, `policies/` (`PolicyStore`), `mcp_servers.py`
+    (`McpServerStore`) backend modules; `Settings` gained `providers`,
+    `default_provider`, and `integrations`, additively — `agent.*`
+    still holds the one config `resolve_provider()` actually reads, and
+    "Set default" just copies a saved profile into it, so the Phase 3
+    env-var-precedence fix stays untouched. The daily spend-cap policy
+    is the only one with real enforcement — `POST /api/sessions` checks
+    today's ledger total and blocks with a 400 once the configured cap
+    is reached; the other three policies (migrations guard, pause-
+    after-test-failures, no-sudo) are configurable but not yet enforced,
+    same as MCP servers (registry only, no client) and Integrations
+    (GitHub PR-on-review / phone-push toggles, both config-only — no
+    OAuth flow or push infra exists).
 
 ### Fixed
 - **`PATCH /api/tasks/{id}` silently dropped description/tags/
@@ -119,6 +139,14 @@ All notable changes to agent-knots are documented here.
   "committed"}` to the client. Caught by a Playwright test expecting a
   second commit that never landed. Now raises a 500 with the captured
   stderr if either command fails.
+- **A test for the new "Set default" provider action left `agent.api_key`
+  set to a fake test key with no way to undo it**, since `DELETE
+  /api/settings/providers/{name}` only removes the saved profile, not
+  an already-applied default, and `PUT /api/settings` deliberately
+  treats an empty `api_key` as "leave unchanged" (so a blank PUT can't
+  accidentally wipe a real key). Fixed in the test by reading and
+  restoring the raw `settings.yaml` directly, rather than adding a new
+  API-level way to blank a key that isn't needed anywhere else yet.
 
 - **`install.sh`.** One script, run after `git clone`: installs `uv` if
   missing, `uv sync`s Python dependencies, builds the web cockpit
