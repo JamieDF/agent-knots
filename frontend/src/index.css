@@ -1,26 +1,79 @@
-/* agent-knots cockpit design system — matching mockups */
+/* agent-knots cockpit design system — "Atelier" tokens, from
+   design_handoff_atelier_cockpit/README.md. Light is the default theme;
+   dark applies under body[data-theme="dark"] (see theme/ThemeContext). */
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 
 :root {
-  --bg: oklch(9% 0.005 260);
-  --surface: oklch(14% 0.006 260);
-  --surface-raised: oklch(18% 0.008 260);
-  --surface-hover: oklch(20% 0.008 260);
-  --fg: oklch(92% 0.003 260);
-  --fg-soft: oklch(78% 0.005 260);
-  --muted: oklch(58% 0.012 260);
-  --muted-2: oklch(42% 0.012 260);
-  --border: oklch(22% 0.006 260);
-  --border-subtle: oklch(16% 0.004 260);
-  --running: oklch(72% 0.16 155);
-  --blocked: oklch(76% 0.14 65);
-  --assumed: oklch(76% 0.16 75);
-  --info: oklch(68% 0.12 235);
-  --done: oklch(64% 0.06 155);
-  --blocked-bg: oklch(76% 0.14 65 / 0.06);
-  --blocked-bd: oklch(76% 0.14 65 / 0.22);
+  --bg: #eceef2;
+  --dot: #cdd2db;
+  --card: #ffffff;
+  --card2: #fafbfc;
+  --line: #eef0f3;
+  --line2: #dcdfe5;
+  --ink: #23262b;
+  --ink2: #5a6069;
+  --mut: #8a8f99;
+  --mut2: #a3a8b2;
+  --acc: #6c5ce7;
+  --acc-soft: #f7f5ff;
+  --acc-ink: #ffffff;
+  --ok: #22c07a;
+  --ok-soft: #e3f6ec;
+  --warn: #f0a72e;
+  --warn-ink: #b07a10;
+  --warn-soft: #fdf1dc;
+  --err: #e05252;
+  --mono-bg: #f2f3f6;
+  --shadow: 0 6px 20px rgba(30, 35, 50, .12);
+  --shadow-lg: 0 16px 44px rgba(30, 35, 50, .22);
   --font: 'DM Sans', system-ui, sans-serif;
   --font-mono: 'DM Mono', monospace;
+
+  /* Phase 0 compatibility aliases — the old dark-only token names, used
+     throughout views/components not yet migrated to the Atelier
+     primitives (Board, Tasks, TaskDetail, Settings, ToolManager). Drop
+     each alias as its last consumer is rewritten in its own phase. */
+  --surface: var(--card);
+  --surface-raised: var(--card2);
+  --surface-hover: var(--line2);
+  --fg: var(--ink);
+  --fg-soft: var(--ink2);
+  --muted: var(--mut);
+  --muted-2: var(--mut2);
+  --border: var(--line2);
+  --border-subtle: var(--line);
+  --running: var(--ok);
+  --blocked: var(--warn);
+  --assumed: var(--warn);
+  --info: var(--acc);
+  --done: var(--ok);
+  --blocked-bg: var(--warn-soft);
+  --blocked-bd: var(--warn);
+}
+
+body[data-theme="dark"] {
+  --bg: #191b20;
+  --dot: #2c3038;
+  --card: #23262d;
+  --card2: #1e2126;
+  --line: #2e323a;
+  --line2: #3a3f48;
+  --ink: #dfe2e8;
+  --ink2: #aab0ba;
+  --mut: #767c87;
+  --mut2: #5c6270;
+  --acc: #8f7ff2;
+  --acc-soft: #2a2740;
+  --acc-ink: #191b20;
+  --ok: #3fd08e;
+  --ok-soft: #173226;
+  --warn: #e8b04a;
+  --warn-ink: #e8b04a;
+  --warn-soft: #332a17;
+  --err: #e06a6a;
+  --mono-bg: #1a1c22;
+  --shadow: 0 6px 20px rgba(0, 0, 0, .35);
+  --shadow-lg: 0 16px 44px rgba(0, 0, 0, .5);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -28,13 +81,12 @@
 body {
   font: 14px/1.5 var(--font);
   background: var(--bg);
-  color: var(--fg);
-  height: 100vh;
-  overflow: hidden;
+  color: var(--ink);
+  min-height: 100vh;
 }
 
 #root {
-  height: 100%;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
 }

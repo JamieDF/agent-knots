@@ -216,11 +216,16 @@ SessionManager:
                 │
                 ▼
 Events stream from the runtime as an asyncio.Queue (TUI) or are broadcast
-over SSE (web):
+over SSE (web) as structured JSON — `events.py::serialize_event()`, not
+pre-rendered HTML (that coupling was removed as part of the Atelier
+frontend rewrite; the frontend now owns all event rendering):
   - message / thinking events
   - tool_call / tool_result events
-  - mode_change events (assume/relinquish)
-  - progress events (auto-logged by hooks)
+  - auto_log events (auto-logged by hooks)
+  - steer events (steering-hook nudges)
+  - delegate events (sub-agent started — carries the sub-session/task id)
+  - checkpoint events (marker only — no real revert, see roadmap)
+  - user / state_change / ended events (session lifecycle)
                 │
                 ▼
 Agent calls task tools (log_progress, update_task_status, ...) as it works.
@@ -277,8 +282,11 @@ agent-knots is designed for concurrent agents:
 - **Multiple sessions run independently**, each owning its own runtime
   (in-process task or subprocess).
 - **The web server is async** (FastAPI + `asyncio`); each connected
-  browser tab gets its own SSE stream reading from the session's event
-  queue.
+  browser tab gets its own SSE subscriber queue via `Session.subscribe()`,
+  fanned out from a shared per-session event history/broadcast
+  (`Session._broadcast()`) — fixed from an earlier single-queue design
+  where a second tab watching the same agent would race the first for
+  events and silently lose some.
 - **The TUI polls an `asyncio.Queue`** per focused session.
 
 The orchestrator is single-process for in-process sessions; subprocess

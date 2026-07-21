@@ -16,6 +16,7 @@ from agent_knots.task.models import (
     Blocker,
     Priority,
     ProgressEntry,
+    ReviewGate,
     Step,
     Task,
     TaskStatus,
@@ -113,6 +114,8 @@ def _task_to_dict(task: Task) -> dict[str, Any]:
         d["tags"] = task.tags
     if task.project:
         d["project"] = task.project
+    if task.review_gate != ReviewGate.MANUAL:
+        d["review_gate"] = task.review_gate.value
     if task.acceptance_criteria:
         d["acceptance_criteria"] = task.acceptance_criteria
     if task.criteria_met:
@@ -141,6 +144,7 @@ def _task_from_dict(d: dict[str, Any]) -> Task:
         priority=Priority(d.get("priority", "medium")),
         tags=d.get("tags", []),
         project=d.get("project", ""),
+        review_gate=ReviewGate(d.get("review_gate", "manual")),
         acceptance_criteria=d.get("acceptance_criteria", []),
         criteria_met=d.get("criteria_met", []),
         out_of_scope=d.get("out_of_scope", []),

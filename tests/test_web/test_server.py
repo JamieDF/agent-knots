@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agent_knots.cockpit.web.server import create_app, format_event_html
-from agent_knots.events import Event, EventType, ToolCall
+from agent_knots.cockpit.web.server import create_app
+from agent_knots.events import Event, EventType, ToolCall, serialize_event
 from agent_knots.session.manager import SessionManager
 
 
@@ -211,49 +211,188 @@ class TestSettingsAPI:
         assert resp.status_code != 400
 
 
-class TestEventFormatting:
+class TestTaskAPI:
+    @pytest.mark.asyncio
+    async def test_create_task_default_review_gate(self, authed_client):
+        resp = await authed_client.post("/api/tasks", json={"title": "Test task"})
+        assert resp.status_code == 200
+        assert resp.json()["review_gate"] == "manual"
+
+    @pytest.mark.asyncio
+    async def test_create_task_explicit_review_gate(self, authed_client):
+        resp = await authed_client.post(
+            "/api/tasks", json={"title": "Test task", "review_gate": "auto"}
+        )
+        assert resp.json()["review_gate"] == "auto"
+
+    @pytest.mark.asyncio
+    async def test_patch_updates_description_tags_criteria_steps(self, authed_client):
+        """Regression: UpdateTaskRequest used to be missing these fields
+        entirely, so PATCH silently dropped description/tags/criteria/
+        steps edits sent by the frontend."""
+        created = await authed_client.post("/api/tasks", json={"title": "T"})
+        task_id = created.json()["id"]
+
+        resp = await authed_client.patch(f"/api/tasks/{task_id}", json={
+            "description": "new description",
+            "tags": ["a", "b"],
+            "acceptance_criteria": ["criterion one"],
+            "steps": ["step one"],
+            "review_gate": "none",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["description"] == "new description"
+        assert body["tags"] == ["a", "b"]
+        assert body["acceptance_criteria"] == ["criterion one"]
+        assert [s["title"] for s in body["steps"]] == ["step one"]
+        assert body["review_gate"] == "none"
+
+    @pytest.mark.asyncio
+    async def test_patch_preserves_criteria_met_for_unchanged_criteria(self, authed_client):
+        """c1's met state must survive a PATCH that edits the criteria
+        list but still includes c1 — proven by the done-gate: marking
+        the task done should fail (c2 still unmet) rather than silently
+        succeeding because the whole criteria_met list got wiped."""
+        created = await authed_client.post("/api/tasks", json={
+            "title": "T", "acceptance_criteria": ["c1", "c2"],
+        })
+        task_id = created.json()["id"]
+        await authed_client.post(f"/api/tasks/{task_id}/criteria/toggle", json={
+            "criterion": "c1", "met": True,
+        })
+
+        # Edit the criteria list (still includes c1 and c2) via PATCH.
+        resp = await authed_client.patch(f"/api/tasks/{task_id}", json={
+            "acceptance_criteria": ["c1", "c2"],
+        })
+        assert resp.status_code == 200
+
+        # c2 is still unmet, so done should be refused — the route doesn't
+        # catch TaskStore's ValueError, so it propagates (matching this
+        # server's existing behavior for the done-gate elsewhere).
+        with pytest.raises(ValueError, match="unmet acceptance criteria"):
+            await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "done"})
+
+        # Mark c2 too — now done should succeed, proving c1's earlier
+        # met state was never lost.
+        await authed_client.post(f"/api/tasks/{task_id}/criteria/toggle", json={
+            "criterion": "c2", "met": True,
+        })
+        done2 = await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "done"})
+        assert done2.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_patch_preserves_step_status_for_unchanged_steps(self, authed_client):
+        created = await authed_client.post("/api/tasks", json={"title": "T"})
+        task_id = created.json()["id"]
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"steps": ["step a"]})
+
+        # Editing the step list again (same title) should reuse the same
+        # step id/status rather than creating a fresh draft step.
+        first = (await authed_client.get(f"/api/tasks/{task_id}")).json()
+        step_id = first["steps"][0]["id"]
+
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"steps": ["step a", "step b"]})
+        second = (await authed_client.get(f"/api/tasks/{task_id}")).json()
+        assert second["steps"][0]["id"] == step_id
+
+    @pytest.mark.asyncio
+    async def test_criteria_toggle_mark_and_unmark(self, authed_client):
+        created = await authed_client.post("/api/tasks", json={
+            "title": "T", "acceptance_criteria": ["only criterion"],
+        })
+        task_id = created.json()["id"]
+
+        marked = await authed_client.post(f"/api/tasks/{task_id}/criteria/toggle", json={
+            "criterion": "only criterion", "met": True,
+        })
+        assert marked.status_code == 200
+
+        # Now DONE transition should succeed since the sole criterion is met.
+        done = await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "done"})
+        assert done.status_code == 200
+        assert done.json()["status"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_criteria_toggle_unknown_task_404s(self, authed_client):
+        resp = await authed_client.post("/api/tasks/nonexistent/criteria/toggle", json={
+            "criterion": "x", "met": True,
+        })
+        assert resp.status_code == 404
+
+
+class TestAgentDetailAPI:
+    @pytest.mark.asyncio
+    async def test_get_unknown_agent_404s(self, authed_client):
+        resp = await authed_client.get("/api/agent/nonexistent")
+        assert resp.status_code == 404
+
+
+class TestDraftTaskAPI:
+    @pytest.mark.asyncio
+    async def test_draft_blocked_when_unconfigured(self, authed_client):
+        resp = await authed_client.post("/api/tasks/draft", json={"title": "Add dark mode"})
+        assert resp.status_code == 400
+
+
+class TestSPAFallback:
+    @pytest.mark.asyncio
+    async def test_unknown_path_serves_spa_shell(self, authed_client):
+        """BrowserRouter paths like /tasks/T-123 must serve the SPA shell
+        on a hard refresh, not 404."""
+        resp = await authed_client.get("/tasks/T-123")
+        assert resp.status_code == 200
+        assert "agent-knots cockpit" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_unknown_api_path_still_404s(self, authed_client):
+        """The catch-all must not shadow /api/* — it's registered last,
+        but still needs its own belt-and-suspenders check."""
+        resp = await authed_client.get("/api/nonexistent")
+        assert resp.status_code == 404
+
+
+class TestEventSerialization:
+    """serialize_event() is the JSON wire format that replaced
+    format_event_html() — the frontend now owns all rendering, so this
+    just needs to be a faithful, JSON-safe mirror of the Event dataclass."""
+
     def test_message_event(self):
         evt = Event(type=EventType.MESSAGE, session_id="s", message="hello")
-        html = format_event_html(evt)
-        assert "hello" in html
-        assert 'prose-avatar agent' in html
+        d = serialize_event(evt)
+        assert d["type"] == "message"
+        assert d["session_id"] == "s"
+        assert d["message"] == "hello"
 
-    def test_thinking_event(self):
-        evt = Event(type=EventType.THINKING, session_id="s", message="hmm")
-        html = format_event_html(evt)
-        assert "hmm" in html
-        assert "prose-thinking" in html
-
-    def test_tool_call_event(self):
+    def test_tool_call_event_nested_dataclass(self):
         evt = Event(
             type=EventType.TOOL_CALL,
             session_id="s",
             tool_call=ToolCall(id="1", name="bash", args={"command": "ls"}),
         )
-        html = format_event_html(evt)
-        assert "bash" in html
-        assert "tool-card" in html
+        d = serialize_event(evt)
+        assert d["type"] == "tool_call"
+        assert d["tool_call"] == {"id": "1", "name": "bash", "args": {"command": "ls"}}
 
     def test_error_event(self):
         evt = Event(type=EventType.ERROR, session_id="s", error="something broke")
-        html = format_event_html(evt)
-        assert "something broke" in html
-        assert "prose-error" in html
+        d = serialize_event(evt)
+        assert d["type"] == "error"
+        assert d["error"] == "something broke"
 
-    def test_blocker_event(self):
-        evt = Event(type=EventType.BLOCKER, session_id="s", message="Approve?")
-        html = format_event_html(evt)
-        assert "Approve?" in html
-        assert "prose-blocker" in html
+    def test_new_event_types_serialize(self):
+        for et in (EventType.AUTO_LOG, EventType.STEER, EventType.DELEGATE,
+                   EventType.CHECKPOINT, EventType.USER, EventType.ENDED):
+            evt = Event(type=et, session_id="s", message="x")
+            assert serialize_event(evt)["type"] == et.value
 
-    def test_state_change_event(self):
-        evt = Event(type=EventType.STATE_CHANGE, session_id="s", message="Mode changed")
-        html = format_event_html(evt)
-        assert "Mode changed" in html
-        assert "prose-state" in html
-
-    def test_html_escaping(self):
-        evt = Event(type=EventType.MESSAGE, session_id="s", message='<script>alert("xss")</script>')
-        html = format_event_html(evt)
-        assert "<script>" not in html
-        assert "&lt;script&gt;" in html
+    def test_json_serializable(self):
+        """The whole point: this must survive json.dumps for the SSE wire."""
+        import json
+        evt = Event(
+            type=EventType.DELEGATE,
+            session_id="s",
+            data={"sub_session_id": "abc", "sub_task_id": "T-1"},
+        )
+        json.dumps(serialize_event(evt))  # should not raise

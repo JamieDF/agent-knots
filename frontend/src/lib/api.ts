@@ -22,6 +22,7 @@ export interface TaskSummary {
 export interface TaskDetail {
   id: string; title: string; description: string
   status: string; priority: string; tags: string[]; project: string
+  review_gate: string
   assigned_to: string; created_at: number; updated_at: number; created_by: string
   acceptance_criteria: string[]; out_of_scope: string[]; dependencies: string[]
   required_credentials: string[]
@@ -37,6 +38,9 @@ export interface TaskDetail {
 
 export async function fetchAgents(): Promise<{ agents: AgentInfo[] }> {
   const res = await fetch('/api/agents'); if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+}
+export async function fetchAgent(id: string): Promise<AgentInfo> {
+  const res = await fetch(`/api/agent/${id}`); if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
 }
 export async function assumeAgent(id: string): Promise<void> { await fetch(`/api/agent/${id}/assume`, { method: 'POST' }) }
 export async function relinquishAgent(id: string): Promise<void> { await fetch(`/api/agent/${id}/relinquish`, { method: 'POST' }) }
@@ -72,15 +76,30 @@ export async function fetchTask(id: string): Promise<TaskDetail> {
 }
 
 export async function createTask(data: {
-  title: string; description?: string; priority?: string; tags?: string[]; acceptance_criteria?: string[]
+  title: string; description?: string; priority?: string; tags?: string[]
+  acceptance_criteria?: string[]; review_gate?: string
 }): Promise<TaskDetail> {
   const res = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
   if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
 }
 
-export async function updateTask(id: string, data: { status?: string; priority?: string; title?: string; description?: string; assign?: string }): Promise<TaskDetail> {
+export async function updateTask(id: string, data: {
+  status?: string; priority?: string; title?: string; description?: string; assign?: string
+  tags?: string[]; acceptance_criteria?: string[]; steps?: string[]; review_gate?: string
+}): Promise<TaskDetail> {
   const res = await fetch(`/api/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
   if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+}
+
+export async function toggleCriterion(id: string, criterion: string, met: boolean): Promise<TaskDetail> {
+  const res = await fetch(`/api/tasks/${id}/criteria/toggle`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ criterion, met }) })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+}
+
+export async function draftTask(title: string): Promise<{ description: string; acceptance_criteria: string[]; tags: string[]; steps: string[] }> {
+  const res = await fetch('/api/tasks/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) })
+  if (!res.ok) { const err = await res.json(); throw new Error(err.detail || `HTTP ${res.status}`) }
+  return res.json()
 }
 
 export async function deleteTask(id: string): Promise<void> {

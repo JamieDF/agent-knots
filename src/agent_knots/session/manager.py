@@ -43,8 +43,15 @@ class Session:
     tokens_used: int = 0
     cost_usd: float = 0.0
 
-    # Internal — not serialised.
-    _events: asyncio.Queue[Event] = field(default_factory=asyncio.Queue, repr=False)
+    # Internal — not serialised. Multiple SSE subscribers (e.g. two browser
+    # tabs open on the same agent) each get their own queue rather than
+    # racing on one — see Session.subscribe()/unsubscribe(). _history is a
+    # bounded ring buffer replayed to new subscribers so a viewer opening
+    # the stream late still sees prior events (and is the seed for a
+    # future replay scrubber).
+    _subscribers: list[asyncio.Queue[Event]] = field(default_factory=list, repr=False)
+    _history: list[Event] = field(default_factory=list, repr=False)
+    _history_limit: int = field(default=500, repr=False)
     _agent: Any = field(default=None, repr=False)       # strands.Agent
     _task: asyncio.Task[Any] | None = field(default=None, repr=False)
     _cancelled: bool = field(default=False, repr=False)
@@ -53,9 +60,26 @@ class Session:
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
 
-    @property
-    def event_stream(self) -> asyncio.Queue[Event]:
-        return self._events
+    def subscribe(self) -> asyncio.Queue[Event]:
+        """Register a new SSE subscriber, pre-seeded with recent history."""
+        q: asyncio.Queue[Event] = asyncio.Queue()
+        for event in self._history:
+            q.put_nowait(event)
+        self._subscribers.append(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue[Event]) -> None:
+        """Remove a subscriber queue (e.g. on SSE client disconnect)."""
+        if q in self._subscribers:
+            self._subscribers.remove(q)
+
+    def _broadcast(self, event: Event) -> None:
+        """Push an event to history and every live subscriber."""
+        self._history.append(event)
+        if len(self._history) > self._history_limit:
+            self._history = self._history[-self._history_limit:]
+        for q in self._subscribers:
+            q.put_nowait(event)
 
     async def cancel(self) -> None:
         """Cancel the running agent task."""
@@ -198,7 +222,7 @@ class SessionManager:
         # before the Agent is constructed below — Strands reads the tools
         # list at construction time, so appending afterward has no effect.
         from agent_knots.session.features import make_delegate_tool
-        all_tools.append(make_delegate_tool(self))
+        all_tools.append(make_delegate_tool(self, session_id))
 
         # Create the model. Strands expects a model instance, not a config dict.
         # For OpenAI-compatible providers, use OpenAIModel with client_args.
@@ -266,7 +290,7 @@ class SessionManager:
         # Register steering hook for criteria validation.
         if task_id:
             from agent_knots.session.features import register_steering_hook
-            register_steering_hook(agent, task_id)
+            register_steering_hook(agent, task_id, session)
 
         # Resolve runtime: explicit > workspace setting > global setting.
         runtime_type = runtime_override  # explicit override from caller
@@ -300,8 +324,8 @@ class SessionManager:
         if session is None:
             return
         await session.cancel()
-        await session._events.put(Event(
-            type=EventType.STATE_CHANGE,
+        session._broadcast(Event(
+            type=EventType.ENDED,
             session_id=session_id,
             message="Session stopped.",
         ))
@@ -327,6 +351,12 @@ class SessionManager:
         # Yield to let the event loop process the task's final cleanup.
         await asyncio.sleep(0)
 
+        session._broadcast(Event(
+            type=EventType.USER,
+            session_id=session_id,
+            message=message,
+        ))
+
         session._task = asyncio.create_task(
             self._run_agent(session, session._agent, message)
         )
@@ -343,7 +373,7 @@ class SessionManager:
             raise ValueError(f"session {session_id!r} not found")
 
         session.mode = mode
-        await session._events.put(Event(
+        session._broadcast(Event(
             type=EventType.STATE_CHANGE,
             session_id=session_id,
             message=f"Mode changed to {mode}",
@@ -357,10 +387,10 @@ class SessionManager:
         agent: Agent,
         prompt: str,
     ) -> None:
-        """Run the agent with a prompt, pushing events to the session queue."""
+        """Run the agent with a prompt, broadcasting events to subscribers."""
         finished = False
         try:
-            await session._events.put(Event(
+            session._broadcast(Event(
                 type=EventType.STATE_CHANGE,
                 session_id=session.id,
                 message="Agent started.",
@@ -374,25 +404,25 @@ class SessionManager:
 
                 event = self._chunk_to_event(session.id, chunk, chunk_state)
                 if event is not None:
-                    await session._events.put(event)
+                    session._broadcast(event)
 
             if not session._cancelled:
                 finished = True
-                await session._events.put(Event(
-                    type=EventType.STATE_CHANGE,
+                session._broadcast(Event(
+                    type=EventType.ENDED,
                     session_id=session.id,
                     message="Agent finished.",
                 ))
 
         except asyncio.CancelledError:
             if not finished:
-                await session._events.put(Event(
-                    type=EventType.STATE_CHANGE,
+                session._broadcast(Event(
+                    type=EventType.ENDED,
                     session_id=session.id,
                     message="Agent cancelled.",
                 ))
         except Exception as exc:
-            await session._events.put(Event(
+            session._broadcast(Event(
                 type=EventType.ERROR,
                 session_id=session.id,
                 error=str(exc),

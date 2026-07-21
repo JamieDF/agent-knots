@@ -1,6 +1,5 @@
 """Tests for SessionManager and Session."""
 
-import asyncio
 import tempfile
 from pathlib import Path
 
@@ -54,12 +53,49 @@ class TestSession:
         await s.cancel()  # should not raise
 
     @pytest.mark.asyncio
-    async def test_event_stream_is_async_queue(self):
+    async def test_broadcast_delivers_to_subscriber(self):
         s = Session()
-        assert isinstance(s._events, asyncio.Queue)
-        await s._events.put(Event(type=EventType.MESSAGE, session_id=s.id, message="hi"))
-        evt = await s._events.get()
+        q = s.subscribe()
+        s._broadcast(Event(type=EventType.MESSAGE, session_id=s.id, message="hi"))
+        evt = await q.get()
         assert evt.message == "hi"
+
+    @pytest.mark.asyncio
+    async def test_broadcast_fans_out_to_multiple_subscribers(self):
+        """Regression test: a second SSE viewer used to race the first
+        for events on one shared queue and silently lose them."""
+        s = Session()
+        q1 = s.subscribe()
+        q2 = s.subscribe()
+        s._broadcast(Event(type=EventType.MESSAGE, session_id=s.id, message="hi"))
+        assert (await q1.get()).message == "hi"
+        assert (await q2.get()).message == "hi"
+
+    @pytest.mark.asyncio
+    async def test_subscribe_replays_history(self):
+        """A subscriber connecting after events already happened (e.g. a
+        second browser tab opened mid-session) should still see them."""
+        s = Session()
+        s._broadcast(Event(type=EventType.MESSAGE, session_id=s.id, message="before"))
+        q = s.subscribe()
+        evt = await q.get()
+        assert evt.message == "before"
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_stops_delivery(self):
+        s = Session()
+        q = s.subscribe()
+        s.unsubscribe(q)
+        s._broadcast(Event(type=EventType.MESSAGE, session_id=s.id, message="hi"))
+        assert q.empty()
+
+    def test_history_bounded(self):
+        s = Session()
+        s._history_limit = 3
+        for i in range(5):
+            s._broadcast(Event(type=EventType.MESSAGE, session_id=s.id, message=str(i)))
+        assert len(s._history) == 3
+        assert [e.message for e in s._history] == ["2", "3", "4"]
 
 
 class TestChunkToEvent:

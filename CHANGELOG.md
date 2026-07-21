@@ -5,6 +5,30 @@ All notable changes to agent-knots are documented here.
 ## [Unreleased]
 
 ### Added
+- **Atelier cockpit redesign — Phase 0 (foundations) + Phase 1 backend.**
+  First phase of the full frontend rebuild described in
+  `design_handoff_atelier_cockpit/`. Light/dark theme system with
+  persisted toggle, reactive URL-synced workspace scope (no more
+  full-page reload to switch workspaces), a shared primitives library
+  (Card/Chip/Toggle/StatusDot/PriorityLabel/SectionLabel/Dialog/Mono),
+  BrowserRouter with a proper SPA-fallback route for deep links (was
+  HashRouter). SSE rewritten end to end: the backend now streams
+  structured JSON events (`events.py::serialize_event()`) instead of
+  pre-rendered HTML fragments, and multiple simultaneous viewers of one
+  agent (e.g. two browser tabs) each get their own event queue instead of
+  racing for a single shared one. Six new event kinds (`auto_log`,
+  `steer`, `delegate`, `checkpoint`, `user`, `ended`). Task API gained
+  `review_gate`, per-criterion toggling, single-agent detail, and an
+  agent-assisted task-drafting endpoint.
+
+### Fixed
+- **`PATCH /api/tasks/{id}` silently dropped description/tags/
+  acceptance_criteria/steps edits.** `UpdateTaskRequest` was missing
+  those fields entirely; the frontend's edit dialog sent them but
+  nothing on the backend ever applied them. Fixed with existing-entry
+  matching so criteria_met/step status survive an edit that doesn't
+  touch them.
+
 - **`install.sh`.** One script, run after `git clone`: installs `uv` if
   missing, `uv sync`s Python dependencies, builds the web cockpit
   frontend (skipped with a clear warning if Node isn't available), and

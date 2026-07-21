@@ -38,6 +38,17 @@ class Priority(StrEnum):
     URGENT = "urgent"
 
 
+class ReviewGate(StrEnum):
+    """Controls whether a task requires a review step before DONE.
+
+    Enforcement (auto-firing a reviewer agent on entering REVIEW) is not
+    implemented yet — this field is currently just persisted + displayed.
+    """
+    AUTO = "auto"
+    MANUAL = "manual"
+    NONE = "none"
+
+
 @dataclass
 class Blocker:
     """Describes a state where the task cannot proceed."""
@@ -81,6 +92,7 @@ class Task:
     priority: Priority = Priority.MEDIUM
     tags: list[str] = field(default_factory=list)
     project: str = ""
+    review_gate: ReviewGate = ReviewGate.MANUAL
 
     # What "done" means. criteria_met holds the subset of
     # acceptance_criteria that have been explicitly marked satisfied —

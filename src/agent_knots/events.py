@@ -7,7 +7,7 @@ events are translated into these types for consumption by TUI and web UIs.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
@@ -21,6 +21,14 @@ class EventType(StrEnum):
     PROGRESS = "progress"
     STATE_CHANGE = "state_change"
     ERROR = "error"
+    # Atelier event kinds — see events.py's serialize_event() for the wire
+    # format these are sent in over SSE.
+    AUTO_LOG = "auto_log"
+    STEER = "steer"
+    DELEGATE = "delegate"
+    CHECKPOINT = "checkpoint"
+    USER = "user"
+    ENDED = "ended"
 
 
 @dataclass
@@ -55,3 +63,15 @@ class Event:
     tool_result: ToolResult | None = None
     error: str = ""
     data: dict[str, Any] | None = None
+
+
+def serialize_event(event: Event) -> dict[str, Any]:
+    """Serialize an Event to a JSON-safe dict for the SSE wire format.
+
+    Replaces the old format_event_html() approach — the frontend now
+    owns all rendering, so this just needs to be a faithful JSON mirror
+    of the dataclass (with `type` as its string value).
+    """
+    d = asdict(event)
+    d["type"] = event.type.value
+    return d

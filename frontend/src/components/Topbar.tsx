@@ -1,79 +1,81 @@
 import { useEffect, useState } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 import type { AgentInfo } from '../lib/api'
 import { fetchWorkspaces, type Workspace } from '../lib/api'
-import { getActiveWorkspace, setActiveWorkspace } from '../lib/workspace'
+import { useWorkspaceScope } from '../lib/workspaceContext'
+import { useTheme } from '../theme/ThemeContext'
 
 interface Props {
   agents: AgentInfo[]
 }
 
+const NAV_ITEMS = [
+  { to: '/', label: 'Dashboard', end: true },
+  { to: '/tasks', label: 'Tasks', end: false },
+  { to: '/review', label: 'Review', end: false },
+  { to: '/workflows', label: 'Workflows', end: false },
+  { to: '/vault', label: 'Vault', end: false },
+  { to: '/settings', label: 'Settings', end: false },
+]
+
+/** Floating top-bar pill nav, per design_handoff_atelier_cockpit/README.md:
+ * Dashboard · Tasks · Review · Workflows · Vault · Settings, plus
+ * workspace scope, stats, notifications, theme toggle, + New session. */
 function Topbar({ agents }: Props) {
   const totalTokens = agents.reduce((s, a) => s + a.tokens_used, 0)
-  const totalCost = agents.reduce((s, a) => s + a.cost_usd, 0)
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
-  const [active, setActive] = useState(getActiveWorkspace())
-  const [tasksOpen, setTasksOpen] = useState(false)
-  const location = useLocation()
+  const { workspace, setWorkspace } = useWorkspaceScope()
+  const { theme, toggleTheme } = useTheme()
 
   useEffect(() => {
     fetchWorkspaces().then(d => setWorkspaces(d.workspaces)).catch(() => {})
   }, [])
 
-  // Close dropdown on nav.
-  useEffect(() => { setTasksOpen(false) }, [location])
-
-  const handleWorkspaceChange = (id: string) => {
-    setActiveWorkspace(id)
-    setActive(id)
-    window.location.reload()
-  }
-
-  const isTasksActive = location.pathname.startsWith('/board') || location.pathname.startsWith('/tasks')
-
   return (
-    <header className="topbar">
-      <div className="topbar-brand">⚡ agent-knots</div>
-      <nav className="topbar-nav">
-        <NavLink to="/" end>Overview</NavLink>
+    <header
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '8px 16px',
+        margin: 10,
+        borderRadius: 12,
+        background: 'var(--card)',
+        border: '1px solid var(--line)',
+        boxShadow: 'var(--shadow)',
+        flexShrink: 0,
+      }}
+    >
+      <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--ink)', paddingRight: 4 }}>⚡ agent-knots</div>
 
-        {/* Tasks dropdown */}
-        <div style={{ position: 'relative' }}>
-          <button
-            onClick={() => setTasksOpen(!tasksOpen)}
-            style={{
-              color: isTasksActive ? 'var(--fg)' : 'var(--fg-soft)',
-              textDecoration: 'none', padding: '4px 12px', borderRadius: 6, fontSize: 13,
-              fontWeight: 500, background: isTasksActive ? 'var(--surface-raised)' : 'transparent',
-              border: 0, cursor: 'pointer', fontFamily: 'inherit',
-              display: 'flex', alignItems: 'center', gap: 4,
-            }}
-            onBlur={() => setTimeout(() => setTasksOpen(false), 150)}
+      <nav style={{ display: 'flex', gap: 2 }}>
+        {NAV_ITEMS.map(item => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.end}
+            style={({ isActive }) => ({
+              padding: '5px 12px',
+              borderRadius: 8,
+              fontSize: 13,
+              fontWeight: 500,
+              textDecoration: 'none',
+              color: isActive ? 'var(--ink)' : 'var(--ink2)',
+              background: isActive ? 'var(--card2)' : 'transparent',
+            })}
           >
-            Tasks ▾
-          </button>
-          {tasksOpen && (
-            <div style={{
-              position: 'absolute', top: '100%', left: 0, marginTop: 4,
-              background: 'var(--surface)', border: '1px solid var(--border)',
-              borderRadius: 8, padding: 4, minWidth: 100, zIndex: 60,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-            }}>
-              <NavLink to="/board" style={dropdownLink}>Board</NavLink>
-              <NavLink to="/tasks" style={dropdownLink}>List</NavLink>
-            </div>
-          )}
-        </div>
-
-        <NavLink to="/settings">Settings</NavLink>
+            {item.label}
+          </NavLink>
+        ))}
       </nav>
+
       <select
-        value={active}
-        onChange={e => handleWorkspaceChange(e.target.value)}
+        value={workspace}
+        onChange={e => setWorkspace(e.target.value)}
         style={{
-          marginLeft: 12, padding: '3px 8px', borderRadius: 6, fontSize: 12,
-          border: '1px solid var(--border)', background: 'var(--surface-raised)',
-          color: 'var(--fg-soft)', outline: 'none', fontFamily: 'inherit', cursor: 'pointer',
+          marginLeft: 8, padding: '3px 8px', borderRadius: 8, fontSize: 12,
+          border: '1px solid var(--line2)', background: 'var(--card2)',
+          color: 'var(--ink2)', outline: 'none', fontFamily: 'inherit', cursor: 'pointer',
           maxWidth: 160,
         }}
       >
@@ -82,18 +84,50 @@ function Topbar({ agents }: Props) {
           <option key={w.id} value={w.id}>{w.name}</option>
         ))}
       </select>
-      <div className="topbar-stats">
-        <span>{agents.length} agent{agents.length !== 1 ? 's' : ''}</span>
-        <span>{totalTokens.toLocaleString()} tok</span>
-        <span>${totalCost.toFixed(2)}</span>
+
+      <div
+        style={{
+          marginLeft: 8, padding: '4px 10px', borderRadius: 8,
+          background: 'var(--card2)', fontSize: 11.5, fontFamily: 'var(--font-mono)',
+          color: 'var(--ink2)', whiteSpace: 'nowrap',
+        }}
+      >
+        {agents.length} agent{agents.length !== 1 ? 's' : ''} · {formatTokens(totalTokens)} tok
+      </div>
+
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+        {/* Notification bell — static until Phase 6 wires it to the SSE stream. */}
+        <button
+          title="Notifications"
+          style={{ fontSize: 15, padding: '4px 6px', borderRadius: 8, color: 'var(--ink2)' }}
+        >
+          ◷
+        </button>
+        <button
+          onClick={toggleTheme}
+          title="Toggle theme"
+          style={{ fontSize: 15, padding: '4px 6px', borderRadius: 8, color: 'var(--ink2)' }}
+        >
+          {theme === 'dark' ? '☀' : '☾'}
+        </button>
+        <button
+          disabled
+          title="Coming in Phase 2/3"
+          style={{
+            padding: '6px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600,
+            background: 'var(--acc)', color: 'var(--acc-ink)', opacity: 0.5, cursor: 'not-allowed',
+          }}
+        >
+          + New session
+        </button>
       </div>
     </header>
   )
 }
 
-const dropdownLink: React.CSSProperties = {
-  display: 'block', padding: '6px 12px', borderRadius: 4, fontSize: 13,
-  color: 'var(--fg-soft)', textDecoration: 'none',
+function formatTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
+  return String(n)
 }
 
 export default Topbar

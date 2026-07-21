@@ -11,6 +11,8 @@ import time
 
 from strands.hooks.events import AfterModelCallEvent, AfterToolCallEvent
 
+from agent_knots.events import Event, EventType
+
 
 def register_session_hooks(agent, session: "Session") -> None:
     """Register hooks on an agent for a session.
@@ -61,12 +63,18 @@ def register_session_hooks(agent, session: "Session") -> None:
             store = TaskStore(tasks_dir())
             task = store.get(task_id)
             if task and not task.status.is_terminal():
+                entry_text = f"[{tool_name}] {args_str}".strip()
                 entry = ProgressEntry(
-                    entry=f"[{tool_name}] {args_str}".strip(),
+                    entry=entry_text,
                     status=task.status,
                     caller=f"agent:{session.id}",
                 )
                 store.log_progress(task_id, entry)
+                session._broadcast(Event(
+                    type=EventType.AUTO_LOG,
+                    session_id=session.id,
+                    message=entry_text,
+                ))
         except Exception:
             pass  # Don't break the agent for logging failures.
 

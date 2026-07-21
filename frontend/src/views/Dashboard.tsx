@@ -5,7 +5,7 @@ import SetupWizard from '../components/SetupWizard'
 import { fetchAgents, fetchSettings, fetchTasks, createSession, type AgentInfo } from '../lib/api'
 import { getActiveWorkspace } from '../lib/workspace'
 
-function Overview() {
+function Dashboard() {
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [configured, setConfigured] = useState<boolean | null>(null)
   const [showWizard, setShowWizard] = useState(false)
@@ -113,4 +113,4 @@ function Overview() {
   )
 }
 
-export default Overview
+export default Dashboard

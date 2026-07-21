@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import Topbar from './components/Topbar'
+import { ThemeProvider } from './theme/ThemeContext'
+import { WorkspaceProvider } from './lib/workspaceContext'
 import { fetchAgents, type AgentInfo } from './lib/api'
 import './App.css'
 
@@ -21,12 +23,14 @@ function App() {
   }, [])
 
   return (
-    <>
-      <Topbar agents={agents} />
-      <main className="canvas">
-        <Outlet />
-      </main>
-    </>
+    <ThemeProvider>
+      <WorkspaceProvider>
+        <Topbar agents={agents} />
+        <main className="canvas">
+          <Outlet />
+        </main>
+      </WorkspaceProvider>
+    </ThemeProvider>
   )
 }
 

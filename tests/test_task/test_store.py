@@ -9,6 +9,7 @@ from agent_knots.task.models import (
     Blocker,
     Priority,
     ProgressEntry,
+    ReviewGate,
     Step,
     Task,
     TaskStatus,
@@ -52,6 +53,17 @@ class TestCRUD:
         store.create(sample_task)
         with pytest.raises(ValueError, match="already exists"):
             store.create(sample_task)
+
+    def test_review_gate_defaults_to_manual(self, store, sample_task):
+        store.create(sample_task)
+        fetched = store.get(sample_task.id)
+        assert fetched.review_gate == ReviewGate.MANUAL
+
+    def test_review_gate_round_trips(self, store, sample_task):
+        sample_task.review_gate = ReviewGate.AUTO
+        store.create(sample_task)
+        fetched = store.get(sample_task.id)
+        assert fetched.review_gate == ReviewGate.AUTO
 
     def test_get_missing(self, store):
         assert store.get("nonexistent") is None

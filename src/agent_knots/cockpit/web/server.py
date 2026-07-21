@@ -10,7 +10,6 @@ Serves:
 import asyncio
 import json
 import secrets
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -21,12 +20,12 @@ from pydantic import BaseModel
 
 from agent_knots.cockpit.web.auth import Auth, COOKIE_NAME, load_or_create_token, verify_token
 from agent_knots.config import cockpit_token_file, tasks_dir
-from agent_knots.events import Event, EventType
+from agent_knots.events import Event, EventType, serialize_event
 from agent_knots.session.manager import Session, SessionManager
 from agent_knots import provider as provider_module
 from agent_knots import settings
 from agent_knots.task.store import TaskStore
-from agent_knots.task.models import Task, TaskStatus, Priority, new_task_id
+from agent_knots.task.models import Task, TaskStatus, Priority, ReviewGate, Step, new_task_id
 from agent_knots.tools.registry import ToolRegistry, CustomTool
 from agent_knots.project.store import ProjectStore
 from agent_knots.project.models import Project
@@ -59,6 +58,7 @@ class CreateTaskRequest(BaseModel):
     project: str = ""
     tags: list = []
     acceptance_criteria: list = []
+    review_gate: str = "manual"
 
 
 class UpdateTaskRequest(BaseModel):
@@ -66,6 +66,20 @@ class UpdateTaskRequest(BaseModel):
     status: Optional[str] = None
     priority: Optional[str] = None
     assign: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[list] = None
+    acceptance_criteria: Optional[list] = None
+    steps: Optional[list] = None  # list of step title strings
+    review_gate: Optional[str] = None
+
+
+class ToggleCriterionRequest(BaseModel):
+    criterion: str
+    met: bool
+
+
+class DraftTaskRequest(BaseModel):
+    title: str
 
 
 class CreateToolRequest(BaseModel):
@@ -151,12 +165,16 @@ def create_app(
 
     # ── SPA shell ────────────────────────────────────────────────────────
 
+    def _spa_html() -> str:
+        """The SPA shell HTML. In prod mode, this is the Vite-built index.html."""
+        if static_dir and (static_dir / "index.html").exists():
+            return (static_dir / "index.html").read_text()
+        return SPA_SHELL_HTML
+
     @app.get("/")
     async def index():
         """Serve the SPA shell. In prod mode, this is the Vite-built index.html."""
-        if static_dir and (static_dir / "index.html").exists():
-            return HTMLResponse((static_dir / "index.html").read_text())
-        return HTMLResponse(SPA_SHELL_HTML)
+        return HTMLResponse(_spa_html())
 
     # ── REST API ─────────────────────────────────────────────────────────
 
@@ -183,10 +201,19 @@ def create_app(
 
     @app.get("/api/agent/{agent_id}/events")
     async def agent_events(agent_id: str, request: Request):
-        """SSE endpoint for live agent events."""
+        """SSE endpoint for live agent events.
+
+        Each connection gets its own subscriber queue (pre-seeded with
+        recent history) via Session.subscribe(), so multiple simultaneous
+        viewers of the same agent (e.g. two browser tabs, or a Dashboard
+        card open alongside its Agent Thread) each see every event rather
+        than racing for them on one shared queue.
+        """
         session = session_manager.get(agent_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Agent not found")
+
+        q = session.subscribe()
 
         async def event_generator():
             # Send initial connection event.
@@ -199,19 +226,18 @@ def create_app(
                         break
 
                     try:
-                        event = await asyncio.wait_for(
-                            session.event_stream.get(), timeout=15.0
-                        )
+                        event = await asyncio.wait_for(q.get(), timeout=15.0)
                     except asyncio.TimeoutError:
                         # Send keepalive.
                         yield ": keepalive\n\n"
                         continue
 
-                    event_html = format_event_html(event)
-                    yield f"data: {json.dumps({'html': event_html, 'type': event.type.value, 'session_id': event.session_id})}\n\n"
+                    yield f"data: {json.dumps(serialize_event(event))}\n\n"
 
             except asyncio.CancelledError:
                 pass
+            finally:
+                session.unsubscribe(q)
 
         return StreamingResponse(
             event_generator(),
@@ -222,6 +248,23 @@ def create_app(
                 "X-Accel-Buffering": "no",
             },
         )
+
+    @app.get("/api/agent/{agent_id}")
+    async def get_agent(agent_id: str):
+        """Return a single session's detail (Task Detail's session-info
+        side block, Agent Thread's header)."""
+        session = session_manager.get(agent_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return {
+            "id": session.id,
+            "mode": session.mode,
+            "task_id": session.task_id,
+            "project_id": session.project_id,
+            "tokens_used": session.tokens_used,
+            "cost_usd": session.cost_usd,
+            "running": session.running,
+        }
 
     @app.post("/api/agent/{agent_id}/assume")
     async def agent_assume(agent_id: str):
@@ -374,13 +417,19 @@ def create_app(
             project=body.project,
             tags=body.tags,
             acceptance_criteria=body.acceptance_criteria,
+            review_gate=ReviewGate(body.review_gate),
         )
         store.create(task)
         return _task_to_response(task)
 
     @app.patch("/api/tasks/{task_id}")
     async def update_task(task_id: str, body: UpdateTaskRequest):
-        """Update a task's status, priority, or assignment."""
+        """Update a task's status, priority, assignment, or content fields.
+
+        Criteria/steps are matched against existing entries by text so
+        criteria_met / step status survive an edit that doesn't touch
+        them — a blind overwrite would silently reset that state.
+        """
         store = TaskStore(tasks_dir())
         task = store.get(task_id)
         if task is None:
@@ -394,10 +443,86 @@ def create_app(
         if body.title:
             task.title = body.title
             task = store.update(task)
+        if body.description is not None:
+            task.description = body.description
+            task = store.update(task)
+        if body.tags is not None:
+            task.tags = body.tags
+            task = store.update(task)
+        if body.review_gate is not None:
+            task.review_gate = ReviewGate(body.review_gate)
+            task = store.update(task)
+        if body.acceptance_criteria is not None:
+            # criteria_met is keyed by criterion text, so preserving it
+            # here is automatic — no matching needed, just don't touch it.
+            task.acceptance_criteria = body.acceptance_criteria
+            task.criteria_met = [c for c in task.criteria_met if c in body.acceptance_criteria]
+            task = store.update(task)
+        if body.steps is not None:
+            existing_by_title = {s.title: s for s in task.steps}
+            new_steps = []
+            for title in body.steps:
+                existing = existing_by_title.get(title)
+                if existing is not None:
+                    new_steps.append(existing)
+                else:
+                    new_steps.append(Step(id=f"s-{secrets.token_hex(3)}", title=title))
+            task.steps = new_steps
+            task = store.update(task)
         if body.assign is not None:
             task = store.assign(task_id, body.assign)
 
         return _task_to_response(task)
+
+    @app.post("/api/tasks/{task_id}/criteria/toggle")
+    async def toggle_criterion(task_id: str, body: ToggleCriterionRequest):
+        """Mark/unmark a single acceptance criterion as met."""
+        store = TaskStore(tasks_dir())
+        try:
+            if body.met:
+                task = store.mark_criterion_met(task_id, body.criterion)
+            else:
+                task = store.unmark_criterion_met(task_id, body.criterion)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        return _task_to_response(task)
+
+    @app.post("/api/tasks/draft")
+    async def draft_task(body: DraftTaskRequest):
+        """Draft a task's description/criteria/tags/steps from a title
+        via a single non-tool-calling completion. Used by the "✨ Draft
+        with agent" button in the create/edit dialog — no Strands Agent
+        or session lifecycle involved, just one structured completion."""
+        provider = provider_module.resolve_provider()
+        if not provider.is_configured:
+            raise HTTPException(status_code=400, detail="Settings not configured. Run setup first.")
+
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(api_key=provider.api_key, base_url=provider.base_url or None)
+        prompt = (
+            "Given a task title, draft a JSON object with fields: "
+            "description (string), acceptance_criteria (list of strings), "
+            "tags (list of strings), steps (list of strings). "
+            "Respond with ONLY the JSON object, no other text.\n\n"
+            f"Title: {body.title}"
+        )
+        try:
+            resp = await client.chat.completions.create(
+                model=provider.model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+            )
+            draft = json.loads(resp.choices[0].message.content)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Draft generation failed: {e}")
+
+        return {
+            "description": draft.get("description", ""),
+            "acceptance_criteria": draft.get("acceptance_criteria", []),
+            "tags": draft.get("tags", []),
+            "steps": draft.get("steps", []),
+        }
 
     @app.delete("/api/tasks/{task_id}")
     async def delete_task(task_id: str):
@@ -598,140 +723,23 @@ def create_app(
         if assets_dir.exists():
             app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
+    # ── SPA fallback (BrowserRouter support) ─────────────────────────────
+    # Registered last so it never shadows /api/* or /assets/* routes —
+    # Starlette matches routes in registration order, and a `path:`
+    # converter registered earlier would swallow everything below it.
+    # Needed because the frontend now uses real paths (not hash routing),
+    # so a hard refresh/bookmark on e.g. /tasks/T-123 hits this server
+    # directly and must get the SPA shell, not a 404.
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str):
+        if full_path.startswith("api/") or full_path.startswith("assets/"):
+            raise HTTPException(status_code=404, detail="Not found")
+        return HTMLResponse(_spa_html())
+
     return app
 
 
-# ── event HTML formatting ────────────────────────────────────────────────────
-
-
-def format_event_html(event: Event) -> str:
-    """Format an agent-knots Event as an HTML snippet for the cockpit.
-
-    Matches the Go implementation's formatEventHTML, producing the same
-    CSS class structure used by the SPA.
-    """
-    ts = time.strftime("%H:%M:%S", time.localtime(event.timestamp))
-
-    if event.type == EventType.MESSAGE:
-        return (
-            f'<div class="prose-row">'
-            f'<div class="prose-avatar agent">A</div>'
-            f'<div class="prose-content">'
-            f'<div class="prose-text">{_escape(event.message)}</div>'
-            f'</div>'
-            f'<div class="prose-ts">{ts}</div>'
-            f'</div>'
-        )
-
-    if event.type == EventType.THINKING:
-        return (
-            f'<div class="prose-row prose-thinking">'
-            f'<div class="prose-avatar thinking">T</div>'
-            f'<div class="prose-content">'
-            f'<div class="prose-text">{_escape(event.message)}</div>'
-            f'</div>'
-            f'<div class="prose-ts">{ts}</div>'
-            f'</div>'
-        )
-
-    if event.type == EventType.TOOL_CALL and event.tool_call:
-        icon = _tool_icon(event.tool_call.name)
-        args = _format_args(event.tool_call.args)
-        return (
-            f'<div class="tool-card">'
-            f'<div class="tool-header"><span class="tool-icon">{icon}</span>'
-            f'<span class="tool-name">{event.tool_call.name}</span></div>'
-            f'<div class="tool-args">{_escape(args)}</div>'
-            f'</div>'
-        )
-
-    if event.type == EventType.TOOL_RESULT:
-        return (
-            f'<div class="prose-row">'
-            f'<div class="prose-avatar" style="color:var(--done)">&#10003;</div>'
-            f'<div class="prose-content">'
-            f'<div class="prose-text" style="color:var(--muted);font-size:12px">'
-            f'{_escape(event.message[:200])}</div>'
-            f'</div>'
-            f'<div class="prose-ts">{ts}</div>'
-            f'</div>'
-        )
-
-    if event.type == EventType.BLOCKER:
-        return (
-            f'<div class="prose-row prose-blocker">'
-            f'<div class="prose-avatar" style="color:var(--assumed)">?</div>'
-            f'<div class="prose-content">'
-            f'<div class="prose-text">{_escape(event.message)}</div>'
-            f'</div>'
-            f'<div class="prose-ts">{ts}</div>'
-            f'</div>'
-        )
-
-    if event.type == EventType.ERROR:
-        return (
-            f'<div class="prose-row prose-error">'
-            f'<div class="prose-avatar" style="color:var(--blocked)">!</div>'
-            f'<div class="prose-content">'
-            f'<div class="prose-text" style="color:var(--blocked)">{_escape(event.error or event.message)}</div>'
-            f'</div>'
-            f'<div class="prose-ts">{ts}</div>'
-            f'</div>'
-        )
-
-    if event.type == EventType.STATE_CHANGE:
-        return (
-            f'<div class="prose-row prose-state">'
-            f'<div class="prose-avatar" style="color:var(--info)">⚡</div>'
-            f'<div class="prose-content">'
-            f'<div class="prose-text" style="color:var(--muted);font-size:12px">{_escape(event.message)}</div>'
-            f'</div>'
-            f'<div class="prose-ts">{ts}</div>'
-            f'</div>'
-        )
-
-    # Default / unknown.
-    return (
-        f'<div class="prose-row">'
-        f'<div class="prose-content">'
-        f'<div class="prose-text" style="color:var(--muted)">{_escape(event.message)}</div>'
-        f'</div>'
-        f'<div class="prose-ts">{ts}</div>'
-        f'</div>'
-    )
-
-
-def _tool_icon(name: str) -> str:
-    """Return an icon for a tool name."""
-    icons = {
-        "bash": "▶",
-        "shell": "▶",
-        "read": "R",
-        "read_file": "R",
-        "edit": "E",
-        "edit_file": "E",
-        "write": "W",
-        "write_file": "W",
-    }
-    return icons.get(name, "●")
-
-
-def _format_args(args: dict) -> str:
-    """Format tool arguments for display, truncated."""
-    if not args:
-        return ""
-    parts = []
-    for k, v in args.items():
-        s = str(v)
-        if len(s) > 60:
-            s = s[:57] + "..."
-        parts.append(f"{k}={s}")
-    return ", ".join(parts)
-
-
-def _escape(text: str) -> str:
-    """Basic HTML escaping."""
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+# ── serialization helpers ────────────────────────────────────────────────────
 
 
 def _task_to_response(task: Task) -> dict:
@@ -744,6 +752,7 @@ def _task_to_response(task: Task) -> dict:
         "priority": task.priority.value,
         "tags": task.tags,
         "project": task.project,
+        "review_gate": task.review_gate.value,
         "assigned_to": task.assigned_to,
         "created_at": task.created_at,
         "updated_at": task.updated_at,

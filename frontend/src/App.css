@@ -1,51 +1,5 @@
-/* Topbar */
-.topbar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  flex-shrink: 0;
-}
-
-.topbar-brand {
-  font-weight: 700;
-  font-size: 16px;
-  color: var(--fg);
-}
-
-.topbar-nav {
-  display: flex;
-  gap: 4px;
-}
-
-.topbar-nav a {
-  color: var(--fg-soft);
-  text-decoration: none;
-  padding: 4px 12px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  transition: background 0.15s, color 0.15s;
-}
-
-.topbar-nav a:hover { background: var(--surface-raised); text-decoration: none; }
-
-.topbar-nav a.active {
-  background: var(--surface-raised);
-  color: var(--fg);
-}
-
-.topbar-stats {
-  margin-left: auto;
-  display: flex;
-  gap: 16px;
-  font-size: 12px;
-  font-family: var(--font-mono);
-  color: var(--fg-soft);
-  font-variant-numeric: tabular-nums;
-}
+/* Topbar is now built with inline Atelier-token styles directly in
+   Topbar.tsx (Phase 0 rewrite) rather than these classes. */
 
 /* Canvas — main content area */
 .canvas {

@@ -4,7 +4,7 @@ import ChatInput from '../components/ChatInput'
 import { assumeAgent, relinquishAgent, sendMessage, fetchTask, type AgentInfo, fetchAgents, type TaskDetail } from '../lib/api'
 import { subscribeToAgent, type SSEEvent } from '../lib/sse'
 
-interface EventItem { id: number; html: string; type: string; text: string }
+interface EventItem extends SSEEvent { id: number }
 type Tab = 'terminal' | 'review' | 'code' | 'browser'
 
 interface FileChange {
@@ -13,7 +13,13 @@ interface FileChange {
   timestamp: number
 }
 
-function AgentFocus() {
+/** Interim Agent Thread renderer — Phase 0 only wires the SSE payload
+ * from HTML fragments to structured JSON events (see lib/sse.ts); the
+ * full 3-zone Atelier layout with per-kind event renderers, delegation
+ * expand, checkpoint/revert, and replay scrubber lands in Phase 3. This
+ * keeps the same panels/classes as before, just driven by real fields
+ * instead of parsing rendered HTML. */
+function AgentThread() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const eventsEndRef = useRef<HTMLDivElement>(null)
@@ -50,40 +56,40 @@ function AgentFocus() {
     return () => { mounted = false; clearInterval(interval) }
   }, [id])
 
-  // Subscribe to SSE — also extract terminal output.
+  // Subscribe to SSE — also extract terminal output + touched files from
+  // the structured event fields (no more HTML scraping).
   useEffect(() => {
     if (!id) return
     const es = subscribeToAgent(
       id,
       (evt: SSEEvent) => {
         counterRef.current += 1
-        setEvents(prev => [...prev.slice(-200), { id: counterRef.current, html: evt.html, type: evt.type, text: stripHtml(evt.html) }])
-        // Capture tool results for terminal.
-        if (evt.type === 'tool_result' && evt.html) {
-          const text = stripHtml(evt.html)
-          setTermLines(prev => [...prev.slice(-500), text])
+        setEvents(prev => [...prev.slice(-200), { ...evt, id: counterRef.current }])
+
+        if (evt.type === 'tool_result' && evt.message) {
+          setTermLines(prev => [...prev.slice(-500), evt.message])
         }
-        // Track file changes from tool calls.
-        if (evt.type === 'tool_call' && evt.html) {
-          const text = stripHtml(evt.html).toLowerCase()
-          // Extract file path from tool call display.
-          const pathMatch = text.match(/(?:file|path|edit|write|read)\s*[:=]?\s*(\S+\.\w+)/i)
-            || text.match(/(\/\S+\.\w+)/)
-            || text.match(/['\"](\S+\.\w+)['\"]/)
-          if (pathMatch) {
-            const action = text.includes('edit') || text.includes('write') ? 'edit'
-              : text.includes('shell') || text.includes('bash') ? 'shell'
+
+        if (evt.type === 'tool_call' && evt.tool_call) {
+          const path = findFilePath(evt.tool_call.args)
+          if (path) {
+            const name = evt.tool_call.name.toLowerCase()
+            const action = name.includes('edit') || name.includes('write') ? 'edit'
+              : name.includes('shell') || name.includes('bash') ? 'shell'
               : 'read'
             setFiles(prev => {
-              const exists = prev.find(f => f.path === pathMatch[1])
-              if (exists) return prev
-              return [...prev.slice(-50), { path: pathMatch[1], action, timestamp: Date.now() }]
+              if (prev.find(f => f.path === path)) return prev
+              return [...prev.slice(-50), { path, action, timestamp: Date.now() }]
             })
           }
         }
       },
       () => {
-        setEvents(prev => [...prev, { id: counterRef.current + 1, html: '<p style="font-size:12px;color:var(--muted);padding:10px">Session ended.</p>', type: 'state_change', text: 'Session ended.' }])
+        counterRef.current += 1
+        setEvents(prev => [...prev, {
+          id: counterRef.current, type: 'ended', session_id: id, timestamp: Date.now() / 1000,
+          message: 'Session ended.', tool_call: null, tool_result: null, error: '', data: null,
+        }])
       },
     )
     return () => es.close()
@@ -96,12 +102,10 @@ function AgentFocus() {
   const handleRelinquish = useCallback(async () => { if (!id) return; await relinquishAgent(id); setMode('agent') }, [id])
   const handleSend = useCallback(async (message: string) => {
     if (!id) return
-    counterRef.current += 1
-    const now = new Date()
-    const ts = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
-    const userHtml = `<div class="prose-row prose-user"><div class="prose-avatar user">Y</div><div class="prose-content"><div class="prose-text">${message.replace(/</g, '&lt;')}</div></div><div class="prose-ts">${ts}</div></div>`
-    setEvents(prev => [...prev, { id: counterRef.current, html: userHtml, type: 'message', text: message }])
     await sendMessage(id, message)
+    // The backend now broadcasts a USER event for every sent message
+    // (so other viewers see it too) — no need to optimistically render
+    // it here ourselves; it'll arrive over the same SSE stream.
   }, [id])
 
   if (!id) return null
@@ -123,13 +127,16 @@ function AgentFocus() {
         <div className="agent-header">
           <button className="back-btn" onClick={() => navigate('/')}>←</button>
           <div className="agent-id"><strong>{id}</strong></div>
+          {/* DRIVING = user has control (backend mode "assistant"); WATCHING
+              = agent has control (backend mode "agent") — see Phase 0 plan's
+              terminology note. */}
           <span className={`mode-pill ${isDriving ? 'assumed' : ''}`} id="mode-pill"><span className="pill-dot" />{isDriving ? 'driving' : 'watching'}</span>
           <div className="spacer" />
           {isDriving ? <button className="btn btn-relinquish" onClick={handleRelinquish}>Relinquish</button> : <button className="btn btn-assume" onClick={handleAssume}>Assume</button>}
         </div>
         <div className="focus-events" id="focus-events">
           {events.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 12, padding: 10 }}>Waiting for events...</p>}
-          {events.map(evt => <div key={evt.id} dangerouslySetInnerHTML={{ __html: evt.html }} />)}
+          {events.map(evt => <EventRow key={evt.id} evt={evt} />)}
           <div ref={eventsEndRef} />
         </div>
         <ChatInput onSend={handleSend} disabled={!agent} />
@@ -164,6 +171,136 @@ function AgentFocus() {
   )
 }
 
+// ── Event row ────────────────────────────────────────────────────────────────
+
+function EventRow({ evt }: { evt: EventItem }) {
+  const ts = new Date(evt.timestamp * 1000)
+  const tsStr = `${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}:${String(ts.getSeconds()).padStart(2, '0')}`
+
+  if (evt.type === 'tool_call' && evt.tool_call) {
+    const args = Object.entries(evt.tool_call.args)
+      .map(([k, v]) => `${k}=${truncate(String(v), 60)}`).join(', ')
+    return (
+      <div className="tool-card">
+        <div className="tool-header"><span className="tool-icon">●</span><span className="tool-name">{evt.tool_call.name}</span></div>
+        {args && <div className="tool-args">{args}</div>}
+      </div>
+    )
+  }
+
+  if (evt.type === 'tool_result') {
+    return (
+      <div className="prose-row">
+        <div className="prose-avatar" style={{ color: 'var(--done)' }}>✓</div>
+        <div className="prose-content"><div className="prose-text" style={{ color: 'var(--muted)', fontSize: 12 }}>{truncate(evt.message, 200)}</div></div>
+        <div className="prose-ts">{tsStr}</div>
+      </div>
+    )
+  }
+
+  if (evt.type === 'thinking') {
+    return (
+      <div className="prose-row prose-thinking">
+        <div className="prose-avatar thinking">T</div>
+        <div className="prose-content"><div className="prose-text">{evt.message}</div></div>
+        <div className="prose-ts">{tsStr}</div>
+      </div>
+    )
+  }
+
+  if (evt.type === 'blocker' || evt.type === 'ask') {
+    return (
+      <div className="prose-row prose-blocker">
+        <div className="prose-avatar" style={{ color: 'var(--assumed)' }}>?</div>
+        <div className="prose-content"><div className="prose-text">{evt.message}</div></div>
+        <div className="prose-ts">{tsStr}</div>
+      </div>
+    )
+  }
+
+  if (evt.type === 'error') {
+    return (
+      <div className="prose-row prose-error">
+        <div className="prose-avatar" style={{ color: 'var(--blocked)' }}>!</div>
+        <div className="prose-content"><div className="prose-text" style={{ color: 'var(--blocked)' }}>{evt.error || evt.message}</div></div>
+        <div className="prose-ts">{tsStr}</div>
+      </div>
+    )
+  }
+
+  if (evt.type === 'user') {
+    return (
+      <div className="prose-row prose-user">
+        <div className="prose-avatar user">Y</div>
+        <div className="prose-content"><div className="prose-text">{evt.message}</div></div>
+        <div className="prose-ts">{tsStr}</div>
+      </div>
+    )
+  }
+
+  if (evt.type === 'auto_log') {
+    return (
+      <div style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--muted-2)', padding: '2px 0 2px 34px' }}>
+        ↳ {evt.message}
+      </div>
+    )
+  }
+
+  if (evt.type === 'steer') {
+    return (
+      <div style={{ fontSize: 12, fontStyle: 'italic', color: 'var(--info)', padding: '4px 8px', margin: '4px 0 4px 34px', background: 'oklch(68% 0.12 235 / 0.08)', borderRadius: 6 }}>
+        ⌁ {evt.message}
+      </div>
+    )
+  }
+
+  if (evt.type === 'delegate') {
+    const subId = evt.data?.sub_session_id as string | undefined
+    return (
+      <div className="tool-card">
+        <div className="tool-header"><span className="tool-icon">◆</span><span className="tool-name">SUB-AGENT: {evt.message}</span></div>
+        {subId && <a href={`/agent/${subId}`} style={{ fontSize: 11 }}>Open sub-agent thread →</a>}
+      </div>
+    )
+  }
+
+  if (evt.type === 'checkpoint') {
+    return (
+      <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--muted)', padding: '8px 0', borderTop: '1px dashed var(--border)', margin: '8px 0' }}>
+        ⚑ checkpoint · {evt.message}
+      </div>
+    )
+  }
+
+  if (evt.type === 'ended') {
+    return <p style={{ fontSize: 12, color: 'var(--muted)', padding: 10, textAlign: 'center' }}>{evt.message || 'session ended'}</p>
+  }
+
+  // message + state_change + default.
+  return (
+    <div className={`prose-row ${evt.type === 'state_change' ? 'prose-state' : ''}`}>
+      <div className="prose-avatar agent">A</div>
+      <div className="prose-content"><div className="prose-text" style={evt.type === 'state_change' ? { color: 'var(--muted)', fontSize: 12 } : undefined}>{evt.message}</div></div>
+      <div className="prose-ts">{tsStr}</div>
+    </div>
+  )
+}
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n - 3) + '...' : s
+}
+
+function findFilePath(args: Record<string, unknown>): string | null {
+  for (const key of ['path', 'file_path', 'file', 'filepath']) {
+    const v = args[key]
+    if (typeof v === 'string' && v.length > 0) return v
+  }
+  for (const v of Object.values(args)) {
+    if (typeof v === 'string' && /\.\w{1,8}$/.test(v)) return v
+  }
+  return null
+}
+
 // ── Terminal Panel ──────────────────────────────────────────────────────────
 
 function TerminalPanel({ lines, endRef, agent }: { lines: string[]; endRef: React.RefObject<HTMLDivElement | null>; agent: AgentInfo | null }) {
@@ -193,7 +330,7 @@ function ReviewPanel({ task, agent }: { task: TaskDetail | null; agent: AgentInf
         <div style={{ fontSize: 12, color: 'var(--muted)' }}>Start a session from a task card on the board to see review details here.</div>
         {agent?.task_id && (
           <div style={{ marginTop: 8 }}>
-            <a href={`#/tasks/${agent.task_id}`} style={{ color: 'var(--info)', fontSize: 12 }}>View task {agent.task_id} →</a>
+            <a href={`/tasks/${agent.task_id}`} style={{ color: 'var(--info)', fontSize: 12 }}>View task {agent.task_id} →</a>
           </div>
         )}
       </div>
@@ -250,7 +387,7 @@ function ReviewPanel({ task, agent }: { task: TaskDetail | null; agent: AgentInf
       )}
 
       <div style={{ marginTop: 12 }}>
-        <a href={`#/tasks/${task.id}`} style={{ color: 'var(--info)', fontSize: 12 }}>Open full task detail →</a>
+        <a href={`/tasks/${task.id}`} style={{ color: 'var(--info)', fontSize: 12 }}>Open full task detail →</a>
       </div>
     </div>
   )
@@ -320,10 +457,4 @@ function CodePanel({ files }: { files: FileChange[] }) {
   )
 }
 
-function stripHtml(html: string): string {
-  const div = document.createElement('div')
-  div.innerHTML = html
-  return div.textContent || div.innerText || ''
-}
-
-export default AgentFocus
+export default AgentThread

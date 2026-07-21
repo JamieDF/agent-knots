@@ -13,6 +13,7 @@ from strands.hooks.events import AfterToolCallEvent
 from strands.tools import tool as _tool_dec
 
 from agent_knots.config import tasks_dir as _tasks_dir
+from agent_knots.events import Event, EventType
 
 
 # ── Memory: cross-session context via progress injection ────────────────────
@@ -50,11 +51,16 @@ def inject_memory(task_id: str) -> str:
 # ── Multi-agent: sub-agent delegation ────────────────────────────────────────
 
 
-def make_delegate_tool(session_manager: Any) -> Any:
+def make_delegate_tool(session_manager: Any, parent_session_id: str) -> Any:
     """Create a tool that lets an agent delegate work to a sub-agent.
 
     The sub-agent gets its own session and task. The parent can check
-    results via read_task.
+    results via read_task. Delegation is task-mediated, not
+    session-parented — there's no session hierarchy or direct
+    session-to-session messaging, just a shared Task record. The
+    Atelier UI's delegation card expands by opening its own SSE
+    subscription to the sub-session, not by nesting the child's events
+    inside the parent's stream.
     """
 
     @_tool_dec(description="Delegate a sub-task to another agent. Creates a new session to work on it.")
@@ -87,13 +93,27 @@ def make_delegate_tool(session_manager: Any) -> Any:
 
         # Start a session on this sub-task asynchronously.
         import asyncio
-        asyncio.create_task(
-            session_manager.start(
+
+        async def _start_and_link() -> None:
+            sub_session = await session_manager.start(
                 mode="agent",
                 task_id=task.id,
                 task_description=description or title,
             )
-        )
+            parent = session_manager.get(parent_session_id)
+            if parent is not None:
+                parent._broadcast(Event(
+                    type=EventType.DELEGATE,
+                    session_id=parent_session_id,
+                    message=title,
+                    data={
+                        "sub_session_id": sub_session.id,
+                        "sub_task_id": task.id,
+                        "title": title,
+                    },
+                ))
+
+        asyncio.create_task(_start_and_link())
 
         return {
             "task_id": task.id,
@@ -108,7 +128,7 @@ def make_delegate_tool(session_manager: Any) -> Any:
 # ── Steering: criteria validation via hooks ──────────────────────────────────
 
 
-def register_steering_hook(agent: Any, task_id: str) -> None:
+def register_steering_hook(agent: Any, task_id: str, session: Any = None) -> None:
     """Register a hook that nudges the agent toward marking criteria met.
 
     When a tool finishes, checks if the output looks like it satisfies a
@@ -144,15 +164,22 @@ def register_steering_hook(agent: Any, task_id: str) -> None:
             matches = all(kw in tool_output for kw in keywords if len(kw) > 3)
             if matches:
                 from agent_knots.task.models import ProgressEntry
+                nudge = (
+                    f"Possible match for criterion {criterion!r} — "
+                    "verify and call mark_criterion_met if confirmed."
+                )
                 entry = ProgressEntry(
-                    entry=(
-                        f"Possible match for criterion {criterion!r} — "
-                        "verify and call mark_criterion_met if confirmed."
-                    ),
+                    entry=nudge,
                     status=task.status,
                     caller="agent:steering",
                 )
                 store.log_progress(task_id, entry)
+                if session is not None:
+                    session._broadcast(Event(
+                        type=EventType.STEER,
+                        session_id=session.id,
+                        message=nudge,
+                    ))
                 break  # One suggestion per tool call.
 
     agent.add_hook(on_tool, AfterToolCallEvent)
