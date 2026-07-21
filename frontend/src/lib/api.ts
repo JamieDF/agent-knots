@@ -1,4 +1,4 @@
-/** API client for the agentjam backend. */
+/** API client for the agent-knots backend. */
 
 // ── types ───────────────────────────────────────────────────────────────────
 

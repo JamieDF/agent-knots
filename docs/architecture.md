@@ -1,356 +1,321 @@
 # Architecture
 
-This document describes agentjam's design at a level intended for contributors
-and curious users. For the high-level "what does it do" see the
+This document describes agent-knots's design at a level intended for
+contributors and curious users. For the high-level "what does it do" see the
 [README](../README.md). For the rationale behind specific decisions, see the
-decision records in [`docs/decisions/`](decisions/).
+decision records in [`docs/decisions/`](decisions/) — note some of those
+predate the Python rebuild described here and record decisions made for the
+original Go implementation.
 
 ## Goals
 
-agentjam is built around five goals. Each architectural decision should serve
-at least one of these:
+agent-knots is built around five goals. Each architectural decision should
+serve at least one of these:
 
 1. **You always own the session.** No dead-end states. Control transfers
-   both ways, at any moment.
+   both ways, at any moment (assume/relinquish).
 2. **Model-agnostic.** One abstraction layer over OpenAI-compatible APIs,
-   Ollama, MiniMax, GLM, Anthropic, anything else.
-3. **Local-first.** Everything lives on disk. No required cloud sync.
-4. **Multi-agent from day one.** Concurrent sessions are a first-class concept.
+   Ollama, MiniMax, GLM, Anthropic, anything else — via LiteLLM/OpenAI
+   clients under the Strands Agents SDK.
+3. **Local-first.** Everything lives on disk under `~/.agent-knots/`. No
+   required cloud sync.
+4. **Multi-agent from day one.** Concurrent sessions and sub-agent
+   delegation are first-class concepts.
 5. **State is outside the agent.** Tasks, progress, credentials, projects —
    all persistent structured objects, never just chat scrollback.
 
 ## High-level diagram
 
 ```
-┌─ User machine ──────────────────────────────────────────────────────────┐
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │ Orchestrator (this repo)                                           │ │
-│  │                                                                     │ │
-│  │  ┌─────────────┐ ┌──────────┐ ┌─────────┐ ┌──────────┐ ┌──────────┐│ │
-│  │  │   Driver    │ │  Vault   │ │  Task   │ │ Project  │ │  Modes   ││ │
-│  │  │ interface   │ │ (AES)    │ │ (YAML)  │ │  (YAML)  │ │(markdown)││ │
-│  │  └─────────────┘ └──────────┘ └─────────┘ └──────────┘ └──────────┘│ │
-│  │         │            │            │            │             │      │ │
-│  │         └────────────┴────────────┴────────────┴─────────────┘      │ │
-│  │                              │                                     │ │
-│  │  ┌───────────────────────────▼───────────────────────────────┐   │ │
-│  │  │ Cockpit (Web GUI primary + TUI)                           │   │ │
-│  │  │ • Multi-agent list     • Per-agent focus                  │   │ │
-│  │  │ • Live event stream    • Take over / relinquish          │   │ │
-│  │  │ • Task management      • Vault management                │   │ │
-│  │  └─────────────────────────────────────────────────────────────┘   │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
-                  │                              │
-                  │ Go SDK                       │ HTTP / WebSocket
-                  ▼                              ▼
-       ┌──────────────────┐         ┌────────────────────────┐
-       │ Local OpenCode   │         │ Containerized OpenCode │
-       │ (subprocess)     │         │ (Podman)               │
-       └──────────────────┘         └────────────────────────┘
+┌─ agent-knots cockpit ────────────────────────────────────┐
+│                                                            │
+│   Web UI (React SPA)    TUI (Textual)                     │
+│       ↕ REST + SSE         ↕ asyncio.Queue                │
+│   ┌──────────────────────────────────────────────────┐   │
+│   │         FastAPI web server                         │   │
+│   │  Token auth, SSE streaming, REST API               │   │
+│   └────────────────┬─────────────────────────────────┘   │
+│                     │                                      │
+│   ┌─────────────────▼─────────────────────────────────┐   │
+│   │     SessionManager                                  │   │
+│   │  InProcessRuntime or SubprocessRuntime               │   │
+│   │  ┌──────────────────────────────────────────────┐  │   │
+│   │  │  Strands Agent (MiniMax/OpenAI/Anthropic/...)  │  │   │
+│   │  │  Tools: editor, shell, calculator, think,      │  │   │
+│   │  │         8 task tools, custom tools              │  │   │
+│   │  │  Sandbox: cwd isolation + path traversal guard │  │   │
+│   │  └──────────────────────────────────────────────┘  │   │
+│   └──────────────────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ## Package layout
 
 ```
-agentjam/
-├── cmd/
-│   └── agentjam/                # CLI entry point
-│       ├── main.go             # root cobra command
-│       ├── project.go          # project subcommand
-│       ├── task.go             # task subcommand
-│       ├── vault.go            # vault subcommand
-│       ├── agent.go            # agent subcommand
-│       ├── cockpit.go          # cockpit subcommand
-│       └── prompt.go           # structured task prompt builder
-├── internal/
-│   ├── agent/
-│   │   ├── driver/             # AgentDriver interface + event types
-│   │   └── driver/opencode/    # OpenCode Go SDK implementation
-│   ├── config/                 # AGENTJAM_HOME resolution
-│   ├── container/              # ContainerRuntime interface
-│   ├── container/podman/       # Podman implementation
-│   ├── errs/                   # sentinel errors
-│   ├── mode/                   # Mode loader (markdown → system prompt)
-│   ├── project/                # Project schema + Store interface
-│   ├── project/filestore/      # YAML file-backed project store
-│   ├── task/                   # Task schema + Store interface
-│   ├── task/filestore/         # YAML file-backed task store
-│   ├── vault/                  # Vault interface + Template types
-│   └── vault/filestore/        # AES-256-GCM encrypted vault
-├── modes/                      # Default mode markdown files
-└── docs/                       # Architecture, contributing, etc.
+agent-knots/
+├── frontend/                     # Vite + React SPA (web cockpit)
+│   └── src/
+│       ├── views/                 # Overview, Board, Tasks, TaskDetail, Settings, ...
+│       ├── components/            # Topbar, AgentCard, CreateTaskDialog, ...
+│       └── lib/                   # API client, SSE client, workspace context
+├── src/agent_knots/
+│   ├── cli/                       # Typer CLI entry point + commands
+│   │   └── main.py
+│   ├── cockpit/
+│   │   ├── tui/                   # Textual TUI (overview, focus, tools)
+│   │   └── web/                   # FastAPI server (auth, SSE, REST, SPA shell)
+│   ├── session/
+│   │   ├── manager.py             # SessionManager, Session, system prompt assembly
+│   │   ├── runtime.py             # InProcessRuntime / SubprocessRuntime
+│   │   ├── features.py            # memory injection, multi-agent delegate, steering
+│   │   └── worker.py              # subprocess worker entry point
+│   ├── task/                      # Task model, YAML store, Strands tools for agents
+│   ├── project/                   # Workspace model + YAML store
+│   ├── vault/                     # AES-256-GCM crypto + file store
+│   ├── tools/                     # Tool registry, defaults, custom tools
+│   ├── config.py                  # Data-directory paths (AGENT_KNOTS_HOME resolution)
+│   ├── settings.py                # Global YAML settings store
+│   ├── provider.py                # Model provider resolution (CLI/env/settings)
+│   ├── isolation.py               # WorkspaceSandbox — cwd confinement config
+│   ├── sandbox_tools.py           # Sandboxed shell/editor tools
+│   ├── intervention.py            # Mode-aware tool gating (assume/relinquish)
+│   ├── hooks.py                   # Token tracking + auto progress logging
+│   └── events.py                  # Event/EventType/ToolCall wire types
+├── tests/                         # Python unit tests
+├── modes/                         # Legacy mode markdown files (not currently
+│                                   # loaded — see "Mode" below)
+├── mockups/                       # HTML design mockups
+├── docs/                          # Architecture, decisions, quickstart
+└── pyproject.toml
 ```
 
-All implementation lives under `internal/`. Only packages in `cmd/` and a
-small set of stable interfaces are intended for external consumption. This
-gives us the freedom to refactor internals without breaking downstream
-consumers.
+Everything under `src/agent_knots/` is importable Python; there's no
+public/internal split like the old Go module had. The CLI (`agent-knots`),
+web server, and TUI are all thin front ends over the same `SessionManager`.
 
 ## Core abstractions
 
-### AgentDriver
+### SessionManager / SessionRuntime
 
-The most important interface in the project. Every agent backend
-(OpenCode today, custom drivers tomorrow) implements it. The orchestrator
-holds only a `Driver`; it doesn't know or care which backend is underneath.
+`SessionManager` (`session/manager.py`) owns the set of active `Session`
+objects and is the single thing the CLI, TUI, and web server all talk to.
+Starting a session resolves the model provider, assembles the system prompt
+(mode + task context), and builds a Strands `Agent` with the tool set and a
+`ModeInterventionHandler`.
 
-```go
-type Driver interface {
-    Start(ctx context.Context) error
-    Stop(ctx context.Context) error
-    Send(ctx context.Context, msg Message) error
-    Events() <-chan Event
-    Snapshot(ctx context.Context) (State, error)
-    SetMode(ctx context.Context, mode Mode) error
-    Pause(ctx context.Context) error
-    Resume(ctx context.Context) error
-    Abort(ctx context.Context) error
-    ID() string
-}
-```
+`SessionRuntime` (`session/runtime.py`) has two implementations, but they
+are **not symmetric today**:
 
-**Why this matters:** the entire orchestrator — cockpit, task system, vault
-integration — talks to drivers through this interface. To add a new agent
-backend, implement this interface; nothing else needs to change.
+- **`InProcessRuntime`** exists but its `start()` is a no-op.
+  `SessionManager.start()` never constructs it — the in-process path runs
+  `_run_agent` directly, bypassing the `SessionRuntime` abstraction
+  entirely. Treat `InProcessRuntime` as dead code until this is fixed.
+- **`SubprocessRuntime`** is the one real implementation: it spawns a
+  child process (`session/worker.py`) that runs the agent loop and streams
+  JSONL events back over stdin/stdout. Selected per workspace/session when
+  isolation matters more than startup latency.
 
-**Where the interface lives:** in `internal/agent/driver/`. By Go convention,
-interfaces are defined where they're *used*, not where they're implemented.
-Today, both the orchestrator and the implementations live in this repo, but
-in the future implementations could move out without changing the interface.
+See [`docs/RETRO.md`](RETRO.md) for the fuller audit this note is based
+on.
+
+**Why this matters:** the orchestrator — cockpit, task system, vault
+integration — talks to sessions through this interface regardless of
+which runtime is backing them. Adding a new runtime (e.g. a container-based
+one, see [Roadmap](../roadmap.md)) means implementing `SessionRuntime`; nothing
+else changes.
 
 ### Vault
 
-Stores credentials encrypted at rest. The agent uses credentials via opaque
-`vault://` URIs and never sees raw values. Injection templates control how
-credentials are exposed (env vars, files, stdin, command wrappers).
-
-**Security model:**
-- Credentials are AES-256-GCM encrypted with a per-entry key derived from
-  the vault master key.
-- The vault master key is derived from the user's passphrase via argon2id.
-- The credential value never crosses the vault boundary except into the
-  spawned subprocess.
-- Stdout and stderr are scrubbed of credential values before being returned.
-- Every use is logged to an append-only audit log.
-
-**Why templates, not direct use:** the agent can't see the credential, and
-*how* it's exposed is per-tool (env for `gh`, file for SSH keys, stdin for
-`jira-cli`, command wrapper for `curl`). Templates let the user declare this
-declaratively, and the agent picks the right one via name.
+Stores credentials encrypted at rest (`vault/crypto.py`, `vault/store.py`,
+ported from the original Go implementation). AES-256-GCM encryption, keys
+derived via argon2id. Injection templates control how credentials are
+exposed to shell commands the agent runs, so raw values don't need to pass
+through the agent's context. Every use is recorded to an append-only audit
+log.
 
 ### Task
 
-A persistent work record with structured progress logs. The agent calls
-`task_log_progress` after every meaningful action. The progress log is the
-recovery point — if context is lost, the next agent reads the log and picks
-up where the previous one left off.
+A persistent work record with structured progress logs
+(`task/models.py`, `task/store.py`, YAML-backed). Agents call task tools
+(`log_progress`, `update_task_status`, `mark_criterion_met`, `add_step`,
+...) after meaningful actions. `session/features.py` also injects recent
+progress from earlier sessions on the same task into the system prompt
+(`inject_memory`), so a new session picks up where the last one left off.
 
-**Why this exists:** without structured progress logging, agentic tasks get
-abandoned when context is lost or the model is swapped. The progress log
-turns "agent state" into an external, queryable, inspectable artifact.
-
-**Anti-abandonment mechanisms:**
-- The agent *must* call `task_log_progress` after every meaningful action.
-- On context compaction, the agentjam summarizes the conversation into a
-  progress entry *before* trimming, so compaction never loses task state.
-- If a task is `in_progress` with no log entry for N hours, it's flagged
-  as `stalled` and surfaced in the cockpit.
-- Acceptance criteria gate `done` — every criterion must be verified with
-  evidence before the task can transition.
+**Acceptance criteria are enforced, not advisory.** `Task.criteria_met`
+tracks which acceptance criteria have been explicitly marked satisfied via
+`mark_criterion_met`. `TaskStore._validate_transition` refuses to move a
+task to `done` (via either `set_status` or a status-carrying
+`log_progress` call) until every criterion is in that list. The steering
+hook's keyword-match against tool output is advisory only — it suggests a
+criterion might be met, it never marks one itself — so a fuzzy match can't
+quietly satisfy the gate.
 
 ### Project
 
-A multi-repo workspace. A project bundles N git repos into one logical unit
-with project-level settings: build commands, conventions, vault scope,
-default models, and a task namespace.
+A workspace record (`project/models.py`, `project/store.py`) bundling one
+or more repos with project-level settings and a task namespace. Selecting a
+project scopes task listing and session workspace resolution.
 
-**Why this matters:** agents need context. "What does this project use for
-testing?" "What conventions should I follow?" "Which credentials can I use?"
-The project file is where these answers live, and switching projects swaps
-the entire context.
+### WorkspaceSandbox
+
+Per-session isolation (`isolation.py`, `sandbox_tools.py`). Rather than a
+container boundary, each session gets a `WorkspaceSandbox` that:
+
+- confines the **editor** tool to the workspace root via real path
+  resolution (traversal, including symlink escapes, is rejected);
+- gives the **shell** tool a default `cwd` and resource limits (CPU time,
+  memory, full process-group cleanup on timeout via
+  `sandbox_tools.run_confined`) — **not** command-level path confinement,
+  since that's not achievable for an arbitrary `shell=True` string without
+  real OS-level sandboxing;
+- truncates shell output past `max_output` and rejects editor writes past
+  `max_file_size`, both configurable on `WorkspaceSandbox`.
+
+Full container-based isolation (podman/Docker) is a roadmap item, not yet
+implemented — see
+[`docs/decisions/004-container-isolation.md`](decisions/004-container-isolation.md)
+for the original design sketch.
+
+### Tool registry
+
+`tools/registry.py` tracks built-in tools (editor, shell, calculator,
+think, plus 8 task tools) and user-defined custom shell-command tools
+persisted to `~/.agent-knots/settings.yaml`. Each session's `Agent` is built
+from whichever tools are currently enabled.
 
 ### Mode
 
-A named system prompt that controls agent behavior. Modes live as markdown
-files in `~/.agentjam/modes/` and are loaded by name. The same driver
-implements every mode; only the system prompt changes.
-
-**Why this exists:** different tasks want different agent personalities.
-An agent working autonomously should be decisive and verbose in its progress
-log; a reviewer should be read-only and structured in its findings. Modes
-encode these behavioral differences as data (markdown), not code.
-
-### ContainerRuntime
-
-Abstraction over container engines. v1 implements Podman; the interface is
-defined so future runtimes (Docker, Apple Container, etc.) plug in without
-changes elsewhere.
-
-**Why an abstraction:** different teams have different container tools. By
-defining the interface once and configuring the runtime in settings, users
-choose their tool without us maintaining N implementations.
+A short label (`agent`, `assistant`, `reviewer`, `security`) that selects a
+canned system-prompt fragment, assembled in
+`session/manager.py::_build_system_prompt`. Unlike the original Go design,
+modes are **not** currently loaded from the markdown files in `modes/` —
+those files are left over from the prior implementation and aren't read by
+any code path today. Mode swapping at runtime (assume/relinquish) is
+implemented via `intervention.py`'s `ModeInterventionHandler`, which gates
+tool execution rather than swapping the system prompt mid-session.
 
 ## Data flow
 
-### Spawning an agent on a task
+### Starting a session
 
 ```
-User runs: agentjam agent spawn --task T-001 --mode agent
+User runs: agent-knots session start --task T-001 --prompt "..."
                 │
                 ▼
-CLI resolves:
-  - task T-001 → project P-001, workspace /home/user/work/my-app
-  - mode agent → loads modes/agent.md → system prompt
+CLI resolves the model provider (CLI flags → AGENT_KNOTS_* env vars →
+  ~/.agent-knots/settings.yaml) and calls SessionManager.start()
                 │
                 ▼
-CLI constructs OpenCode driver via SDK:
-  - client := opencode.NewClient(...)
-  - session := client.Session.New(ctx, ...)
+SessionManager:
+  - loads task T-001 (if given) for context injection
+  - assembles the system prompt (mode fragment + task context)
+  - builds the tool set from ToolRegistry
+  - wraps tools with sandboxed shell/editor if a workspace is set
+  - registers hooks (token tracking, auto progress logging, steering)
+  - constructs the Strands Agent with a ModeInterventionHandler
+  - hands off to InProcessRuntime or SubprocessRuntime
                 │
                 ▼
-Driver.Start(ctx) — session established
-Driver.SetMode(ctx, "agent") — system prompt applied
-Driver.Send(ctx, message{role:"user", content:buildTaskPrompt(T-001)})
+Events stream from the runtime as an asyncio.Queue (TUI) or are broadcast
+over SSE (web):
+  - message / thinking events
+  - tool_call / tool_result events
+  - mode_change events (assume/relinquish)
+  - progress events (auto-logged by hooks)
                 │
                 ▼
-Events stream from driver.Events():
-  - message events → cockpit / stdout
-  - tool_call events → executed by OpenCode
-  - tool_result events → returned to user
-  - state_change events → status updated
-  - error events → surfaced
-                │
-                ▼
-Agent calls task_log_progress after each meaningful action
-Agent calls task_check_acceptance before transitioning to done
-                │
-                ▼
-Session ends:
-  - User: Ctrl-C → driver.Stop(ctx)
-  - Agent: idle / blocked / done → graceful close
+Agent calls task tools (log_progress, update_task_status, ...) as it works.
+Session ends on completion, error, or explicit stop.
 ```
 
-### Using a credential
+### Assume / relinquish
 
-```
-Agent wants to push to GitHub:
-  agent calls vault_use({
-    credential: "vault://github/work",
-    template: "gh_cli_env",
-    command: "gh",
-    args: ["pr", "create", "--fill"]
-  })
-                │
-                ▼
-Orchestrator routes to Vault.Use():
-  - lookup credential "github/work"
-  - lookup template "gh_cli_env"
-  - decrypt credential value (in-memory only)
-  - apply template injection:
-      env = { "GH_TOKEN": "ghp_..." }
-  - exec.Command("gh", "pr", "create", "--fill", env=env)
-  - capture stdout / stderr
-  - scrub credential value from outputs
-  - write audit entry: { timestamp, credential, template, command, caller, success }
-  - return UseResult (no credential value)
-                │
-                ▼
-Agent sees:
-  {
-    stdout: "https://github.com/org/repo/pull/123",
-    stderr: "",
-    exit_code: 0
-  }
-```
-
-The credential value never left the vault boundary. The agent saw the PR
-URL, the vault saw the token. The audit log records that the agent
-("agent:auth-fix") used github/work with gh_cli_env to run `gh pr create`.
+`SessionManager.set_mode()` flips `session.mode` between `agent` and
+`assistant`. The `ModeInterventionHandler` (Strands intervention) checks
+the current mode before every tool call: `agent` → proceed, `assistant` →
+deny. This is how "taking over" a session blocks the agent's tools without
+tearing down and restarting the session.
 
 ## Security model
 
 ### Threat model
 
-agentjam is a personal tool. The user is the operator, the agent is the
+agent-knots is a personal tool. The user is the operator, the agent is the
 assistant. Threats:
 
 1. **Credential leakage.** A bug or LLM hallucination causes a credential
    to appear in logs, transcripts, or agent-visible output.
-2. **Destructive actions.** The agent runs `rm -rf` on the wrong directory.
-3. **Cross-project contamination.** Credentials or settings from one project
-   leak into another.
+2. **Destructive actions.** The agent runs something destructive outside
+   its intended workspace.
+3. **Cross-project contamination.** Credentials or settings from one
+   project leak into another.
 4. **Vault compromise.** An attacker with file-system access recovers the
    vault contents.
 
 ### Mitigations
 
-1. **Credential leakage:** scrubbing on every output path, opaque references
-   (`vault://`), templates that move the secret directly into a child
-   process without going through the agent.
-2. **Destructive actions:** risk policies per project
-   (`require_approval_for`, `blocked_commands`), container isolation for
-   long-running agents, vaults that don't store write tokens.
-3. **Cross-project contamination:** vault scope per project
-   (`allowed_credentials`, `denied_credentials`).
-4. **Vault compromise:** AES-256-GCM with argon2id-derived keys, OS keychain
-   integration, per-entry keys (compromise of one entry doesn't expose the
-   master).
+1. **Credential leakage:** vault injection templates keep raw values out of
+   the agent's context; values are only exposed to the shell command they're
+   injected into.
+2. **Destructive actions:** `WorkspaceSandbox` confines the sandboxed
+   shell/editor tools to the session's workspace directory and rejects path
+   traversal. Full container isolation is planned but not yet built.
+3. **Cross-project contamination:** projects are separate YAML records with
+   their own task namespace; nothing shares state across them implicitly.
+4. **Vault compromise:** AES-256-GCM with argon2id-derived keys, per-entry
+   keys (compromise of one entry doesn't expose the master), passphrase
+   never persisted.
 
 ### Audit
 
 The vault's audit log is append-only. Every credential use is recorded with
-timestamp, credential, template, command, caller, and success. The log is
-not editable from the orchestrator.
+timestamp, credential, template, caller, and success.
 
 ## Concurrency
 
-agentjam is designed for concurrent agents:
+agent-knots is designed for concurrent agents:
 
-- **Multiple drivers run in parallel.** Each driver is independent; the
-  cockpit manages N of them.
-- **Shared state is guarded by mutexes.** The vault, task store, and project
-  store all use internal locking.
-- **Events are delivered on channels.** Each driver's `Events()` returns a
-  channel; the cockpit reads from N channels concurrently (one goroutine
-  per agent).
+- **Multiple sessions run independently**, each owning its own runtime
+  (in-process task or subprocess).
+- **The web server is async** (FastAPI + `asyncio`); each connected
+  browser tab gets its own SSE stream reading from the session's event
+  queue.
+- **The TUI polls an `asyncio.Queue`** per focused session.
 
-The orchestrator is single-process for v1. Multi-process or distributed
-deployment is out of scope until a use case demands it.
+The orchestrator is single-process for in-process sessions; subprocess
+sessions add one child process each. Multi-process fan-out beyond that
+(e.g. a daemon coordinating multiple hosts) is out of scope for now.
 
 ## Extensibility
 
-### Custom drivers
+### Custom tools
 
-Implement `driver.Driver`. The orchestrator doesn't care which backend is
-underneath. Add the new implementation under `internal/agent/driver/<name>/`
-and wire it into the spawn command.
+Add a user-defined shell-command tool via the Settings page or
+`ToolRegistry`; it's persisted to `~/.agent-knots/settings.yaml` and wrapped
+as a Strands tool the next time a session starts.
 
-### Custom modes
+### Custom runtimes
 
-Drop a markdown file in `~/.agentjam/modes/<name>.md`. The mode loader picks
-it up automatically. First line becomes the display name; rest is the system
-prompt.
+Implement `SessionRuntime` (`session/runtime.py`) and wire it into
+`session/runtime.py::create_runtime`. See the roadmap for the planned
+container-backed runtime.
 
-### Custom vault templates
+### Model providers
 
-`agentjam vault template add <cred-id> --name <tname> --env '{...}'` — see
-`agentjam vault template add --help` for all injection modes.
+Anything OpenAI-compatible works out of the box via `provider.py`.
+MiniMax, OpenAI, Anthropic, and Ollama are all just base-URL + API-key
+combinations; no per-provider code is needed unless you want a non-OpenAI-
+compatible SDK.
 
-### Custom container runtimes
+## What's not in scope (yet)
 
-Implement `container.Runtime`. Plug into settings.
-
-## What's not in scope (v1)
-
+- Container-based isolation (planned — see [roadmap](../roadmap.md))
 - Multi-user support (single user, local install)
 - Cloud sync (local only)
-- Web GUI beyond a stub (TUI cockpit is the v1 UI surface)
-- Distributed agent orchestration
-- Mobile companion app
+- Distributed / multi-host orchestration
 
 ## Future work
 
-See [`docs/roadmap.md`](roadmap.md).
+See [`roadmap.md`](../roadmap.md) at the repo root for what's done and
+what's next.

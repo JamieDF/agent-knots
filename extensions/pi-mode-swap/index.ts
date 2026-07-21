@@ -1,12 +1,12 @@
 /**
- * Pi extension for agentjam: runtime mode/persona swap.
+ * Pi extension for agent-knots: runtime mode/persona swap.
  *
- * Registers the `/agentjam-switch` slash command. When invoked via
- * Pi's RPC mode (`{"type":"prompt","message":"/agentjam-switch assistant"}`),
+ * Registers the `/agent-knots-switch` slash command. When invoked via
+ * Pi's RPC mode (`{"type":"prompt","message":"/agent-knots-switch assistant"}`),
  * the extension reads the system prompt from a mode file and swaps
  * the agent's persona + thinking level.
  *
- * Mode files are expected at `/workspace/.agentjam/modes/<mode>.md`
+ * Mode files are expected at `/workspace/.agent-knots/modes/<mode>.md`
  * (mounted into the container via the podman container runtime).
  *
  * Thinking-level mapping:
@@ -22,9 +22,9 @@
  *   refactorer → "high"
  *   test-writer → "high"
  *
- * Usage from agentjam's control channel:
+ * Usage from agent-knots's control channel:
  *   When the session subprocess receives a `set-mode` control message,
- *   it sends `{"type":"prompt","message":"/agentjam-switch <mode>"}\n`
+ *   it sends `{"type":"prompt","message":"/agent-knots-switch <mode>"}\n`
  *   to Pi's stdin. Pi dispatches to this extension.
  */
 
@@ -47,7 +47,7 @@ const THINKING_LEVELS: Record<string, string> = {
 const FALLBACK_THINKING = "medium";
 
 // Path where mode markdown files are mounted inside the container.
-const MODES_DIR = "/workspace/.agentjam/modes";
+const MODES_DIR = "/workspace/.agent-knots/modes";
 
 /**
  * Read the content of a mode markdown file.
@@ -76,12 +76,12 @@ function modeToThinkingLevel(mode: string): string {
 
 // The Pi extension entry point.
 export default function (pi: any) {
-  pi.registerCommand("agentjam-switch", {
-    description: "Switch agent mode/persona (called by agentjam orchestrator)",
+  pi.registerCommand("agent-knots-switch", {
+    description: "Switch agent mode/persona (called by agent-knots orchestrator)",
     execute: async (args: string) => {
       const mode = args.trim();
       if (!mode) {
-        return "Usage: /agentjam-switch <mode>  (e.g. agent, assistant, reviewer)";
+        return "Usage: /agent-knots-switch <mode>  (e.g. agent, assistant, reviewer)";
       }
 
       try {
@@ -113,8 +113,8 @@ export default function (pi: any) {
   });
 
   // Also register a "pause" command that aborts the agent.
-  pi.registerCommand("agentjam-pause", {
-    description: "Pause the agent (called by agentjam orchestrator)",
+  pi.registerCommand("agent-knots-pause", {
+    description: "Pause the agent (called by agent-knots orchestrator)",
     execute: async () => {
       try {
         const session = (pi as any).agentSession ?? (pi as any).session;

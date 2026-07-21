@@ -1,4 +1,7 @@
 > **Note:** Captured under the prior project name "harness"; see CHANGELOG for the rename.
+> The progress-log design described here still holds in the Python rebuild
+> (`src/agent_knots/task/`), including memory injection from prior sessions
+> (`session/features.py::inject_memory`).
 
 # ADR 0003: Task state lives in persistent progress logs, not chat
 
@@ -25,7 +28,7 @@ The result: agents re-do work, skip steps, or abandon tasks entirely.
    buried in scrollback.
 3. **External structured progress log.** The task object has a
    dedicated progress log field. Every meaningful action appends to it.
-   On context compaction, the agentjam summarizes the conversation
+   On context compaction, the agent-knots summarizes the conversation
    into a progress entry *before* trimming.
 
 ## Decision
@@ -67,7 +70,7 @@ The agent's tool set includes `task_log_progress` for appending entries.
 
 The progress log enables several anti-abandonment features:
 
-1. **Compaction-safe.** The agentjam pre-summarizes the conversation
+1. **Compaction-safe.** The agent-knots pre-summarizes the conversation
    into a progress entry before trimming context. Compaction never
    loses task state.
 2. **Handoff-safe.** A new agent (or model) can read the progress log

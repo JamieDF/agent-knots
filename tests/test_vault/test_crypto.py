@@ -2,7 +2,7 @@
 
 import pytest
 
-from agentjam.vault.crypto import (
+from agent_knots.vault.crypto import (
     KEY_LEN,
     MARKER_PLAINTEXT,
     SALT_LEN,

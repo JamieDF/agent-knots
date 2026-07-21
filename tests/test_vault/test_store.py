@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agentjam.vault.store import (
+from agent_knots.vault.store import (
     AuditOptions,
     Credential,
     InjectionTemplate,

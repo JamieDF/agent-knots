@@ -1,5 +1,5 @@
 [project]
-name = "agentjam"
+name = "agent-knots"
 version = "0.1.0"
 description = "Local-first orchestrator for AI coding agents. You stay in control."
 authors = [
@@ -35,7 +35,7 @@ dev = [
 ]
 
 [project.scripts]
-agentjam = "agentjam.cli.main:app"
+agent-knots = "agent_knots.cli.main:app"
 
 [build-system]
 requires = ["uv_build>=0.11.0,<0.12.0"]

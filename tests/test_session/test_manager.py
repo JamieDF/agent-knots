@@ -6,14 +6,24 @@ from pathlib import Path
 
 import pytest
 
-from agentjam.events import Event, EventType, ToolCall
-from agentjam.session.manager import Session, SessionManager
+from agent_knots.events import Event, EventType, ToolCall
+from agent_knots.session.manager import Session, SessionManager
 
 
 @pytest.fixture
 def sessions_dir():
     with tempfile.TemporaryDirectory() as d:
         yield Path(d)
+
+
+@pytest.fixture
+def agent_knots_home(tmp_path, monkeypatch):
+    """Isolate AGENT_KNOTS_HOME so tests never touch the real user config,
+    and reset the global runtime-type setting between tests."""
+    monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+    from agent_knots.session.runtime import set_runtime_type
+    set_runtime_type("inprocess")
+    yield tmp_path
 
 
 class TestSession:
@@ -145,3 +155,108 @@ class TestSessionManager:
         mgr = SessionManager(sessions_dir)
         with pytest.raises(ValueError, match="not found"):
             await mgr.set_mode("nonexistent", "assistant")
+
+
+class TestSessionManagerStart:
+    """Tests for SessionManager.start() — the core assembly path that had
+    zero coverage. No task_description is passed in any of these, so the
+    in-process runtime never actually runs the agent loop (no network
+    calls); we're only testing that the session gets assembled correctly.
+    """
+
+    @pytest.mark.asyncio
+    async def test_start_without_api_key_raises(self, sessions_dir, agent_knots_home):
+        mgr = SessionManager(sessions_dir)
+        with pytest.raises(RuntimeError, match="No API key configured"):
+            await mgr.start(model="fake/model", api_key="", base_url="http://fake")
+
+    @pytest.mark.asyncio
+    async def test_start_registers_session(self, sessions_dir, agent_knots_home):
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            runtime_override="inprocess",
+        )
+        assert session.id in {s.id for s in mgr.active}
+        assert session.mode == "agent"
+        assert session._agent is not None
+        await mgr.stop(session.id)
+
+    @pytest.mark.asyncio
+    async def test_delegate_task_reaches_the_agent(self, sessions_dir, agent_knots_home):
+        """Regression test: make_delegate_tool() used to be appended to the
+        tool list *after* Agent(...) was already constructed, so the tool
+        never actually reached the agent. Assert on the constructed
+        Agent's own tool registry, not the intermediate list."""
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            runtime_override="inprocess",
+        )
+        assert "delegate_task" in session._agent.tool_names
+        await mgr.stop(session.id)
+
+    @pytest.mark.asyncio
+    async def test_mark_criterion_met_tool_present(self, sessions_dir, agent_knots_home):
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            runtime_override="inprocess",
+        )
+        assert "mark_criterion_met" in session._agent.tool_names
+        await mgr.stop(session.id)
+
+    @pytest.mark.asyncio
+    async def test_disabled_builtin_tool_excluded_from_agent(self, sessions_dir, agent_knots_home):
+        """Regression test: ToolRegistry.list_builtin()/list_enabled() used
+        to hardcode enabled=True and ignore the disabled-builtins file, so
+        disabling a tool had no effect on what the agent actually got."""
+        from agent_knots.tools.registry import ToolRegistry
+        ToolRegistry().toggle_builtin("shell")
+
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            runtime_override="inprocess",
+        )
+        assert "shell" not in session._agent.tool_names
+        assert "editor" in session._agent.tool_names  # untouched tool still present
+        await mgr.stop(session.id)
+
+    @pytest.mark.asyncio
+    async def test_custom_tool_bound_to_session_workspace(self, sessions_dir, agent_knots_home, tmp_path):
+        """Regression test: custom tools used to run subprocess.run() with
+        no cwd at all, ignoring the session's workspace entirely."""
+        from agent_knots.tools.registry import ToolRegistry, CustomTool
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        ToolRegistry().add_custom(CustomTool(
+            name="show_cwd", description="print cwd", command="pwd",
+        ))
+
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            working_dir=str(workspace),
+            runtime_override="inprocess",
+        )
+        assert "show_cwd" in session._agent.tool_names
+        tool_func = session._agent.tool_registry.registry["show_cwd"]._tool_func
+        result = tool_func()
+        assert result["stdout"].strip() == str(workspace)
+        await mgr.stop(session.id)
+
+    @pytest.mark.asyncio
+    async def test_start_with_no_task_description_does_not_run_agent(self, sessions_dir, agent_knots_home):
+        """Without task_description, InProcessRuntime.start() shouldn't
+        spawn the background agent task (which would make a real model
+        call)."""
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            runtime_override="inprocess",
+        )
+        assert session._task is None
+        assert not session.running
+        await mgr.stop(session.id)

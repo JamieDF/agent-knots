@@ -1,13 +1,12 @@
-# Contributing to agentjam
+# Contributing to agent-knots
 
-Thanks for your interest in contributing! agentjam is a young project and
+Thanks for your interest in contributing! agent-knots is a young project and
 contributions of all kinds are welcome — code, documentation, bug reports,
 feature ideas.
 
 ## Code of conduct
 
-Be respectful, assume good faith, focus on the technical. We follow the
-[Go community code of conduct](https://golang.org/conduct).
+Be respectful, assume good faith, focus on the technical.
 
 ## Where to start
 
@@ -16,151 +15,101 @@ Be respectful, assume good faith, focus on the technical. We follow the
   are scoped for newcomers.
 - **Read [`docs/architecture.md`](docs/architecture.md).** Understanding
   the architecture is essential before changing interfaces.
-- **Run the tests.** `go test ./...` should pass on `main`. If it doesn't,
+- **Run the tests.** `uv run pytest` should pass on `main`. If it doesn't,
   that's a bug — please open an issue.
 
 ## Development setup
 
 ```bash
-git clone https://github.com/agentjam/agentjam.git
-cd agentjam
-go test ./...
-go build -o agentjam ./cmd/agentjam
+git clone https://github.com/jamiedf/agent-knots.git
+cd agent-knots
+uv sync
+uv run pytest
 ```
 
-You'll need Go 1.23+ (the project uses `go 1.23.4` in `go.mod`; the toolchain
-directive in `go.mod` will fetch newer versions as needed).
+You'll need Python 3.14+ and [`uv`](https://docs.astral.sh/uv/). For
+frontend work, you'll also need Node.js:
 
-For OpenCode work, install OpenCode: <https://opencode.ai>. For Podman
-work, install Podman: <https://podman.io>.
+```bash
+cd frontend && npm install && npm run dev
+```
+
+Run the CLI/cockpit against your local checkout with:
+
+```bash
+uv run agent-knots version
+uv run agent-knots cockpit launch --web
+```
 
 ## Project layout
 
 See [`docs/architecture.md`](docs/architecture.md#package-layout) for the
 full layout. The short version:
 
-- `cmd/agentjam/` — CLI commands (one file per subcommand)
-- `internal/<package>/` — implementation (locked from external import)
-- `internal/<package>/filestore/` — file-backed implementations
-- `modes/` — default mode markdown files
-- `docs/` — architecture, contributing, etc.
+- `src/agent_knots/cli/` — Typer CLI entry point and subcommands
+- `src/agent_knots/session/` — `SessionManager`, runtimes, Strands features
+- `src/agent_knots/cockpit/` — FastAPI web server + Textual TUI
+- `src/agent_knots/{task,project,vault,tools}/` — models + YAML/crypto stores
+- `frontend/` — Vite + React web cockpit SPA
+- `tests/` — Python unit tests (mirrors `src/agent_knots/` package layout)
+- `frontend/tests/` — Playwright e2e tests
+- `docs/` — architecture, decision records, roadmap
 
 ## Coding conventions
 
 ### Style
 
-We follow standard Go style:
-
-- `gofmt` (no exceptions)
-- `go vet ./...` clean
-- `golangci-lint run` clean (CI uses this)
+- `ruff check` and `ruff format` clean (config in `pyproject.toml`;
+  `select = ["E", "F", "I", "N", "W", "UP"]`, 100-char lines).
+- `mypy` clean where feasible — the codebase isn't fully typed yet, but new
+  code should carry type hints.
+- Frontend: `oxlint` (`npm run lint` in `frontend/`).
 
 ### Naming
 
-- Packages are short, lowercase, single-word where possible.
-- Interfaces end in `-er` (`Driver`, `Store`, `Vault`, `Runtime`).
-- Implementations are named by what they back the interface with
-  (`FileStore`, `Podman`, `OpenCode`).
-- Tests live next to the code they test (`foo.go` + `foo_test.go`).
+- Modules are short, lowercase, single-word where possible
+  (`vault`, `task`, `project`).
+- Store classes are named `<Thing>Store` (`TaskStore`, `ProjectStore`,
+  `VaultStore`). Runtime implementations are named by what they back
+  (`InProcessRuntime`, `SubprocessRuntime`).
+- Tests live under `tests/`, mirroring the package they cover
+  (`src/agent_knots/task/store.py` → `tests/test_task/test_store.py`).
 
 ### Errors
 
-Use the sentinels in [`internal/errs`](internal/errs/) for failure modes
-callers care about (`ErrNotFound`, `ErrAlreadyExists`, etc.). Wrap with
-`errs.Wrap` so the sentinel is preserved:
+Raise `ValueError` for invalid input the caller should handle (e.g.
+duplicate IDs, malformed data) and let CLI commands catch it and print a
+clean message via `typer.Exit(1)`. Don't introduce a custom exception
+hierarchy unless a specific failure mode needs to be distinguished by
+callers.
 
-```go
-if err != nil {
-    return errs.Wrap(err, "loading %s", name)
-}
-```
+### Async
 
-Callers should compare with `errs.Is` (alias for `errors.Is`):
-
-```go
-if errs.Is(err, errs.ErrNotFound) {
-    // not-found handling
-}
-```
-
-### Context
-
-Every I/O method takes `ctx context.Context` as its first argument and
-respects cancellation. The pattern:
-
-```go
-func (s *Store) Get(ctx context.Context, id ID) (*Thing, error) {
-    if err := ctx.Err(); err != nil {
-        return nil, err
-    }
-    // ... do the work, passing ctx through ...
-}
-```
-
-### Concurrency
-
-All exported methods on stores, drivers, runtimes, and the vault must be
-safe for concurrent use. Use `sync.RWMutex` for read-heavy data, document
-thread-safety expectations in package doc.
+`SessionManager` and the FastAPI web server are async (`asyncio`). Session
+lifecycle methods (`start`, `stop`, `set_mode`) are coroutines; CLI
+commands that call them wrap with `asyncio.run(...)`.
 
 ### Tests
 
-We use table-driven tests with subtests:
+We use `pytest` with `pytest-asyncio` (`asyncio_mode = "auto"` — async test
+functions just work, no decorator needed). Prefer plain `assert` and
+descriptive test names over table-driven boilerplate:
 
-```go
-func TestParseBytes(t *testing.T) {
-    cases := []struct {
-        name string
-        in   string
-        want int64
-    }{
-        {"zero", "0", 0},
-        {"with unit", "1KB", 1024},
-    }
-    for _, c := range cases {
-        t.Run(c.name, func(t *testing.T) {
-            got, err := parseBytes(c.in)
-            if err != nil {
-                t.Fatal(err)
-            }
-            if got != c.want {
-                t.Errorf("got %d, want %d", got, c.want)
-            }
-        })
-    }
-}
-```
-
-Where it adds clarity, add a `// Example...` function (these show up in
-godoc and pkg.go.dev):
-
-```go
-func ExampleWrap() {
-    err := errs.Wrap(errs.ErrNotFound, "loading %q", "x")
-    if errors.Is(err, errs.ErrNotFound) {
-        fmt.Println("not found")
-    }
-    // Output: not found
-}
+```python
+async def test_vault_locks_after_wrong_passphrase(tmp_path):
+    store = VaultStore(tmp_path)
+    store.unlock("correct-passphrase")
+    store.lock()
+    with pytest.raises(ValueError):
+        store.unlock("wrong-passphrase")
 ```
 
 ### Documentation
 
-Every exported package, type, function, and method gets a godoc comment
-starting with the name:
-
-```go
-// Package foo provides ...
-package foo
-
-// Thing is a ...
-type Thing struct { ... }
-
-// Get returns the Thing by ID.
-func (s *Store) Get(ctx context.Context, id ID) (*Thing, error) { ... }
-```
-
-The first sentence of a godoc comment should be a complete summary.
+Module-level docstrings should say what the module is for, not restate the
+filename. Function/method docstrings are only needed where the *why* isn't
+obvious from the signature and body — don't pad every function with a
+docstring that just repeats its name.
 
 ## Pull request process
 
@@ -168,39 +117,42 @@ The first sentence of a godoc comment should be a complete summary.
    before writing code.
 2. **Fork the repo** and create a branch from `main`.
 3. **Write tests.** PRs without tests are unlikely to merge.
-4. **Update docs** if you're changing user-facing behavior. The README,
-   architecture doc, and godoc comments all matter.
-5. **Run the full test suite** before pushing:
+4. **Update docs** if you're changing user-facing behavior. The README and
+   architecture doc both matter.
+5. **Run the full check suite** before pushing:
    ```bash
-   go test -race -cover ./...
-   go vet ./...
-   golangci-lint run
+   uv run pytest
+   uv run ruff check .
+   uv run ruff format --check .
+   uv run mypy src/agent_knots
    ```
 6. **One logical change per commit.** Squash fixup commits. Write commit
-   messages in the imperative mood ("Add vault template parser", not
+   messages in the imperative mood ("Add vault credential import", not
    "Added").
-7. **Open a PR** against `main`. The CI will run tests on Linux, macOS,
-   and Windows. Address review feedback before merge.
+7. **Open a PR** against `main`. There's no CI configured yet (tracked on
+   the [roadmap](roadmap.md)) — run the checks above locally before
+   requesting review.
 
 ## Release process
 
 We use [Semantic Versioning](https://semver.org/). Versions are tagged
-manually after a successful main-branch CI run:
+manually after the check suite passes locally:
 
 ```bash
 git tag -a v0.2.0 -m "Release v0.2.0"
 git push origin v0.2.0
 ```
 
-The release workflow builds binaries for all supported platforms and
-publishes them on the GitHub release page. See `.github/workflows/release.yml`.
+There's no packaged release/installer yet — see the
+[roadmap](roadmap.md).
 
 ## Decision records
 
 Significant architectural decisions are recorded as ADRs in
-[`docs/decisions/`](docs/decisions/). Each ADR explains the context,
-options considered, and the chosen approach. Read these before proposing
-changes that affect core interfaces.
+[`docs/decisions/`](docs/decisions/). Some predate the Python rebuild and
+record decisions made for the original Go implementation — read the note
+at the top of each ADR before relying on its specifics. Read these before
+proposing changes that affect core interfaces.
 
 ## License
 

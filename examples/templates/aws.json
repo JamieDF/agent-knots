@@ -32,11 +32,11 @@
       "description": "Write credentials to ~/.aws/credentials file",
       "injection": {
         "file": {
-          "path": "/tmp/agentjam-aws-credentials",
+          "path": "/tmp/agent-knots-aws-credentials",
           "permissions": 384
         }
       },
-      "cli": "agentjam vault template add aws/profile --name aws_config_file --file /tmp/agentjam-aws-credentials"
+      "cli": "agent-knots vault template add aws/profile --name aws_config_file --file /tmp/agent-knots-aws-credentials"
     }
   }
 }

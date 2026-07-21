@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [[package]]
-name = "agentjam"
+name = "agent-knots"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

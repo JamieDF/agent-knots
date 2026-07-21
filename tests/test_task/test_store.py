@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agentjam.task.models import (
+from agent_knots.task.models import (
     Blocker,
     Priority,
     ProgressEntry,
@@ -14,7 +14,7 @@ from agentjam.task.models import (
     TaskStatus,
     new_task_id,
 )
-from agentjam.task.store import TaskStore
+from agent_knots.task.store import TaskStore
 
 
 @pytest.fixture
@@ -172,6 +172,77 @@ class TestOperations:
         assert task.steps[0].title == "Build form component"
 
 
+class TestAcceptanceCriteria:
+    def test_cannot_mark_done_with_unmet_criteria(self, store, sample_task):
+        store.create(sample_task)
+        with pytest.raises(ValueError, match="unmet acceptance criteria"):
+            store.set_status(sample_task.id, TaskStatus.DONE)
+
+    def test_mark_criterion_met(self, store, sample_task):
+        store.create(sample_task)
+        task = store.mark_criterion_met(
+            sample_task.id, "User can enter email and password"
+        )
+        assert "User can enter email and password" in task.criteria_met
+        assert not task.all_criteria_met()
+
+    def test_can_mark_done_once_all_criteria_met(self, store, sample_task):
+        store.create(sample_task)
+        for c in sample_task.acceptance_criteria:
+            store.mark_criterion_met(sample_task.id, c)
+        task = store.set_status(sample_task.id, TaskStatus.DONE)
+        assert task.status == TaskStatus.DONE
+
+    def test_criteria_met_persists_across_reload(self, store, sample_task):
+        store.create(sample_task)
+        store.mark_criterion_met(sample_task.id, sample_task.acceptance_criteria[0])
+        # New store instance over the same directory — forces a real disk reload.
+        reloaded = TaskStore(store._dir)
+        task = reloaded.get(sample_task.id)
+        assert sample_task.acceptance_criteria[0] in task.criteria_met
+
+    def test_mark_unknown_criterion_fails(self, store, sample_task):
+        store.create(sample_task)
+        with pytest.raises(ValueError, match="not an acceptance criterion"):
+            store.mark_criterion_met(sample_task.id, "This was never a criterion")
+
+    def test_mark_criterion_met_idempotent(self, store, sample_task):
+        store.create(sample_task)
+        c = sample_task.acceptance_criteria[0]
+        store.mark_criterion_met(sample_task.id, c)
+        task = store.mark_criterion_met(sample_task.id, c)
+        assert task.criteria_met.count(c) == 1
+
+    def test_unmark_criterion_met(self, store, sample_task):
+        store.create(sample_task)
+        c = sample_task.acceptance_criteria[0]
+        store.mark_criterion_met(sample_task.id, c)
+        task = store.unmark_criterion_met(sample_task.id, c)
+        assert c not in task.criteria_met
+
+    def test_task_with_no_criteria_can_be_marked_done(self, store):
+        task = Task(id=new_task_id(), title="No criteria task", status=TaskStatus.OPEN)
+        store.create(task)
+        updated = store.set_status(task.id, TaskStatus.DONE)
+        assert updated.status == TaskStatus.DONE
+
+    def test_log_progress_to_done_is_gated_too(self, store, sample_task):
+        """log_progress can also carry a status change — must respect the
+        same gate as set_status, not bypass it."""
+        store.create(sample_task)
+        entry = ProgressEntry(entry="Finished.", status=TaskStatus.DONE, caller="agent:test")
+        with pytest.raises(ValueError, match="unmet acceptance criteria"):
+            store.log_progress(sample_task.id, entry)
+
+    def test_log_progress_to_done_succeeds_when_criteria_met(self, store, sample_task):
+        store.create(sample_task)
+        for c in sample_task.acceptance_criteria:
+            store.mark_criterion_met(sample_task.id, c)
+        entry = ProgressEntry(entry="Finished.", status=TaskStatus.DONE, caller="agent:test")
+        task = store.log_progress(sample_task.id, entry)
+        assert task.status == TaskStatus.DONE
+
+
 class TestTaskModel:
     def test_new_id_format(self):
         tid = new_task_id()
@@ -197,3 +268,17 @@ class TestTaskModel:
         task.log_progress(ProgressEntry(entry="Starting", status=TaskStatus.IN_PROGRESS, caller="test"))
         assert task.status == TaskStatus.IN_PROGRESS
         assert len(task.progress) == 1
+
+    def test_all_criteria_met_true_when_empty(self):
+        task = Task(id="t1", title="Test")
+        assert task.all_criteria_met()
+        assert task.unmet_criteria() == []
+
+    def test_all_criteria_met_false_when_pending(self):
+        task = Task(id="t1", title="Test", acceptance_criteria=["a", "b"], criteria_met=["a"])
+        assert not task.all_criteria_met()
+        assert task.unmet_criteria() == ["b"]
+
+    def test_all_criteria_met_true_when_all_marked(self):
+        task = Task(id="t1", title="Test", acceptance_criteria=["a", "b"], criteria_met=["a", "b"])
+        assert task.all_criteria_met()

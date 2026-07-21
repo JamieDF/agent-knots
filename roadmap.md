@@ -9,7 +9,7 @@
 - [x] TUI cockpit — Textual: agent list, focus view, tools manager, keyboard shortcuts
 - [x] Task system — YAML-backed with progress logs, steps, acceptance criteria
 - [x] Kanban board — 6-column board with status chips, priority indicators, inline editing
-- [x] Agent tools — 11 built-in (editor, shell, calculator, think + 7 task tools)
+- [x] Agent tools — 12 built-in (editor, shell, calculator, think + 8 task tools)
 - [x] Custom tools — User-defined shell command tools, enable/disable per tool
 - [x] Workspaces — Multi-project grouping with task/agent filtering, path isolation
 - [x] Runtime modes — In-process (fast) + subprocess (isolated). Configurable per workspace/session
@@ -18,8 +18,9 @@
 - [x] Full task workflow — Draft → Open → In Progress → Agent works → Done. Auto status transitions
 - [x] Agent-task integration — Agents create, read, update, log progress on tasks via tools
 - [x] Settings page — Model config, tool management, workspace management in one place
-- [x] Playwright e2e tests — 30 browser tests covering full UI flows
-- [x] Python unit tests — 106 tests across vault, session, task, web
+- [x] Install script — `./install.sh`: installs uv, syncs deps, builds frontend, installs the `agent-knots` command globally
+- [x] Playwright e2e tests — 43 browser tests covering full UI flows
+- [x] Python unit tests — 176 tests across vault, session, task, web, sandbox, auth
 
 ## Next
 
@@ -32,3 +33,5 @@
 - [ ] Cost tracking — Real token counting and cost estimation per session
 - [ ] Provider expansion — More direct LLM provider integrations
 - [ ] Mobile-responsive layout — Full mobile support for the web cockpit
+- [ ] Zero-clone installer — `curl <url>/install.sh | bash` without a
+  manual `git clone` first (the script would self-clone); Windows support

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>#047 — Migrate Terraform state — agentjam</title>
+  <title>#047 — Migrate Terraform state — agent-knots</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -847,7 +847,7 @@
   </style>
   <script>
     (function() {
-      var KEY = 'agentjam.leftPanel.collapsed';
+      var KEY = 'agent-knots.leftPanel.collapsed';
       var panel = document.querySelector('.left-panel');
       var canvas = document.querySelector('.canvas');
       if (!panel || !canvas) return;
@@ -891,7 +891,7 @@
   <header class="topbar">
     <a href="01-dashboard.html" class="topbar-brand">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 1l7 4v6l-7 4-7-4V5l7-4z"/></svg>
-      agentjam
+      agent-knots
     </a>
     <span class="topbar-sep"></span>
     <nav class="topbar-nav">
@@ -946,12 +946,12 @@
       </div>
 
       <div class="panel-label">Workspaces</div>
-      <a class="workspace-item" href="01-dashboard.html" data-od-id="ws-agentjam">
+      <a class="workspace-item" href="01-dashboard.html" data-od-id="ws-agent-knots">
         <div class="workspace-name">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 5h12v8H2zM2 5l2-2h8l2 2"/></svg>
-          agentjam
+          agent-knots
         </div>
-        <div class="workspace-meta mono">~/dev/agentjam
+        <div class="workspace-meta mono">~/dev/agent-knots
           <span class="workspace-dots">
             <span class="mini-dot running"></span>
             <span class="mini-dot running"></span>
@@ -1067,7 +1067,7 @@
                 Migrate the existing Terraform state for <code>infra/terraform</code> from S3 backend to Google Cloud Storage. This involves updating the backend configuration, verifying state can be read from GCS, and removing the S3 bucket.
               </p>
               <p style="margin-top: 10px;">
-                The state currently lives in <code class="accent-bucket">s3://agentjam-terraform-state/prod/terraform.tfstate</code>. We need a GCS bucket in project <code class="accent-project">agentjam-prod-001</code>.
+                The state currently lives in <code class="accent-bucket">s3://agent-knots-terraform-state/prod/terraform.tfstate</code>. We need a GCS bucket in project <code class="accent-project">agent-knots-prod-001</code>.
               </p>
             </div>
           </section>
@@ -1090,7 +1090,7 @@
                     <span class="step-title">Create GCS bucket and configure backend</span>
                     <span class="step-marker">Done</span>
                   </div>
-                  <div class="step-narrative">Created bucket <code>agentjam-tf-state-prod</code> in <code>us-central1</code>. Updated <code>backend.tf</code>.</div>
+                  <div class="step-narrative">Created bucket <code>agent-knots-tf-state-prod</code> in <code>us-central1</code>. Updated <code>backend.tf</code>.</div>
                 </div>
               </div>
 
@@ -1172,15 +1172,15 @@
                       <span class="timeline-tag">Step 1 completed</span>
                       <span class="timeline-time">22m ago</span>
                     </div>
-                    <div class="timeline-text">Created GCS bucket <code>agentjam-tf-state-prod</code>. Updated backend.tf with GCS backend config. State file copied to GCS.</div>
+                    <div class="timeline-text">Created GCS bucket <code>agent-knots-tf-state-prod</code>. Updated backend.tf with GCS backend config. State file copied to GCS.</div>
                     <details class="timeline-diff">
                       <summary>show diff</summary>
                       <div class="timeline-diff-body">
                         <div class="diff-rem">- backend "s3" {</div>
-                        <div class="diff-rem">-   bucket = "agentjam-terraform-state"</div>
+                        <div class="diff-rem">-   bucket = "agent-knots-terraform-state"</div>
                         <div class="diff-rem">-   key    = "prod/terraform.tfstate"</div>
                         <div class="diff-add">+ backend "gcs" {</div>
-                        <div class="diff-add">+   bucket = "agentjam-tf-state-prod"</div>
+                        <div class="diff-add">+   bucket = "agent-knots-tf-state-prod"</div>
                         <div class="diff-add">+   prefix = "prod/terraform"</div>
                       </div>
                     </details>
@@ -1346,7 +1346,7 @@
           <div class="edit-field">
             <label class="edit-field-label">Workspace</label>
             <select class="edit-field-input" data-od-id="edit-workspace-select">
-              <option>agentjam</option>
+              <option>agent-knots</option>
               <option selected>infra/terraform</option>
               <option>frontend</option>
               <option>cookbook</option>
@@ -1374,7 +1374,7 @@
           <label class="edit-field-label">Description</label>
           <textarea class="edit-field-textarea" data-od-id="edit-description-input" rows="4">Migrate the existing Terraform state for `infra/terraform` from S3 backend to Google Cloud Storage. This involves updating the backend configuration, verifying state can be read from GCS, and removing the S3 bucket.
 
-The state currently lives in `s3://agentjam-terraform-state/prod/terraform.tfstate`. We need a GCS bucket in project `agentjam-prod-001`.</textarea>
+The state currently lives in `s3://agent-knots-terraform-state/prod/terraform.tfstate`. We need a GCS bucket in project `agent-knots-prod-001`.</textarea>
         </div>
 
         <div class="edit-field">

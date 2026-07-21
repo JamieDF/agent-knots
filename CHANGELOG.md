@@ -1,6 +1,113 @@
 # Changelog
 
-All notable changes to agentjam are documented here.
+All notable changes to agent-knots are documented here.
+
+## [Unreleased]
+
+### Added
+- **`install.sh`.** One script, run after `git clone`: installs `uv` if
+  missing, `uv sync`s Python dependencies, builds the web cockpit
+  frontend (skipped with a clear warning if Node isn't available), and
+  installs the `agent-knots` command globally via `uv tool install`.
+  Idempotent — safe to re-run.
+- **Acceptance-criteria enforcement.** `Task.criteria_met` tracks which
+  acceptance criteria have been explicitly marked satisfied via the new
+  `mark_criterion_met` task tool/CLI. `TaskStore` now refuses a transition
+  to `done` (via `set_status` or a status-carrying `log_progress` call)
+  until every criterion is marked met. Previously nothing enforced this —
+  an agent could mark a task done with unmet criteria and nothing stopped
+  it.
+- **Real resource limits on shell/custom-tool execution.**
+  `sandbox_tools.run_confined()` applies CPU/memory limits and kills the
+  whole process group (not just the direct child) on timeout, fixing
+  orphaned background processes that the old `subprocess.run(timeout=...)`
+  could leave behind. This is not a full security sandbox — see
+  `sandbox_tools.py`'s module docstring for what it does and doesn't
+  cover.
+- Tests for `SessionManager.start()` and `session/runtime.py`, both
+  previously at zero coverage (31 new tests total this session).
+- **CLI: `project` subcommand group.** `create`, `list`, `show`, `update`,
+  `delete` now wired to the existing `ProjectStore` (previously only
+  `project list` existed, and only as a stub — the web cockpit already
+  had full CRUD via `/api/workspaces`).
+- **CLI: `vault template` subcommand group.** `add`, `list`, `show`,
+  `remove` for managing per-credential injection templates (`--env`,
+  `--file`, `--stdin`, `--wrapper`), matching the `VaultStore` methods
+  that already backed the data model. Actually *using* a template to
+  inject a credential into a spawned command (an agent-callable
+  `vault_use` tool) is still not implemented — see roadmap.
+
+### Fixed
+- **`delegate_task` (multi-agent delegation) now actually reaches the
+  agent.** It was being appended to the tool list *after* the Strands
+  `Agent` was already constructed with the earlier list, so the tool
+  almost certainly never registered.
+- **`InProcessRuntime` was dead code.** `SessionManager.start()` never
+  constructed it and ran the agent loop directly instead, bypassing the
+  `SessionRuntime` abstraction. It's now wired through `create_runtime()`
+  like the subprocess path. Fixing this also surfaced and fixed a related
+  bug: `create_runtime()` ignored an explicitly resolved runtime type
+  (e.g. a per-project override) in favor of a possibly-stale global
+  setting.
+- **Disabling a built-in tool actually disables it now.**
+  `ToolRegistry.list_builtin()`/`list_enabled()` hardcoded every built-in
+  as enabled and never read the disabled-tools file — toggling one off
+  (from the web Settings page or TUI) persisted the change but had zero
+  effect on which tools an agent actually got.
+- **Custom tools now run in the session's workspace, not the server's own
+  cwd.** They previously ran via `subprocess.run()` with no `cwd` set at
+  all, silently ignoring whatever workspace was configured.
+- **Auth token comparisons are constant-time again.** `server.py`'s
+  middleware and `/login` were comparing tokens with plain `==`/`!=`
+  instead of `auth.py`'s `verify_token()` (which exists specifically to
+  avoid timing attacks) — the helper was there, just unused. Consolidated
+  onto one implementation and added `Authorization: Bearer` support to
+  the actual middleware (previously only the dead `Auth.require()` had
+  it). Also fixed `Auth.cockpit_url`, which was a `@property` that
+  couldn't accept the `host`/`port` arguments it declared.
+- **`WorkspaceSandbox.max_output`/`max_file_size` are enforced now.**
+  Shell output is truncated past `max_output`; editor writes past
+  `max_file_size` are rejected before touching disk. Both fields existed
+  but were never read by anything. `allowed_urls` was removed instead of
+  enforced — no tool exists for it to gate, and the shell tool's
+  unrestricted network access would have made a URL allowlist on some
+  future tool meaningless anyway.
+- **The GUI setup wizard now honors `AGENT_KNOTS_*` env vars, not just
+  the settings file.** `GET/PUT /api/settings`'s `configured` flag and
+  `POST /api/sessions`'s pre-flight check both used to call
+  `settings.is_configured()`, which only looks at
+  `~/.agent-knots/settings.yaml`. A user configured entirely via env vars
+  (common for containers/CI) would see the wizard every time and
+  literally could not start a session from the web GUI — the 400 fired
+  before `SessionManager.start()` ever got a chance to resolve the env
+  vars itself. Both now use `provider.resolve_provider().is_configured`,
+  matching the CLI's actual precedence (flags → env vars → file).
+- **The setup wizard no longer claims your API key is "stored
+  encrypted."** It's plain-text YAML in `settings.yaml` — only the vault
+  encrypts anything. Fixed the copy to say so and point at the vault for
+  actual encrypted storage.
+
+### Removed
+- **`save_checkpoint`/`load_checkpoint`.** Implemented but never called
+  from anywhere (no CLI command, no API route). `inject_memory` already
+  covers cross-session continuity via the task's progress log; real
+  session/agent-state resume would need to serialize actual conversation
+  history, which is a real feature to design later, not something worth
+  half-wiring up as-is. See `docs/strands-features.md`.
+- **`Auth.require()`.** Assumed a per-route `Depends()` architecture the
+  app doesn't use, so it was a second, unreachable auth implementation
+  rather than a real option — see the auth fix above.
+
+Tests: 106 → 171 this session (65 new), including first-ever coverage for
+`sandbox_tools.py`, `session/runtime.py`, `SessionManager.start()`, task
+tool validation, and authenticated web requests — all previously at zero.
+
+### Changed
+- **Renamed project from "AgentJam" to "agent-knots".** Python package is
+  now `agent_knots` (import path), CLI binary is `agent-knots`. Default
+  data directory is now `~/.agent-knots/`. Legacy Go implementation
+  (`cmd/`, `internal/`, `go.mod`) removed — superseded by the Python
+  rebuild below.
 
 ## [Unreleased] — Python Rebuild (2026-07)
 
