@@ -315,6 +315,23 @@ class TestTaskAPI:
         assert done.json()["status"] == "done"
 
     @pytest.mark.asyncio
+    async def test_task_response_includes_criteria_met(self, authed_client):
+        """Regression: _task_to_response() used to omit criteria_met
+        entirely, so the frontend had no way to know which criteria were
+        already met on page load (only which ones exist)."""
+        created = await authed_client.post("/api/tasks", json={
+            "title": "T", "acceptance_criteria": ["c1", "c2"],
+        })
+        task_id = created.json()["id"]
+        assert created.json()["criteria_met"] == []
+
+        await authed_client.post(f"/api/tasks/{task_id}/criteria/toggle", json={
+            "criterion": "c1", "met": True,
+        })
+        detail = await authed_client.get(f"/api/tasks/{task_id}")
+        assert detail.json()["criteria_met"] == ["c1"]
+
+    @pytest.mark.asyncio
     async def test_criteria_toggle_unknown_task_404s(self, authed_client):
         resp = await authed_client.post("/api/tasks/nonexistent/criteria/toggle", json={
             "criterion": "x", "met": True,

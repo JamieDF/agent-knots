@@ -24,7 +24,7 @@ export interface TaskDetail {
   status: string; priority: string; tags: string[]; project: string
   review_gate: string
   assigned_to: string; created_at: number; updated_at: number; created_by: string
-  acceptance_criteria: string[]; out_of_scope: string[]; dependencies: string[]
+  acceptance_criteria: string[]; criteria_met: string[]; out_of_scope: string[]; dependencies: string[]
   required_credentials: string[]
   steps: { id: string; title: string; status: string; notes: string; sub_steps: any[] }[]
   progress: {

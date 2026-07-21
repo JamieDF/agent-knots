@@ -381,8 +381,8 @@ test.describe('task UI', () => {
     })
     const { id } = await res.json()
 
-    // Navigate to tasks page.
-    await page.goto(`${BASE}/#/tasks`)
+    // Navigate to the List tab.
+    await page.goto(`${BASE}/tasks?view=list`)
     await page.waitForTimeout(1000)
 
     // Should show the task title.
@@ -396,19 +396,20 @@ test.describe('task UI', () => {
   })
 
   test('create task via dialog', async ({ page }) => {
-    await page.goto(`${BASE}/#/tasks`)
+    await page.goto(`${BASE}/tasks`)
     await page.waitForTimeout(1000)
 
-    // Click "New Task" button.
-    await page.locator('text=New Task').click()
+    // Click "+ New task" button.
+    await page.locator('text=New task').click()
     await page.waitForTimeout(300)
 
-    // Fill in the form.
+    // Fill in the form. Only Priority + Review gate selects exist in
+    // create mode (Status is edit-only), so target Priority by label.
     await page.locator('input[placeholder="What needs to be done?"]').fill('Dialog test task')
-    await page.locator('select').last().selectOption('high')
+    await page.getByLabel('Priority').selectOption('high')
 
     // Submit.
-    await page.locator('text=Create Task').click()
+    await page.locator('text=Create task').click()
     await page.waitForTimeout(1000)
 
     // Should appear in the list.
@@ -433,7 +434,7 @@ test.describe('task UI', () => {
     const { id } = await res.json()
 
     // Navigate to task detail.
-    await page.goto(`${BASE}/#/tasks/${id}`)
+    await page.goto(`${BASE}/tasks/${id}`)
     await page.waitForTimeout(1000)
 
     // Should show title.
@@ -445,8 +446,12 @@ test.describe('task UI', () => {
     // Should show task ID.
     await expect(page.locator(`text=${id}`).first()).toBeVisible()
 
-    // Status change.
-    await page.locator('select').nth(1).selectOption('review')
+    // Status change — status is edit-only now (no inline dropdown on the
+    // detail page itself), via the Edit dialog.
+    await page.locator('text=Edit').first().click()
+    await page.waitForTimeout(300)
+    await page.getByLabel('Status').selectOption('review')
+    await page.locator('text=Save changes').click()
     await page.waitForTimeout(500)
 
     // Verify via API.
@@ -463,7 +468,7 @@ test.describe('task UI', () => {
     })
     const { id } = await res.json()
 
-    await page.goto(`${BASE}/#/tasks/${id}`)
+    await page.goto(`${BASE}/tasks/${id}`)
     await page.waitForTimeout(1000)
 
     // Click delete button specifically.
@@ -722,12 +727,13 @@ test.describe('board view', () => {
     await page.request.patch(`${BASE}/api/tasks/${id1}`, { data: { status: 'in_progress' } })
 
     // Navigate to board.
-    await page.goto(`${BASE}/#/board`)
+    await page.goto(`${BASE}/tasks?view=board`)
     await page.waitForTimeout(2000)
 
-    // Should see column headers.
-    await expect(page.locator('text=Todo')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('text=In Progress')).toBeVisible()
+    // Should see stage column headers (Draft/Open/In progress/Review/Done
+    // — the Phase 1 default stage set from lib/stages.ts).
+    await expect(page.locator('text=Open')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=In progress')).toBeVisible()
     await expect(page.locator('text=Done')).toBeVisible()
 
     // Should see task cards.
@@ -738,8 +744,8 @@ test.describe('board view', () => {
     await page.locator('text=Board task A').click()
     await page.waitForTimeout(300)
 
-    // Should see priority and status buttons in expanded view.
-    await expect(page.locator('text=Priority')).toBeVisible({ timeout: 3000 })
+    // Should see the stage-mover chips and Details link in expanded view.
+    await expect(page.locator('text=Details →')).toBeVisible({ timeout: 3000 })
 
     // Cleanup.
     await page.request.delete(`${BASE}/api/tasks/${id1}`)
@@ -843,17 +849,20 @@ test.describe('task editing', () => {
   test.beforeEach(async ({ page }) => {
     await authPage(page)
   })
-  test('change status from detail dropdown', async ({ page }) => {
+  test('change status via edit dialog', async ({ page }) => {
     const res = await page.request.post(`${BASE}/api/tasks`, {
       data: { title: 'Status change test' },
     })
     const { id } = await res.json()
 
-    await page.goto(`${BASE}/#/tasks/${id}`)
+    await page.goto(`${BASE}/tasks/${id}`)
     await page.waitForTimeout(1000)
 
-    // Change status via dropdown.
-    await page.locator('select').nth(1).selectOption('review')
+    // Status is edit-only (no inline dropdown on the detail page).
+    await page.locator('text=Edit').first().click()
+    await page.waitForTimeout(300)
+    await page.getByLabel('Status').selectOption('review')
+    await page.locator('text=Save changes').click()
     await page.waitForTimeout(500)
 
     // Verify.
@@ -864,17 +873,17 @@ test.describe('task editing', () => {
   })
 
   test('create task from board + button', async ({ page }) => {
-    await page.goto(`${BASE}/#/board`)
+    await page.goto(`${BASE}/tasks?view=board`)
     await page.waitForTimeout(1000)
 
-    // Click + button in the Todo column.
+    // Click + button in the Open column.
     const plusButtons = page.locator('button[title="Add task"]')
     await plusButtons.first().click()
     await page.waitForTimeout(300)
 
     // Fill dialog.
     await page.locator('input[placeholder="What needs to be done?"]').fill('Board dialog task')
-    await page.locator('text=Create Task').click()
+    await page.locator('text=Create task').click()
     await page.waitForTimeout(1000)
 
     // Should appear on board.
@@ -886,22 +895,25 @@ test.describe('task editing', () => {
     if (task) await page.request.delete(`${BASE}/api/tasks/${task.id}`)
   })
 
-  test('tasks nav dropdown shows Board and List', async ({ page }) => {
+  test('Tasks nav pill switches between Board and List tabs', async ({ page }) => {
+    // Replaces the old "Tasks ▾" dropdown, which no longer exists — Board
+    // and List are now tabs inside the /tasks screen (Phase 1 merge).
     await page.goto(BASE)
     await page.waitForTimeout(1000)
 
-    // Click Tasks dropdown.
-    await page.locator('text=Tasks ▾').click()
-    await page.waitForTimeout(300)
-
-    // Should show Board and List options.
-    await expect(page.locator('text=Board')).toBeVisible()
-    await expect(page.locator('text=List')).toBeVisible()
-
-    // Click Board.
-    await page.locator('text=Board').click()
+    await page.locator('nav >> text=Tasks').click()
     await page.waitForTimeout(500)
-    expect(page.url()).toContain('/board')
+    expect(page.url()).toContain('/tasks')
+
+    // Target the tab buttons by role — a plain `text=Board` locator also
+    // matches the "Dashboard" nav link ("board" is a substring of it).
+    await page.getByRole('button', { name: 'list' }).click()
+    await page.waitForTimeout(300)
+    expect(page.url()).toContain('view=list')
+
+    await page.getByRole('button', { name: 'board' }).click()
+    await page.waitForTimeout(300)
+    expect(page.url()).toContain('view=board')
   })
 
 })
@@ -913,15 +925,16 @@ test.describe('task modal editing', () => {
     test.setTimeout(30000)
     const res = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Modal test', priority: 'low' } })
     const { id } = await res.json()
-    await page.goto(`${BASE}/#/tasks/${id}`)
+    await page.goto(`${BASE}/tasks/${id}`)
     await page.waitForTimeout(1000)
 
-    await page.locator('text=Edit task').click()
+    await page.locator('text=Edit').first().click()
     await page.waitForTimeout(500)
 
-    // Fill in the modal.
-    await page.locator("input").first().fill('Updated via modal')
-    await page.locator("select").nth(3).selectOption('urgent')
+    // Fill in the modal — title has a distinctive placeholder, priority
+    // is targeted by its aria-label (multiple selects exist in edit mode).
+    await page.locator('input[placeholder="What needs to be done?"]').fill('Updated via modal')
+    await page.getByLabel('Priority').selectOption('urgent')
     await page.locator('text=Save changes').click()
     await page.waitForTimeout(500)
 
@@ -976,7 +989,7 @@ test.describe('session-task assignment', () => {
     const task = await taskRes.json()
 
     // Navigate to board.
-    await page.goto(`${BASE}/#/board`)
+    await page.goto(`${BASE}/tasks?view=board`)
     await page.waitForTimeout(2000)
 
     // Find and expand the task card.
@@ -1003,8 +1016,11 @@ test.describe('session-task assignment', () => {
     await page.goto(BASE)
     await page.waitForTimeout(2000)
 
-    // Click + New Session.
-    const addBtn = page.locator('text=New Session')
+    // Click + New Session — the Dashboard's own functional button, not
+    // the disabled placeholder Topbar renders (Phase 0; wiring lands
+    // Phase 2/3), which now also matches this text. Dashboard's button
+    // is the one rendered later in the DOM.
+    const addBtn = page.locator('button:has-text("New Session")').last()
     await expect(addBtn).toBeVisible({ timeout: 5000 })
     await addBtn.click()
     await page.waitForTimeout(500)
@@ -1253,7 +1269,7 @@ test.describe('agent panel tabs', () => {
     const session = await sessionRes.json()
 
     // Navigate to focus.
-    await page.goto(`${BASE}/#/agent/${session.id}`)
+    await page.goto(`${BASE}/agent/${session.id}`)
     await page.waitForTimeout(3000)
 
     // Switch to Review tab.
@@ -1284,7 +1300,7 @@ test.describe('agent code panel', () => {
     })
     const session = await sessionRes.json()
 
-    await page.goto(`${BASE}/#/agent/${session.id}`)
+    await page.goto(`${BASE}/agent/${session.id}`)
     await page.waitForTimeout(3000)
 
     // Click Code tab.

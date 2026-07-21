@@ -758,6 +758,7 @@ def _task_to_response(task: Task) -> dict:
         "updated_at": task.updated_at,
         "created_by": task.created_by,
         "acceptance_criteria": task.acceptance_criteria,
+        "criteria_met": task.criteria_met,
         "out_of_scope": task.out_of_scope,
         "dependencies": task.dependencies,
         "required_credentials": task.required_credentials,

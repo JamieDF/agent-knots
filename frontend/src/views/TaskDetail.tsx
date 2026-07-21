@@ -1,202 +1,319 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { fetchTask, updateTask, deleteTask, type TaskDetail as TDetail } from '../lib/api'
+import {
+  fetchTask, updateTask, deleteTask, toggleCriterion, createSession, fetchAgent,
+  type TaskDetail as TDetail, type AgentInfo,
+} from '../lib/api'
+import { useWorkspaceScope } from '../lib/workspaceContext'
+import { statusStyle } from '../lib/statusColors'
+import { priorityColor } from '../lib/priorityColors'
+import { Card, Chip, SectionLabel } from '../components/primitives'
+import DeskLayout from '../components/DeskLayout'
+import TaskDialog from '../components/TaskDialog'
 
-const STATUSES = ['draft', 'open', 'planned', 'in_progress', 'blocked', 'review', 'done', 'abandoned']
-const PRIORITIES = ['low', 'medium', 'high', 'urgent']
-const STATUS_COLORS: Record<string, string> = {
-  draft: 'var(--muted-2)', open: 'var(--fg-soft)', planned: 'var(--info)',
-  in_progress: 'oklch(72% 0.16 155)', blocked: 'var(--blocked)', review: 'oklch(70% 0.14 295)',
-  done: 'var(--done)', abandoned: 'var(--muted-2)',
+const LIFECYCLE = ['draft', 'open', 'in_progress', 'review', 'done']
+const REVIEW_GATE_LABELS: Record<string, string> = {
+  auto: '🛡 auto-review on completion',
+  manual: 'review: ask me',
+  none: 'no review gate',
 }
 
-function ts(e: number) { return new Date(e * 1000).toLocaleString() }
 function rel(e: number) {
   const d = Date.now() - e * 1000; const m = Math.floor(d / 60000)
   if (m < 1) return 'just now'; if (m < 60) return `${m}m ago`
   const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`
   return `${Math.floor(h / 24)}d ago`
 }
+function ts(e: number) { return new Date(e * 1000).toLocaleString() }
 
-export default function TaskDetail() {
+function TaskDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { workspace } = useWorkspaceScope()
   const [task, setTask] = useState<TDetail | null>(null)
   const [loading, setLoading] = useState(true)
-  const [showModal, setShowModal] = useState(false)
-  const [eTitle, setETitle] = useState(''); const [eDesc, setEDesc] = useState('')
-  const [ePriority, setEPriority] = useState('medium'); const [eStatus, setEStatus] = useState('open')
-  const [eTags, setETags] = useState(''); const [eCriteria, setECriteria] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [showEdit, setShowEdit] = useState(false)
+  const [agent, setAgent] = useState<AgentInfo | null>(null)
+  const [related, setRelated] = useState<TDetail[]>([])
+  const [error, setError] = useState('')
 
-  const load = () => { if (!id) return; fetchTask(id).then(t => {
-    setTask(t); setETitle(t.title); setEDesc(t.description); setEPriority(t.priority)
-    setEStatus(t.status); setETags(t.tags.join(', ')); setECriteria(t.acceptance_criteria.join('\n'))
-    setLoading(false)
-  }).catch(() => setLoading(false)) }
-  useEffect(() => { load() }, [id])
+  const load = useCallback(() => {
+    if (!id) return
+    fetchTask(id).then(t => {
+      setTask(t)
+      setLoading(false)
+      if (t.assigned_to) fetchAgent(t.assigned_to).then(setAgent).catch(() => setAgent(null))
+      else setAgent(null)
+      if (t.dependencies.length > 0) {
+        Promise.all(t.dependencies.map(d => fetchTask(d).catch(() => null)))
+          .then(rs => setRelated(rs.filter((r): r is TDetail => r !== null)))
+      } else {
+        setRelated([])
+      }
+    }).catch(() => setLoading(false))
+  }, [id])
 
-  const handleStatusChange = async (s: string) => { if (!id) return; await updateTask(id, { status: s }); setTask(t => t ? { ...t, status: s } : t) }
-  const handleSave = async () => { if (!id) return; setSaving(true)
-    await updateTask(id, { title: eTitle, description: eDesc, priority: ePriority })
-    if (eStatus !== task?.status) await updateTask(id, { status: eStatus })
-    setShowModal(false); setSaving(false); load() }
-  const handleDelete = async () => { if (!id) return; await deleteTask(id); navigate(-1) }
+  useEffect(() => { load() }, [load])
 
-  if (loading) return <div style={center}>Loading...</div>
-  if (!task) return <div style={center}>Task not found.</div>
+  const handleToggleCriterion = async (criterion: string, met: boolean) => {
+    if (!id) return
+    const updated = await toggleCriterion(id, criterion, met)
+    setTask(updated)
+  }
+
+  const handleStart = async () => {
+    if (!id) return
+    const session = await createSession({ prompt: '', mode: 'agent', task_id: id, project_id: workspace || undefined })
+    navigate(`/agent/${session.id}`)
+  }
+
+  const handleRunReview = async () => {
+    if (!id) return
+    setError('')
+    try {
+      const updated = await updateTask(id, { status: 'done' })
+      setTask(updated)
+    } catch {
+      setError('Not all acceptance criteria are met yet — done was refused.')
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!id) return
+    await deleteTask(id)
+    navigate('/tasks')
+  }
+
+  if (loading) return <DeskLayout width={880}><Card>Loading…</Card></DeskLayout>
+  if (!task) return <DeskLayout width={880}><Card>Task not found.</Card></DeskLayout>
+
   const stepsDone = task.steps.filter(s => s.status === 'done').length
+  const metSet = new Set(task.criteria_met)
+
+  const stageIndex = LIFECYCLE.indexOf(task.status === 'blocked' ? 'in_progress' : task.status === 'planned' ? 'open' : task.status)
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto' }}>
-      <div style={{ padding: '12px 20px', display: 'flex', gap: 8, fontSize: 12, color: 'var(--muted)', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)' }}>
-        <a href="#/board" style={{ color: 'var(--info)', textDecoration: 'none' }}>Tasks</a><span style={{ color: 'var(--muted-2)' }}>/</span>
-        {task.project && <><a href="#/board" style={{ color: 'var(--info)', textDecoration: 'none' }}>{task.project}</a><span style={{ color: 'var(--muted-2)' }}>/</span></>}
-        <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--fg-soft)' }}>{task.id}</span>
+    <DeskLayout width={880}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+        <button onClick={() => navigate('/tasks')} style={{ color: 'var(--ink2)', fontSize: 16 }}>←</button>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--mut)' }}>{task.id}</span>
+        <Chip color={statusStyle(task.status).color} soft>{statusStyle(task.status).label}</Chip>
+        <Chip color={priorityColor(task.priority)} soft>{task.priority}</Chip>
+        {task.project && <Chip mono>{task.project}</Chip>}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <button onClick={() => setShowModal(true)} className="btn btn-ghost" style={{ fontSize: 12, padding: '4px 10px' }}>Edit task</button>
-          <button onClick={handleDelete} className="btn btn-ghost" style={{ color: 'var(--blocked)', fontSize: 12, padding: '4px 10px' }}>Delete</button>
+          {task.assigned_to ? (
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ok)' }}>● Agent active</span>
+          ) : (
+            <button onClick={handleStart} style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}>
+              ▶ Start agent on this task
+            </button>
+          )}
+          <button onClick={() => setShowEdit(true)} style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Edit</button>
+          <button onClick={handleDelete} style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--err)', background: 'var(--card2)' }}>✕ Delete</button>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', minHeight: 0 }}>
-        <div style={{ padding: '24px 32px 60px' }}>
-          <div style={{ marginBottom: 28 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-              <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--muted-2)', fontSize: 13 }}>{task.id}</span>
-              <select value={task.status} onChange={e => handleStatusChange(e.target.value)} style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 500,
-                background: STATUS_COLORS[task.status]?.replace(')', ' / 0.12)'), color: STATUS_COLORS[task.status],
-                border: `1px solid ${STATUS_COLORS[task.status]?.replace(')', ' / 0.25)')}`, cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}>
-                {STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-              </select>
-              {task.tags.map(tag => <span key={tag} style={tagChip}>{tag}</span>)}
-              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, color: task.priority === 'urgent' ? 'oklch(72% 0.18 25)' : task.priority === 'high' ? 'oklch(78% 0.14 65)' : 'var(--muted)' }}>{task.priority.toUpperCase()}</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <h1 style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-0.015em', color: 'var(--fg)', lineHeight: 1.25 }}>{task.title}</h1>
-              <button onClick={() => setShowModal(true)} style={{ opacity: 0.35, color: 'var(--muted)', fontSize: 14, cursor: 'pointer', border: 0, background: 'none' }}
-                onMouseEnter={e => e.currentTarget.style.opacity = '0.95'} onMouseLeave={e => e.currentTarget.style.opacity = '0.35'}>✎</button>
-            </div>
-            <div style={{ display: 'flex', gap: 14, marginTop: 14, fontSize: 13, color: 'var(--muted)' }}>
-              {task.assigned_to && <><span style={{ color: 'var(--fg-soft)' }}>{task.assigned_to}</span><span style={{ color: 'var(--muted-2)' }}>·</span></>}
-              <span>Created {rel(task.created_at)}</span><span style={{ color: 'var(--muted-2)' }}>·</span><span>Updated {rel(task.updated_at)}</span>
+      {/* Lifecycle strip */}
+      <Card style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          {LIFECYCLE.map((stage, i) => {
+            const past = i < stageIndex
+            const current = i === stageIndex
+            const color = current
+              ? (task.status === 'blocked' ? 'var(--warn)' : 'var(--acc)')
+              : past ? 'var(--ok)' : 'var(--mut2)'
+            return (
+              <div key={stage} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: color }} />
+                  <span style={{ fontSize: 11.5, fontWeight: current ? 700 : 500, color }}>{stage.replace('_', ' ')}</span>
+                </div>
+                {i < LIFECYCLE.length - 1 && <span style={{ color: 'var(--line2)', margin: '0 4px' }}>→</span>}
+              </div>
+            )
+          })}
+          {(task.status === 'blocked' || task.status === 'planned' || task.status === 'abandoned') && (
+            <span style={{ fontSize: 11, color: 'var(--mut)', marginLeft: 8 }}>({task.status})</span>
+          )}
+        </div>
+        <span style={{ fontSize: 11.5, color: 'var(--mut)' }}>{REVIEW_GATE_LABELS[task.review_gate] || task.review_gate}</span>
+      </Card>
+
+      {task.status === 'review' && task.review_gate === 'auto' && (
+        <Card style={{ marginBottom: 20, background: 'var(--acc-soft)', border: '1px solid var(--acc)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, color: 'var(--ink)' }}>🛡 Auto-review queued — all criteria must be met before this can complete.</span>
+            <button onClick={handleRunReview} style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}>
+              Run review now
+            </button>
+          </div>
+          {error && <div style={{ fontSize: 12, color: 'var(--err)', marginTop: 6 }}>{error}</div>}
+        </Card>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 220px', gap: 20 }}>
+        <div>
+          {/* Title + tags */}
+          <div style={{ marginBottom: 20 }}>
+            <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--ink)', marginBottom: 8 }}>{task.title}</h1>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {task.tags.map(tag => <Chip key={tag}>{tag}</Chip>)}
             </div>
           </div>
 
-          {task.description && <Sec label="Description"><div style={{ background: 'var(--surface)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: '16px 18px', fontSize: 14, lineHeight: 1.65, color: 'var(--fg-soft)' }}>{task.description}</div></Sec>}
+          {task.description && (
+            <Section label="Description">
+              <Card style={{ fontSize: 13.5, lineHeight: 1.6, color: 'var(--ink2)' }}>{task.description}</Card>
+            </Section>
+          )}
 
-          {task.steps.length > 0 && <Sec label={`Steps · ${stepsDone} of ${task.steps.length} done`}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {task.steps.map(s => {
-                const done = s.status === 'done'; const active = s.status === 'in_progress'
-                return <div key={s.id} style={{
-                  display: 'flex', gap: 14, padding: '14px 16px', borderRadius: 10,
-                  border: done ? '1px solid oklch(64% 0.06 155 / 0.2)' : active ? '1px solid oklch(68% 0.12 235 / 0.4)' : '1px solid var(--border-subtle)',
-                  background: done ? 'oklch(64% 0.06 155 / 0.04)' : active ? 'oklch(68% 0.12 235 / 0.06)' : 'var(--surface)',
-                  opacity: (!done && !active) ? 0.55 : 1,
-                }}>
-                  <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', flexShrink: 0, fontSize: 12, fontWeight: 600,
-                    background: done ? 'oklch(64% 0.06 155 / 0.15)' : active ? 'oklch(68% 0.12 235 / 0.15)' : 'var(--surface-raised)',
-                    border: `1px solid ${done ? 'oklch(64% 0.06 155 / 0.3)' : active ? 'oklch(68% 0.12 235 / 0.3)' : 'var(--border-subtle)'}`,
-                    color: done ? 'oklch(64% 0.06 155)' : active ? 'var(--info)' : 'var(--muted)' }}>{done ? '✓' : (s.id.replace('s-', '') || '·')}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-                      <span style={{ fontSize: 14, fontWeight: 500, color: done ? 'var(--fg-soft)' : active ? 'var(--fg)' : 'var(--muted)', textDecoration: done ? 'line-through' : 'none' }}>{s.title}</span>
-                      {done && <span style={markDone}>Done</span>}{active && <span style={markActive}>Active</span>}
+          {task.steps.length > 0 && (
+            <Section label={`Steps · ${stepsDone}/${task.steps.length} done`}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {task.steps.map(s => {
+                  const done = s.status === 'done'; const active = s.status === 'in_progress'
+                  return (
+                    <div key={s.id} style={{ fontSize: 13, color: done ? 'var(--mut)' : 'var(--ink2)', textDecoration: done ? 'line-through' : undefined, display: 'flex', gap: 8 }}>
+                      <span>{done ? '✓' : active ? '●' : '○'}</span>
+                      <span>{s.title}</span>
+                      {s.sub_steps.length > 0 && (
+                        <ul style={{ marginLeft: 20, marginTop: 4 }}>
+                          {s.sub_steps.map(ss => <li key={ss.id} style={{ fontSize: 12, color: 'var(--mut)' }}>{ss.title}</li>)}
+                        </ul>
+                      )}
                     </div>
-                    {s.notes && <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.5 }}>{s.notes}</div>}
-                  </div>
-                </div>
-              })}
-            </div>
-          </Sec>}
-
-          {task.acceptance_criteria.length > 0 && <Sec label="Acceptance Criteria">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {task.acceptance_criteria.map((c, i) => (
-                <label key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13, lineHeight: 1.4, color: 'var(--fg-soft)' }}>
-                  <input type="checkbox" style={{ margin: '2px 0 0 0', accentColor: 'var(--info)' }} /><span>{c}</span>
-                </label>
-              ))}
-            </div>
-          </Sec>}
-
-          {task.progress.length > 0 && <Sec label="Progress log">
-            <div style={{ position: 'relative', paddingLeft: 32 }}>
-              <div style={{ position: 'absolute', left: 11, top: 0, bottom: 0, width: 1, background: 'var(--border)' }} />
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {[...task.progress].reverse().map((p, i) => {
-                  const blk = p.status === 'blocked' || p.blocker
-                  const mc = blk ? 'var(--blocked)' : p.status === 'done' ? 'var(--done)' : 'var(--info)'
-                  return <div key={i} style={{ position: 'relative' }}>
-                    <div style={{ position: 'absolute', left: -25, top: 14, width: 11, height: 11, borderRadius: '50%', background: mc, border: '2px solid var(--bg)' }} />
-                    <div style={{ background: blk ? 'var(--blocked-bg)' : 'var(--surface)', border: `1px solid ${blk ? 'var(--blocked-bd)' : 'var(--border-subtle)'}`, borderRadius: 10, padding: '12px 14px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                        <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: mc }}>{p.status.replace('_', ' ')}</span>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--muted-2)' }}>{rel(p.timestamp)}</span>
-                      </div>
-                      <div style={{ fontSize: 13, lineHeight: 1.55, color: blk ? 'var(--fg)' : 'var(--fg-soft)' }}>{p.entry}</div>
-                      {p.blocker?.question && <div style={{ background: 'var(--blocked-bg)', borderRadius: 6, padding: '8px 10px', marginTop: 8, fontStyle: 'italic', color: 'var(--fg)', fontSize: 13 }}>{p.blocker.question}</div>}
-                      {p.next_step && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>Next: {p.next_step}</div>}
-                    </div>
-                  </div>
+                  )
                 })}
               </div>
-            </div>
-          </Sec>}
+            </Section>
+          )}
+
+          {task.acceptance_criteria.length > 0 && (
+            <Section label="Acceptance criteria">
+              <div style={{ fontSize: 11.5, color: 'var(--mut)', marginBottom: 8 }}>Done is gated on all criteria being marked met.</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {task.acceptance_criteria.map((c, i) => {
+                  const met = metSet.has(c)
+                  return (
+                    <label
+                      key={i}
+                      onClick={() => handleToggleCriterion(c, !met)}
+                      style={{
+                        display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13, cursor: 'pointer',
+                        padding: '6px 8px', borderRadius: 6, background: met ? 'var(--acc-soft)' : undefined,
+                      }}
+                    >
+                      <span style={{
+                        width: 15, height: 15, borderRadius: 4, flexShrink: 0, marginTop: 1,
+                        border: `1px solid ${met ? 'var(--acc)' : 'var(--line2)'}`,
+                        background: met ? 'var(--acc)' : 'transparent',
+                        color: 'var(--acc-ink)', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>{met ? '✓' : ''}</span>
+                      <span style={{ color: met ? 'var(--ink)' : 'var(--ink2)' }}>{c}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </Section>
+          )}
+
+          {task.progress.length > 0 && (
+            <Section label="Progress log">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {[...task.progress].reverse().map((p, i) => {
+                  const blocked = p.status === 'blocked' || !!p.blocker
+                  return (
+                    <Card key={i} style={blocked ? { border: '1px solid var(--warn)' } : {}}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: blocked ? 'var(--warn-ink)' : 'var(--mut)' }}>{p.status.replace('_', ' ')}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--mut)' }}>{rel(p.timestamp)}</span>
+                      </div>
+                      <div style={{ fontSize: 13, color: 'var(--ink2)', lineHeight: 1.5 }}>{p.entry}</div>
+                      {p.blocker?.question && (
+                        <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'var(--warn-soft)', fontStyle: 'italic', fontSize: 13, color: 'var(--ink)' }}>
+                          {p.blocker.question}
+                        </div>
+                      )}
+                      {p.next_step && <div style={{ fontSize: 12, color: 'var(--mut)', marginTop: 6 }}>Next: {p.next_step}</div>}
+                    </Card>
+                  )
+                })}
+              </div>
+            </Section>
+          )}
         </div>
 
-        <div style={{ background: 'var(--surface)', borderLeft: '1px solid var(--border)', padding: 16, overflowY: 'auto' }}>
-          <Side label="Progress">
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}><span style={{ color: 'var(--muted)' }}>Overall</span><span style={{ fontFamily: 'var(--font-mono)', color: 'var(--info)' }}>{task.steps.length > 0 ? Math.round((stepsDone / task.steps.length) * 100) : 0}%</span></div>
-            <div style={{ height: 4, background: 'var(--border)', borderRadius: 99, overflow: 'hidden', marginBottom: 12 }}><div style={{ height: '100%', width: `${task.steps.length > 0 ? Math.round((stepsDone / task.steps.length) * 100) : 0}%`, background: 'var(--info)' }} /></div>
-            <Grid done={stepsDone} active={task.steps.filter(s => s.status === 'in_progress').length} pending={task.steps.filter(s => !['done', 'in_progress'].includes(s.status)).length} />
-          </Side>
-          <Side label="Metadata">
-            <Row l="Workspace" v={task.project || '—'} /><Row l="Priority" v={task.priority} /><Row l="Assigned to" v={task.assigned_to || '—'} m />
-            <Row l="Created" v={ts(task.created_at)} m /><Row l="Updated" v={rel(task.updated_at)} m />
-          </Side>
+        {/* Side blocks */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {agent && (
+            <SideBlock label="Session">
+              <Row l="Mode" v={agent.mode} />
+              <Row l="Tokens" v={agent.tokens_used.toLocaleString()} />
+              <Row l="Cost" v={`$${agent.cost_usd.toFixed(3)}`} />
+            </SideBlock>
+          )}
+          <SideBlock label="Tools used">
+            {toolCounts(task.progress).length === 0 && <span style={{ fontSize: 12, color: 'var(--mut)' }}>None yet</span>}
+            {toolCounts(task.progress).map(([name, count]) => (
+              <Row key={name} l={name} v={`×${count}`} mono />
+            ))}
+          </SideBlock>
+          {related.length > 0 && (
+            <SideBlock label="Related tasks">
+              {related.map(r => (
+                <div key={r.id} onClick={() => navigate(`/tasks/${r.id}`)} style={{ fontSize: 12, color: statusStyle(r.status).color, cursor: 'pointer', marginBottom: 4 }}>
+                  {r.title}
+                </div>
+              ))}
+            </SideBlock>
+          )}
+          {task.required_credentials.length > 0 && (
+            <SideBlock label="Vault credentials">
+              {task.required_credentials.map(c => <Row key={c} l="⚿" v={c} mono />)}
+            </SideBlock>
+          )}
+          <SideBlock label="Metadata">
+            <Row l="Created" v={ts(task.created_at)} />
+            <Row l="Updated" v={rel(task.updated_at)} />
+          </SideBlock>
         </div>
       </div>
 
-      {showModal && <div style={mo} onClick={() => setShowModal(false)}>
-        <div style={mb} onClick={e => e.stopPropagation()}>
-          <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div><div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>Editing task</div><div style={{ fontSize: 17, fontWeight: 600, color: 'var(--fg)' }}>{task.title}</div></div>
-            <button onClick={() => setShowModal(false)} style={{ width: 28, height: 28, borderRadius: 6, color: 'var(--muted)', display: 'grid', placeItems: 'center', fontSize: 18, border: 0, background: 'none', cursor: 'pointer' }}>×</button>
-          </div>
-          <div style={{ padding: '18px 24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14, flex: 1 }}>
-            <Fld l="Title"><input value={eTitle} onChange={e => setETitle(e.target.value)} style={mi} /></Fld>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-              <Fld l="Status"><select value={eStatus} onChange={e => setEStatus(e.target.value)} style={mi}>{STATUSES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}</select></Fld>
-              <Fld l="Priority"><select value={ePriority} onChange={e => setEPriority(e.target.value)} style={mi}>{PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}</select></Fld>
-              <Fld l="Tags"><input value={eTags} onChange={e => setETags(e.target.value)} placeholder="comma, separated" style={mi} /></Fld>
-            </div>
-            <Fld l="Description"><textarea value={eDesc} onChange={e => setEDesc(e.target.value)} rows={4} style={{ ...mi, resize: 'vertical', minHeight: 80, lineHeight: 1.55, fontFamily: 'inherit' }} /></Fld>
-            <Fld l="Acceptance criteria"><textarea value={eCriteria} onChange={e => setECriteria(e.target.value)} rows={3} style={{ ...mi, resize: 'vertical', minHeight: 60, fontFamily: 'inherit' }} placeholder="One per line" /></Fld>
-          </div>
-          <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 11, color: 'var(--muted-2)', fontFamily: 'var(--font-mono)' }}>Esc to cancel</span>
-            <div style={{ display: 'flex', gap: 8 }}><button onClick={() => setShowModal(false)} className="btn btn-ghost">Cancel</button>
-              <button onClick={handleSave} disabled={saving} className="btn" style={{ background: 'var(--fg)', color: 'var(--bg)', fontWeight: 600 }}>{saving ? 'Saving...' : 'Save changes'}</button></div>
-          </div>
-        </div>
-      </div>}
+      <TaskDialog
+        open={showEdit}
+        task={task}
+        onClose={() => setShowEdit(false)}
+        onSaved={() => { setShowEdit(false); load() }}
+      />
+    </DeskLayout>
+  )
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div style={{ marginBottom: 22 }}><div style={{ marginBottom: 10 }}><SectionLabel>{label}</SectionLabel></div>{children}</div>
+}
+
+function SideBlock({ label, children }: { label: string; children: React.ReactNode }) {
+  return <Card><div style={{ marginBottom: 10 }}><SectionLabel>{label}</SectionLabel></div>{children}</Card>
+}
+
+function Row({ l, v, mono }: { l: string; v: string; mono?: boolean }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
+      <span style={{ color: 'var(--mut)', fontFamily: mono ? 'var(--font-mono)' : undefined }}>{l}</span>
+      <span style={{ color: 'var(--ink2)', fontFamily: mono ? 'var(--font-mono)' : undefined }}>{v}</span>
     </div>
   )
 }
 
-const center: React.CSSProperties = { padding: 40, color: 'var(--muted)' }
-const mo: React.CSSProperties = { position: 'fixed', inset: 0, background: 'oklch(7% 0.004 260 / 0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 24 }
-const mb: React.CSSProperties = { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, maxWidth: 720, width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 16px 48px rgba(0,0,0,0.45)' }
-const mi: React.CSSProperties = { width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--fg)', fontFamily: 'inherit', fontSize: 13, padding: '8px 10px', outline: 'none' }
-const tagChip: React.CSSProperties = { fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'oklch(22% 0.008 260)', color: 'oklch(72% 0.008 260)' }
-const markDone: React.CSSProperties = { fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '2px 6px', borderRadius: 3, color: 'oklch(64% 0.06 155)', background: 'oklch(64% 0.06 155 / 0.12)' }
-const markActive: React.CSSProperties = { fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '2px 6px', borderRadius: 3, color: 'var(--info)', background: 'oklch(68% 0.12 235 / 0.15)' }
+function toolCounts(progress: TDetail['progress']): [string, number][] {
+  const counts = new Map<string, number>()
+  for (const p of progress) {
+    const m = p.entry.match(/^\[([^\]]+)\]/)
+    if (m) counts.set(m[1], (counts.get(m[1]) || 0) + 1)
+  }
+  return [...counts.entries()]
+}
 
-function Sec({ label, children }: { label: string; children: React.ReactNode }) { return <section style={{ marginBottom: 28 }}><div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>{label}</div>{children}</section> }
-function Side({ label, children }: { label: string; children: React.ReactNode }) { return <div style={{ background: 'var(--surface)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: 14, marginBottom: 12 }}><div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>{label}</div>{children}</div> }
-function Grid({ done, active, pending }: { done: number; active: number; pending: number }) { const c: React.CSSProperties = { background: 'var(--bg)', borderRadius: 6, padding: '8px 4px', textAlign: 'center' }; const n: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 16, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }; const l: React.CSSProperties = { fontSize: 10, color: 'var(--muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }; return <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}><div style={c}><div style={{ ...n, color: 'var(--done)' }}>{done}</div><div style={l}>Done</div></div><div style={c}><div style={{ ...n, color: 'var(--info)' }}>{active}</div><div style={l}>Active</div></div><div style={c}><div style={{ ...n, color: 'var(--muted-2)' }}>{pending}</div><div style={l}>Pending</div></div></div> }
-function Row({ l: label, v: value, m: mono }: { l: string; v: string; m?: boolean }) { return <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 7 }}><span style={{ color: 'var(--muted)' }}>{label}</span><span style={{ color: 'var(--fg-soft)', fontFamily: mono ? 'var(--font-mono)' : undefined, fontSize: mono ? '11.5px' : undefined }}>{value}</span></div> }
-function Fld({ l: label, children }: { l: string; children: React.ReactNode }) { return <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}><label style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>{label}</label>{children}</div> }
+export default TaskDetail

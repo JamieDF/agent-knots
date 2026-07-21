@@ -5,21 +5,28 @@ All notable changes to agent-knots are documented here.
 ## [Unreleased]
 
 ### Added
-- **Atelier cockpit redesign — Phase 0 (foundations) + Phase 1 backend.**
-  First phase of the full frontend rebuild described in
-  `design_handoff_atelier_cockpit/`. Light/dark theme system with
-  persisted toggle, reactive URL-synced workspace scope (no more
-  full-page reload to switch workspaces), a shared primitives library
-  (Card/Chip/Toggle/StatusDot/PriorityLabel/SectionLabel/Dialog/Mono),
-  BrowserRouter with a proper SPA-fallback route for deep links (was
-  HashRouter). SSE rewritten end to end: the backend now streams
-  structured JSON events (`events.py::serialize_event()`) instead of
-  pre-rendered HTML fragments, and multiple simultaneous viewers of one
-  agent (e.g. two browser tabs) each get their own event queue instead of
-  racing for a single shared one. Six new event kinds (`auto_log`,
-  `steer`, `delegate`, `checkpoint`, `user`, `ended`). Task API gained
-  `review_gate`, per-criterion toggling, single-agent detail, and an
-  agent-assisted task-drafting endpoint.
+- **Atelier cockpit redesign — Phase 0 (foundations) + Phase 1 (Tasks/
+  Board core).** Full frontend rebuild described in
+  `design_handoff_atelier_cockpit/`.
+  - *Phase 0*: light/dark theme system with persisted toggle, reactive
+    URL-synced workspace scope (no more full-page reload to switch
+    workspaces), a shared primitives library (Card/Chip/Toggle/
+    StatusDot/PriorityLabel/SectionLabel/Dialog/Mono), BrowserRouter
+    with a proper SPA-fallback route for deep links (was HashRouter).
+    SSE rewritten end to end: the backend now streams structured JSON
+    events (`events.py::serialize_event()`) instead of pre-rendered
+    HTML fragments, and multiple simultaneous viewers of one agent
+    (e.g. two browser tabs) each get their own event queue instead of
+    racing for a single shared one. Six new event kinds (`auto_log`,
+    `steer`, `delegate`, `checkpoint`, `user`, `ended`).
+  - *Phase 1*: Tasks screen with Board/List tabs (stage-driven columns,
+    expand-in-place cards, stage filter chips), a unified task create/
+    edit dialog (chip tags, criteria/steps row-list editors, review-gate
+    select, "✨ Draft with agent"), and a rebuilt Task Detail (lifecycle
+    strip, real clickable acceptance criteria, session/tools-used/
+    related-tasks side blocks). Task API gained `review_gate`,
+    per-criterion toggling, single-agent detail, and an agent-assisted
+    task-drafting endpoint.
 
 ### Fixed
 - **`PATCH /api/tasks/{id}` silently dropped description/tags/
@@ -28,6 +35,10 @@ All notable changes to agent-knots are documented here.
   nothing on the backend ever applied them. Fixed with existing-entry
   matching so criteria_met/step status survive an edit that doesn't
   touch them.
+- **Task API responses omitted `criteria_met` entirely.** Only
+  `acceptance_criteria` (the full list) was ever returned, so the
+  frontend had no way to know which criteria were already met on page
+  load — every criterion looked unmet until toggled again this session.
 
 - **`install.sh`.** One script, run after `git clone`: installs `uv` if
   missing, `uv sync`s Python dependencies, builds the web cockpit

@@ -1,11 +1,10 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import App from './App'
 import Dashboard from './views/Dashboard'
 import AgentThread from './views/AgentThread'
 import Tasks from './views/Tasks'
-import Board from './views/Board'
 import TaskDetail from './views/TaskDetail'
 import Review from './views/Review'
 import Workflows from './views/Workflows'
@@ -21,10 +20,9 @@ createRoot(document.getElementById('root')!).render(
         <Route element={<App />}>
           <Route index element={<Dashboard />} />
           <Route path="agent/:id" element={<AgentThread />} />
-          {/* /board is superseded by the Tasks screen's Board tab in
-              Phase 1 — kept as a direct route (no nav link) until that
-              merge lands so existing bookmarks/links don't 404. */}
-          <Route path="board" element={<Board />} />
+          {/* /board merged into the Tasks screen's Board tab (Phase 1) —
+              redirect so old bookmarks/links still land somewhere real. */}
+          <Route path="board" element={<Navigate to="/tasks?view=board" replace />} />
           <Route path="tasks" element={<Tasks />} />
           <Route path="tasks/:id" element={<TaskDetail />} />
           <Route path="review" element={<Review />} />
