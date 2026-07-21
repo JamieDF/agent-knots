@@ -7,78 +7,10 @@
   overflow: hidden;
 }
 
-/* Overview grid */
-.overview {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 12px;
-  padding: 20px;
-  overflow-y: auto;
-  height: 100%;
-  align-content: start;
-}
-
-.overview-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  grid-column: 1 / -1;
-  color: var(--muted);
-  gap: 8px;
-}
-
-.overview-empty .icon { font-size: 32px; opacity: 0.4; }
-.overview-empty .title { font-size: 18px; font-weight: 600; color: var(--fg-soft); }
-.overview-empty .hint { font-size: 13px; font-family: var(--font-mono); }
-
-/* Agent card */
-.agent-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px 16px;
-  cursor: pointer;
-  transition: border-color 0.15s, transform 0.15s;
-}
-
-.agent-card:hover {
-  border-color: var(--info);
-  transform: translateY(-1px);
-}
-
-.agent-card-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.agent-card-id {
-  font: 12px var(--font-mono);
-  color: var(--muted);
-  margin-bottom: 8px;
-  font-variant-numeric: tabular-nums;
-}
-
-.agent-card-action {
-  font-size: 12px;
-  color: var(--fg-soft);
-  margin-bottom: 8px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.agent-card-stats {
-  display: flex;
-  gap: 12px;
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
+/* .agent-card* and .overview* classes removed — Dashboard.tsx (Phase 2)
+   builds its cards from the Atelier primitives instead. .status-pip and
+   .mode-pill below are kept — still shared with AgentThread.tsx's
+   header, not yet migrated (Phase 3). */
 
 /* Status pip */
 .status-pip {

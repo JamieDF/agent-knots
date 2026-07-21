@@ -4,6 +4,7 @@ import type { AgentInfo } from '../lib/api'
 import { fetchWorkspaces, type Workspace } from '../lib/api'
 import { useWorkspaceScope } from '../lib/workspaceContext'
 import { useTheme } from '../theme/ThemeContext'
+import NewSessionDialog from './NewSessionDialog'
 
 interface Props {
   agents: AgentInfo[]
@@ -26,6 +27,7 @@ function Topbar({ agents }: Props) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const { workspace, setWorkspace } = useWorkspaceScope()
   const { theme, toggleTheme } = useTheme()
+  const [showNewSession, setShowNewSession] = useState(false)
 
   useEffect(() => {
     fetchWorkspaces().then(d => setWorkspaces(d.workspaces)).catch(() => {})
@@ -111,16 +113,17 @@ function Topbar({ agents }: Props) {
           {theme === 'dark' ? '☀' : '☾'}
         </button>
         <button
-          disabled
-          title="Coming in Phase 2/3"
+          onClick={() => setShowNewSession(true)}
           style={{
             padding: '6px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600,
-            background: 'var(--acc)', color: 'var(--acc-ink)', opacity: 0.5, cursor: 'not-allowed',
+            background: 'var(--acc)', color: 'var(--acc-ink)',
           }}
         >
           + New session
         </button>
       </div>
+
+      <NewSessionDialog open={showNewSession} onClose={() => setShowNewSession(false)} defaultWorkspace={workspace} />
     </header>
   )
 }

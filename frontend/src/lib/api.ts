@@ -139,7 +139,8 @@ export async function toggleTool(name: string): Promise<{ enabled: boolean }> {
 // ── workspaces ──────────────────────────────────────────────────────────────
 
 export interface Workspace {
-  id: string; name: string; description: string; repository: string; tags: string[]
+  id: string; name: string; description: string; repository: string; runtime: string; tags: string[]
+  auto_assign: boolean; max_concurrent: number
   created_at: number
 }
 
@@ -147,12 +148,12 @@ export async function fetchWorkspaces(): Promise<{ workspaces: Workspace[] }> {
   const res = await fetch('/api/workspaces'); if (!res.ok) throw new Error(''); return res.json()
 }
 
-export async function createWorkspace(data: { id: string; name: string; description?: string; repository?: string; tags?: string[] }) {
+export async function createWorkspace(data: { id: string; name: string; description?: string; repository?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number }) {
   const res = await fetch('/api/workspaces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
   if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }; return res.json()
 }
 
-export async function updateWorkspace(id: string, data: { name?: string; description?: string; repository?: string; tags?: string[] }) {
+export async function updateWorkspace(id: string, data: { name?: string; description?: string; repository?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number }) {
   const res = await fetch(`/api/workspaces/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
   if (!res.ok) throw new Error(''); return res.json()
 }

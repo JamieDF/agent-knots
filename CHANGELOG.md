@@ -27,6 +27,16 @@ All notable changes to agent-knots are documented here.
     related-tasks side blocks). Task API gained `review_gate`,
     per-criterion toggling, single-agent detail, and an agent-assisted
     task-drafting endpoint.
+  - *Phase 2*: Dashboard rebuilt as one workspace cluster per workspace
+    (plus an "Unassigned" bucket), each with a blocker hero (question/
+    suggested-answer buttons/reply, sourced from the blocked task's own
+    progress log), a 2-up grid of active-session cards, an "up next"
+    queue with Start, pipeline-stage counts, and a per-workspace
+    auto-assign toggle. A real "New session" dialog
+    (attach-to-task/prompt/mode/workspace) replaces both the disabled
+    Topbar placeholder from Phase 0 and the old ad-hoc inline
+    task-picker. `Project` gained config-only `auto_assign`/
+    `max_concurrent` fields (no scheduler enforces them yet).
 
 ### Fixed
 - **`PATCH /api/tasks/{id}` silently dropped description/tags/
@@ -39,6 +49,11 @@ All notable changes to agent-knots are documented here.
   `acceptance_criteria` (the full list) was ever returned, so the
   frontend had no way to know which criteria were already met on page
   load — every criterion looked unmet until toggled again this session.
+- **Dashboard only showed sessions with `running===true` at that exact
+  instant**, hiding idle-between-turns or assistant-mode-waiting
+  sessions entirely — found via Playwright, not just a cosmetic gap
+  (there was no way to click back into an idle session from the
+  Dashboard at all).
 
 - **`install.sh`.** One script, run after `git clone`: installs `uv` if
   missing, `uv sync`s Python dependencies, builds the web cockpit

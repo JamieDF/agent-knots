@@ -370,6 +370,27 @@ class TestSPAFallback:
         assert resp.status_code == 404
 
 
+class TestWorkspaceAPI:
+    @pytest.mark.asyncio
+    async def test_auto_assign_and_max_concurrent_defaults(self, authed_client):
+        await authed_client.post("/api/workspaces", json={"id": "ws1", "name": "WS1"})
+        resp = await authed_client.get("/api/workspaces")
+        ws = next(w for w in resp.json()["workspaces"] if w["id"] == "ws1")
+        assert ws["auto_assign"] is False
+        assert ws["max_concurrent"] == 2
+
+    @pytest.mark.asyncio
+    async def test_auto_assign_and_max_concurrent_round_trip(self, authed_client):
+        await authed_client.post("/api/workspaces", json={
+            "id": "ws2", "name": "WS2", "auto_assign": True, "max_concurrent": 5,
+        })
+        await authed_client.patch("/api/workspaces/ws2", json={"max_concurrent": 3})
+        resp = await authed_client.get("/api/workspaces")
+        ws = next(w for w in resp.json()["workspaces"] if w["id"] == "ws2")
+        assert ws["auto_assign"] is True
+        assert ws["max_concurrent"] == 3
+
+
 class TestEventSerialization:
     """serialize_event() is the JSON wire format that replaced
     format_event_html() — the frontend now owns all rendering, so this

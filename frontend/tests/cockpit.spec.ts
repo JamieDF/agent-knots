@@ -146,12 +146,14 @@ test.describe('cockpit — real agent flow', () => {
     const card = page.locator(`text=${session.id}`)
     await expect(card).toBeVisible({ timeout: 10000 })
 
-    // Check mode pill on card shows 'agent'.
-    const modePill = page.locator('.agent-card .mode-pill').first()
-    await expect(modePill).toContainText('agent')
+    // A fresh agent-mode session (before assume) shows as "watching" on
+    // the Dashboard's running-agent card — see the driving/watching
+    // terminology mapping in session/manager.py's mode semantics (Phase 0).
+    await expect(page.locator('text=watching')).toBeVisible()
 
-    // 3. Click the agent card to enter focus view.
-    await card.click()
+    // 3. Enter the agent thread — the card's title area isn't itself a
+    // nav target (only its "Open →" link is, per the Atelier design).
+    await page.goto(`${BASE}/agent/${session.id}`)
     await page.waitForTimeout(2000)
 
     // Should see the agent header with Assume button.
@@ -580,8 +582,8 @@ test.describe('cockpit — agent task tools', () => {
     const card = page.locator(`text=${session.id}`)
     await expect(card).toBeVisible({ timeout: 10000 })
 
-    // Click into focus view.
-    await card.click()
+    // Enter the agent thread directly (card title isn't a nav target).
+    await page.goto(`${BASE}/agent/${session.id}`)
     await page.waitForTimeout(2000)
 
     // Poll the task until the agent modifies it (checking via API in background).
@@ -1006,30 +1008,30 @@ test.describe('session-task assignment', () => {
     await page.request.delete(`${BASE}/api/tasks/${task.id}`)
   })
 
-  test('overview + button shows task picker', async ({ page }) => {
-    // Create some open tasks.
+  test('New session dialog offers open tasks to attach to', async ({ page }) => {
+    // Phase 2 replaced Dashboard's own ad-hoc task-picker dropdown with a
+    // real NewSessionDialog opened from Topbar's (now-enabled) "+ New
+    // session" button — a native <select> instead of an open list of
+    // buttons, so task options are asserted via the select's contents
+    // rather than toBeVisible() (closed <select> options aren't
+    // considered "visible" by Playwright).
     const t1 = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Picker task 1' } })
     const t2 = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Picker task 2' } })
     const id1 = (await t1.json()).id; const id2 = (await t2.json()).id
 
-    // Go to overview.
     await page.goto(BASE)
     await page.waitForTimeout(2000)
 
-    // Click + New Session — the Dashboard's own functional button, not
-    // the disabled placeholder Topbar renders (Phase 0; wiring lands
-    // Phase 2/3), which now also matches this text. Dashboard's button
-    // is the one rendered later in the DOM.
-    const addBtn = page.locator('button:has-text("New Session")').last()
-    await expect(addBtn).toBeVisible({ timeout: 5000 })
-    await addBtn.click()
-    await page.waitForTimeout(500)
+    // The Dashboard's workspace-cluster footer also has a "+ New session"
+    // link (opens the same dialog), so scope to Topbar's specifically.
+    await page.getByRole('banner').getByRole('button', { name: 'New session' }).click()
+    await page.waitForTimeout(300)
 
-    // Task picker dropdown should show.
     await expect(page.locator('text=Attach to task')).toBeVisible({ timeout: 3000 })
-    await expect(page.locator('text=Picker task 1')).toBeVisible()
-    await expect(page.locator('text=Picker task 2')).toBeVisible()
-    await expect(page.locator('text=No task — just start')).toBeVisible()
+    const taskSelect = page.getByLabel('Attach to task')
+    await expect(taskSelect.locator('option', { hasText: 'No task — just start' })).toHaveCount(1)
+    await expect(taskSelect.locator('option', { hasText: 'Picker task 1' })).toHaveCount(1)
+    await expect(taskSelect.locator('option', { hasText: 'Picker task 2' })).toHaveCount(1)
 
     // Cleanup.
     await page.request.delete(`${BASE}/api/tasks/${id1}`)
@@ -1213,12 +1215,10 @@ test.describe('agent panel tabs', () => {
     })
     const session = await sessionRes.json()
 
-    // Navigate to focus view.
-    await page.goto(BASE)
-    await page.waitForTimeout(3000)
-    const card = page.locator(`text=${session.id}`)
-    await expect(card).toBeVisible({ timeout: 10000 })
-    await card.click()
+    // Navigate directly to the agent thread — the Dashboard card's
+    // title area isn't itself a nav target (only its "Open →" link is,
+    // per the Atelier design), so drive the URL instead of a card click.
+    await page.goto(`${BASE}/agent/${session.id}`)
     await page.waitForTimeout(2000)
 
     // Should see tab bar.

@@ -23,12 +23,14 @@ The product spine. Includes the current app's biggest known gaps.
 - Scope trims from the source README dialog spec: no workspace/project reassignment in the dialog (out of scope for Phase 1), sub-step editing is display-only (matches the dialog spec, which also doesn't cover it), progress-log blocker suggested-answer buttons deferred to Phase 3 (needs live SSE blocker delivery, not just the stored log entry).
 - Playwright: `#/board`→`/tasks?view=board` etc. across the suite; rewrote the now-obsolete "Tasks ▾ dropdown" test as a Board/List tab-pill test; fixed status-change tests to go through the Edit dialog (no more inline status `<select>` on Task Detail); added `aria-label`s to TaskDialog's Priority/Status/Review-gate selects for robust targeting. 36/37 non-LLM-dependent tests verified passing against a live server in an isolated temp home.
 
-## Phase 2 — Dashboard (M)
-- [ ] Workspace clusters with dashed borders + header pills.
-- [ ] Blocker hero with inline answers (wire to session reply endpoint).
-- [ ] Running agent 2-up cards (live via SSE), delete session.
-- [ ] Up-next queue + Start (session created with task memory), auto-assign toggle (config only in v1), pipeline + review chips.
-- Backend: none beyond existing sessions/tasks/SSE; auto-assign flag on workspace config.
+## Phase 2 — Dashboard (M) — ✅ done 2026-07-21
+- [x] Workspace clusters with dashed borders + header pills (`WorkspaceCluster` in `views/Dashboard.tsx`), one per known workspace plus an "Unassigned" bucket for project-less activity, narrowed to one when a workspace is scoped.
+- [x] Blocker hero with inline answers — reads the question/options from the blocked task's own progress log (no live SSE dependency needed for this; deliberately deferred the live `BLOCKER` broadcast hook to Phase 3, where it's actually needed for the Agent Thread's real-time "ask" bubble). Suggested-answer buttons and a reply input call `sendMessage` + flip the task back to `in_progress`.
+- [x] All-active-sessions 2-up cards (not just literally-`running`-this-instant — an idle-between-turns or assistant-mode-waiting session still needs to be clickable), "Open →" link, ✕ delete.
+- [x] Up-next queue + Start, auto-assign toggle (config-only, persists via the new `Project.auto_assign`/`max_concurrent` fields), pipeline-stage counts, Review link.
+- [x] Real "New session" dialog (`components/NewSessionDialog.tsx`) replacing both the disabled Topbar placeholder from Phase 0 and Dashboard's old ad-hoc inline task-picker — attach-to-task/prompt/mode/workspace fields.
+- Backend: `Project.auto_assign: bool` / `max_concurrent: int` (config-only, no scheduler), wired into the workspace CRUD routes.
+- Two real bugs found via Playwright and fixed: agents were only shown when momentarily `running===true`, hiding idle-but-alive sessions entirely; and the running-agent card's title area wasn't itself a nav target (only its explicit "Open →" link is, per the design) — fine as the intended interaction model, but broke tests written against the old whole-card-click behavior.
 
 ## Phase 3 — Agent Thread (L)
 - [ ] Three-zone layout, collapsible goal rail (⌘B).

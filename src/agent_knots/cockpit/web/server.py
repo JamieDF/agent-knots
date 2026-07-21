@@ -643,6 +643,8 @@ def create_app(
                     "repository": w.repository,
                     "runtime": w.runtime,
                     "tags": w.tags,
+                    "auto_assign": w.auto_assign,
+                    "max_concurrent": w.max_concurrent,
                     "created_at": w.created_at,
                 }
                 for w in workspaces
@@ -656,6 +658,8 @@ def create_app(
         repository: str = ""
         runtime: str = ""
         tags: list = []
+        auto_assign: bool = False
+        max_concurrent: int = 2
 
     @app.post("/api/workspaces")
     async def create_workspace(body: CreateWorkspaceRequest):
@@ -668,6 +672,8 @@ def create_app(
             repository=body.repository,
             runtime=body.runtime,
             tags=body.tags,
+            auto_assign=body.auto_assign,
+            max_concurrent=body.max_concurrent,
         )
         try:
             store.create(ws)
@@ -681,6 +687,8 @@ def create_app(
         repository: Optional[str] = None
         runtime: Optional[str] = None
         tags: Optional[list] = None
+        auto_assign: Optional[bool] = None
+        max_concurrent: Optional[int] = None
 
     @app.patch("/api/workspaces/{workspace_id}")
     async def update_workspace(workspace_id: str, body: UpdateWorkspaceRequest):
@@ -699,6 +707,10 @@ def create_app(
             ws.runtime = body.runtime
         if body.tags is not None:
             ws.tags = body.tags
+        if body.auto_assign is not None:
+            ws.auto_assign = body.auto_assign
+        if body.max_concurrent is not None:
+            ws.max_concurrent = body.max_concurrent
         store.update(ws)
         return {"status": "ok"}
 
