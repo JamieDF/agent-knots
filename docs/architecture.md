@@ -82,8 +82,6 @@ agent-knots/
 │   ├── hooks.py                   # Token tracking + auto progress logging
 │   └── events.py                  # Event/EventType/ToolCall wire types
 ├── tests/                         # Python unit tests
-├── modes/                         # Legacy mode markdown files (not currently
-│                                   # loaded — see "Mode" below)
 ├── mockups/                       # HTML design mockups
 ├── docs/                          # Architecture, decisions, quickstart
 └── pyproject.toml
@@ -189,9 +187,9 @@ from whichever tools are currently enabled.
 A short label (`agent`, `assistant`, `reviewer`, `security`) that selects a
 canned system-prompt fragment, assembled in
 `session/manager.py::_build_system_prompt`. Unlike the original Go design,
-modes are **not** currently loaded from the markdown files in `modes/` —
-those files are left over from the prior implementation and aren't read by
-any code path today. Mode swapping at runtime (assume/relinquish) is
+which loaded per-mode system prompts from markdown files via a Pi
+extension, modes are inline string fragments in `manager.py` — no external
+files are read. Mode swapping at runtime (assume/relinquish) is
 implemented via `intervention.py`'s `ModeInterventionHandler`, which gates
 tool execution rather than swapping the system prompt mid-session.
 
