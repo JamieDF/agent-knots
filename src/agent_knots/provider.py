@@ -11,9 +11,17 @@ The settings file format under the [agent] section:
     base_url: https://api.minimax.io/v1   # optional, for non-OpenAI providers
 
 For MiniMax specifically, use:
-    export AGENT_KNOTS_MODEL=openai/minimax-m2.7
+    export AGENT_KNOTS_MODEL=minimax-m2.7
     export AGENT_KNOTS_BASE_URL=https://api.minimax.io/v1
     export AGENT_KNOTS_API_KEY=<your-minimax-key>
+
+Note: model IDs are passed as-is to strands.models.openai.OpenAIModel,
+which does not strip a "provider/" prefix (that convention only means
+something under a routing layer like litellm, which isn't used here
+despite being a listed dependency) — use the bare model ID the target
+API actually expects (e.g. "gpt-4o-mini", "minimax-m2.7"), not
+"openai/gpt-4o-mini". Confirmed against a real MiniMax M2.7 call, which
+400s on "unknown model" with the prefixed form.
 """
 
 from __future__ import annotations

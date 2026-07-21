@@ -42,6 +42,8 @@ class Session:
     working_dir: str | None = None
     tokens_used: int = 0
     cost_usd: float = 0.0
+    model: str = ""
+    started_at: float = field(default_factory=time.time)
 
     # Internal — not serialised. Multiple SSE subscribers (e.g. two browser
     # tabs open on the same agent) each get their own queue rather than
@@ -279,6 +281,7 @@ class SessionManager:
             task_id=task_id,
             project_id=project_id,
             working_dir=resolved_working_dir,
+            model=provider.model,
             _agent=agent,
         )
         self._sessions[session_id] = session
@@ -379,6 +382,36 @@ class SessionManager:
             message=f"Mode changed to {mode}",
         ))
 
+    def checkpoint(self, session_id: str, label: str) -> None:
+        """Mark a checkpoint in the thread. No real snapshot is taken —
+        this only broadcasts a marker event for the UI's "revert to
+        here" affordance. Real checkpoint/revert (conversation-history +
+        worktree snapshotting) is real, larger, future work — see
+        docs/RETRO.md's note on the prior save_checkpoint/load_checkpoint
+        implementation, which was removed as orphaned dead code rather
+        than wired up.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise ValueError(f"session {session_id!r} not found")
+        session._broadcast(Event(
+            type=EventType.CHECKPOINT,
+            session_id=session_id,
+            message=label,
+        ))
+
+    def revert(self, session_id: str, label: str) -> None:
+        """"Revert to" a checkpoint — logs the action, does not actually
+        roll back any state. See checkpoint()'s docstring."""
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise ValueError(f"session {session_id!r} not found")
+        session._broadcast(Event(
+            type=EventType.STATE_CHANGE,
+            session_id=session_id,
+            message=f"Workspace reverted to checkpoint {label!r} (not implemented — no real snapshot exists yet).",
+        ))
+
     # ── internals ─────────────────────────────────────────────────────────
 
     async def _run_agent(
@@ -408,8 +441,13 @@ class SessionManager:
 
             if not session._cancelled:
                 finished = True
+                # A turn finishing is NOT the session ending — send() can
+                # still start another turn afterward (multi-turn chat).
+                # EventType.ENDED is reserved for stop()/cancellation, so
+                # the frontend's composer only locks into replay mode on
+                # a real end, not after every response.
                 session._broadcast(Event(
-                    type=EventType.ENDED,
+                    type=EventType.STATE_CHANGE,
                     session_id=session.id,
                     message="Agent finished.",
                 ))
@@ -495,10 +533,30 @@ class SessionManager:
                     if delta.startswith(prev):
                         new_text = delta[len(prev):]
                     _state['last_data_text'] = delta
+
+                    # <think>...</think> markers can arrive split across
+                    # multiple deltas — track whether we're inside a
+                    # think block across calls (a per-fragment check like
+                    # the old _is_thinking() misclassifies any fragment
+                    # that doesn't itself start with the tag, so most of
+                    # a multi-fragment thinking block leaked through as
+                    # plain MESSAGE text, tag literals and all).
+                    in_think = _state.get('in_think', False)
+                    if '<think>' in new_text:
+                        in_think = True
+                    is_thinking_chunk = in_think
+                    if '</think>' in new_text:
+                        in_think = False
+                    _state['in_think'] = in_think
+
+                    clean_text = new_text.replace('<think>', '').replace('</think>', '')
+                    if not clean_text:
+                        return None
+
                     return Event(
-                        type=EventType.THINKING if _is_thinking(new_text) else EventType.MESSAGE,
+                        type=EventType.THINKING if is_thinking_chunk else EventType.MESSAGE,
                         session_id=session_id,
-                        message=new_text,
+                        message=clean_text,
                         timestamp=now,
                     )
             return None
@@ -566,11 +624,6 @@ class SessionManager:
                 )
 
         return None
-
-
-def _is_thinking(text: str) -> bool:
-    """Heuristic: detect if text is inside a <think> block."""
-    return '<think>' in text or text.strip().startswith('</think>')
 
 
 def _parse_tool_input(raw: str) -> dict:

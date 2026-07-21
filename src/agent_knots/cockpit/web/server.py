@@ -50,6 +50,10 @@ class CreateSessionRequest(BaseModel):
     project_id: Optional[str] = None
 
 
+class CheckpointRequest(BaseModel):
+    label: str = "checkpoint"
+
+
 class CreateTaskRequest(BaseModel):
     title: str
     description: str = ""
@@ -194,6 +198,8 @@ def create_app(
                     "tokens_used": s.tokens_used,
                     "cost_usd": s.cost_usd,
                     "running": s.running,
+                    "model": s.model,
+                    "started_at": s.started_at,
                 }
                 for s in sessions
             ]
@@ -264,6 +270,8 @@ def create_app(
             "tokens_used": session.tokens_used,
             "cost_usd": session.cost_usd,
             "running": session.running,
+            "model": session.model,
+            "started_at": session.started_at,
         }
 
     @app.post("/api/agent/{agent_id}/assume")
@@ -276,6 +284,26 @@ def create_app(
     async def agent_relinquish(agent_id: str):
         """Relinquish control of an agent (switch to agent mode)."""
         await session_manager.set_mode(agent_id, "agent")
+        return {"status": "ok"}
+
+    @app.post("/api/agent/{agent_id}/checkpoint")
+    async def agent_checkpoint(agent_id: str, body: CheckpointRequest):
+        """Mark a checkpoint — broadcasts a marker event only, no real
+        snapshot (see SessionManager.checkpoint()'s docstring)."""
+        try:
+            session_manager.checkpoint(agent_id, body.label)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return {"status": "ok"}
+
+    @app.post("/api/agent/{agent_id}/revert")
+    async def agent_revert(agent_id: str, body: CheckpointRequest):
+        """"Revert to" a checkpoint — logs the action only, doesn't
+        actually roll back any state (see SessionManager.revert())."""
+        try:
+            session_manager.revert(agent_id, body.label)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Agent not found")
         return {"status": "ok"}
 
     @app.post("/api/agent/{agent_id}/send")
@@ -340,16 +368,23 @@ def create_app(
 
     @app.post("/api/sessions")
     async def create_session(body: CreateSessionRequest):
-        """Start a new agent session in the background."""
+        """Start a new agent session in the background.
+
+        Deliberately doesn't pass model/api_key/base_url through from
+        settings.load() here — that would always outrank env vars in
+        resolve_provider()'s precedence (any explicitly-passed value
+        there is treated as the highest-priority "CLI flag" tier), which
+        silently broke env-var-only configuration for actual session
+        starts even though the "configured" pre-flight check above
+        already resolves the full precedence correctly. Leaving these
+        unset lets SessionManager.start()'s own resolve_provider() call
+        apply the real env > file precedence.
+        """
         if not provider_module.resolve_provider().is_configured:
             raise HTTPException(status_code=400, detail="Settings not configured. Run setup first.")
 
-        s = settings.load()
         try:
             session = await session_manager.start(
-                model=s.agent.default_model,
-                api_key=s.agent.api_key,
-                base_url=s.agent.base_url or None,
                 mode=body.mode,
                 task_id=body.task_id,
                 project_id=body.project_id,

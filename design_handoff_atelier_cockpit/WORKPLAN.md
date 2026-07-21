@@ -32,13 +32,19 @@ The product spine. Includes the current app's biggest known gaps.
 - Backend: `Project.auto_assign: bool` / `max_concurrent: int` (config-only, no scheduler), wired into the workspace CRUD routes.
 - Two real bugs found via Playwright and fixed: agents were only shown when momentarily `running===true`, hiding idle-but-alive sessions entirely; and the running-agent card's title area wasn't itself a nav target (only its explicit "Open →" link is, per the design) — fine as the intended interaction model, but broke tests written against the old whole-card-click behavior.
 
-## Phase 3 — Agent Thread (L)
-- [ ] Three-zone layout, collapsible goal rail (⌘B).
-- [ ] Event renderers: message, thinking (collapsible), tool card, auto-log, steer, delegation (expandable nested thread), checkpoint (+revert), ask, user, ended.
-- [ ] Composer states: driving / watching-locked / ended; Assume/Relinquish; Stop; delete.
-- [ ] Right rail tabs: Terminal, Files, Preview (placeholder ok in v1).
-- [ ] Replay scrubber on ended sessions (client-side over event history).
-- Backend: checkpoint/revert endpoints (worktree snapshot) — can stub with git stash/tag initially; delegation events already exist via delegate_task.
+## Phase 3 — Agent Thread (L) — ✅ done 2026-07-21
+- [x] Three-zone layout, collapsible goal rail (⌘B) — full rewrite of `views/AgentThread.tsx`.
+- [x] Event renderers: message, thinking (collapsible), tool card (merged with its result), auto-log, steer, delegation (expandable, via its own nested SSE subscription to the sub-session — no server-side event nesting needed), checkpoint (+revert, no-op per the stub list), ask, user, ended.
+- [x] Composer states: driving / watching-locked / ended; Assume/Relinquish; Stop; delete.
+- [x] Right rail tabs: Terminal, Files, Preview (placeholder, as scoped).
+- [x] Replay scrubber on ended sessions (client-side, slices the visible event list).
+- Backend: `POST /api/agent/{id}/checkpoint` and `/revert` (broadcast-only, no real snapshot — matches the prototype's own mock behavior); `Session` gained `model`/`started_at` fields (header needed both, neither existed before) exposed via `/api/agents` and `/api/agent/{id}`.
+- **Verified against a real MiniMax M2.7 call** (not just a fake test key) — this surfaced four real, fixed bugs that fake-key testing couldn't have caught:
+  1. `POST /api/sessions` passed the settings-*file*'s model/key/url straight through as override args, which always outranks env vars in `resolve_provider()`'s precedence — silently breaking env-var-only configuration for actual session starts (the "configured" pre-flight check used correct precedence; the real invocation didn't).
+  2. `<think>...</think>` reasoning tags commonly arrive split across multiple stream deltas; the old per-fragment heuristic had no memory of an already-open think block, so most of a multi-fragment thinking block leaked through as plain MESSAGE text with literal tag characters. Now stateful across chunks (`_state['in_think']`), and tag literals are stripped.
+  3. A streamed tool call re-emits the same `tool_call` event (same id) as its args accumulate (empty → partial → complete) — rendered as 2-3 duplicate cards until the frontend started updating the existing card in place instead of appending a new one per update.
+  4. Assume/Relinquish looked unresponsive for up to one 3s poll cycle (mode chip/composer state only updated on the next `fetchAgent()` poll) — fixed with an optimistic local update on click.
+  - Also found and fixed in passing (not Phase-3-specific, but blocking verification): the "provider/model" prefix convention baked into `settings.py`'s default, `provider.py`'s docstring, and 3 of 4 Setup Wizard presets doesn't work — `OpenAIModel` sends `model_id` as-is with no prefix-stripping, and `litellm` (which would understand that convention) is a listed dependency never actually imported anywhere. Fixed the MiniMax-specific docs (`provider.py`, `docs/quickstart.md`) since those were fully confirmed; the broader default-OpenAI-preset/Anthropic-preset implications need their own dedicated look, not fixed here to avoid changing default behavior for existing users as a rushed aside.
 
 ## Phase 4 — Workflows + Review (L)
 - [ ] Workflows screen: Board stages config (toggle, add; persist), Default agents (Planner/Builder/Reviewer) with config dialog (model/trigger/prompt), generated Current-workflow diagram reacting to config, pipeline templates.

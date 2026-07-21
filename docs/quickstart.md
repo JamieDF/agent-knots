@@ -64,7 +64,7 @@ EOF
 Or export env vars for a one-off session:
 
 ```bash
-export AGENT_KNOTS_MODEL=openai/minimax-m2.7
+export AGENT_KNOTS_MODEL=minimax-m2.7
 export AGENT_KNOTS_BASE_URL=https://api.minimax.io/v1
 export AGENT_KNOTS_API_KEY=<your-minimax-key>
 ```

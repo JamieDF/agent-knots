@@ -210,6 +210,27 @@ class TestSettingsAPI:
         # didn't fire; a real 200 here confirms the check passed.
         assert resp.status_code != 400
 
+    @pytest.mark.asyncio
+    async def test_create_session_actually_uses_env_model_not_settings_file(self, authed_client, monkeypatch):
+        """Regression: create_session() used to pass settings.load()'s
+        default_model/api_key/base_url straight through to
+        SessionManager.start(), which always outranks env vars in
+        resolve_provider()'s precedence — silently ignoring env-var-only
+        configuration for the actual session, even though the
+        "configured" pre-flight check above already resolved env vars
+        correctly. A session started with only env vars set (no api_key
+        ever saved to the settings file) must build its agent against
+        the env-configured model, not the file's default."""
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-from-env")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model-from-env")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake")
+        resp = await authed_client.post("/api/sessions", json={"prompt": ""})
+        assert resp.status_code == 200
+        agent_id = resp.json()["id"]
+
+        detail = await authed_client.get(f"/api/agent/{agent_id}")
+        assert detail.json()["model"] == "fake/model-from-env"
+
 
 class TestTaskAPI:
     @pytest.mark.asyncio
@@ -343,6 +364,16 @@ class TestAgentDetailAPI:
     @pytest.mark.asyncio
     async def test_get_unknown_agent_404s(self, authed_client):
         resp = await authed_client.get("/api/agent/nonexistent")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_unknown_agent_404s(self, authed_client):
+        resp = await authed_client.post("/api/agent/nonexistent/checkpoint", json={"label": "x"})
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_revert_unknown_agent_404s(self, authed_client):
+        resp = await authed_client.post("/api/agent/nonexistent/revert", json={"label": "x"})
         assert resp.status_code == 404
 
 

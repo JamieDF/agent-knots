@@ -37,6 +37,16 @@ All notable changes to agent-knots are documented here.
     Topbar placeholder from Phase 0 and the old ad-hoc inline
     task-picker. `Project` gained config-only `auto_assign`/
     `max_concurrent` fields (no scheduler enforces them yet).
+  - *Phase 3*: Agent Thread fully rebuilt — three-zone layout with a
+    collapsible goal rail (⌘B), a renderer for every event kind
+    (message, collapsible thinking, merged tool call+result, auto-log,
+    steering nudge, delegation cards that expand via their own nested
+    SSE subscription to the sub-session, checkpoint+revert, blocker
+    ask, user reply, session end), driving/watching-locked/ended
+    composer states, a replay scrubber, and Terminal/Files/Preview
+    right-rail tabs. New checkpoint/revert endpoints (broadcast-only,
+    matching the design prototype's own no-op mock behavior). Verified
+    against a real MiniMax M2.7 call, not just a fake test key.
 
 ### Fixed
 - **`PATCH /api/tasks/{id}` silently dropped description/tags/
@@ -54,6 +64,34 @@ All notable changes to agent-knots are documented here.
   sessions entirely — found via Playwright, not just a cosmetic gap
   (there was no way to click back into an idle session from the
   Dashboard at all).
+- **`POST /api/sessions` ignored env-var configuration for the actual
+  session**, only for the pre-flight "configured" check. It passed
+  `settings.load()`'s file values straight through as override args,
+  which always outranks env vars in `resolve_provider()`'s precedence —
+  a user configured entirely via `AGENT_KNOTS_*` env vars (the
+  documented zero-touch install path) would see `configured: true` in
+  the UI but every session would silently build against the wrong
+  model. Found by testing against a real MiniMax M2.7 key.
+- **`<think>...</think>` reasoning tags commonly split across multiple
+  stream deltas were misclassified.** The per-fragment heuristic had no
+  memory of an already-open think block, so most of a multi-fragment
+  thinking block leaked through as plain assistant-message text, tag
+  literals included. Now stateful across chunks, with tags stripped.
+- **Streamed tool-call args re-emit the same event as they accumulate**
+  (empty → partial → complete) — rendered as 2-3 duplicate tool cards
+  until the frontend started updating the existing card by id instead
+  of appending a new one per update.
+- **Assume/Relinquish looked unresponsive** for up to one 3s poll cycle
+  (mode chip/composer only updated on the next background poll) — now
+  applies optimistically on click.
+- **The `openai/`-prefixed model-id convention doesn't work.**
+  `OpenAIModel` sends `model_id` as-is with no prefix-stripping, and
+  `litellm` (which would understand `provider/model` routing) is a
+  listed dependency never actually imported anywhere. Fixed the
+  MiniMax-specific docs (`provider.py`, `docs/quickstart.md`), which
+  were fully confirmed broken against a real call; the same issue likely
+  affects the default OpenAI preset and 2 of the other 3 Setup Wizard
+  presets but needs its own dedicated look rather than a rushed fix here.
 
 - **`install.sh`.** One script, run after `git clone`: installs `uv` if
   missing, `uv sync`s Python dependencies, builds the web cockpit

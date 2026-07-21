@@ -157,56 +157,49 @@ test.describe('cockpit — real agent flow', () => {
     await page.waitForTimeout(2000)
 
     // Should see the agent header with Assume button.
-    const assumeBtn = page.locator('text=Assume')
+    const assumeBtn = page.locator('button:has-text("Assume")').first()
     await expect(assumeBtn).toBeVisible({ timeout: 5000 })
 
-    // Mode pill should show 'watching'.
-    const focusPill = page.locator('#mode-pill')
-    await expect(focusPill).toContainText('watching')
+    // Mode chip should show WATCHING (header chip, Phase 3 rewrite).
+    await expect(page.locator('text=WATCHING')).toBeVisible()
 
     // 4. Assume control.
     await assumeBtn.click()
     await page.waitForTimeout(500)
 
-    // Mode pill should now show 'driving'.
-    await expect(focusPill).toContainText('driving')
+    // Mode chip should now show DRIVING.
+    await expect(page.locator('text=DRIVING')).toBeVisible()
 
     // Should see Relinquish button.
-    const relinquishBtn = page.locator('text=Relinquish')
+    const relinquishBtn = page.locator('button:has-text("Relinquish")')
     await expect(relinquishBtn).toBeVisible()
 
     // 5. Send a multi-turn message.
-    const chatInput = page.locator('#chat-input, .chat-bar input').first()
+    const chatInput = page.locator('input[placeholder="Message the agent…"]')
     await expect(chatInput).toBeVisible()
     await chatInput.fill('What is my name?')
     await chatInput.press('Enter')
     await page.waitForTimeout(3000)
 
-    // Should see the user message echoed.
-    await expect(page.locator('.prose-user')).toBeVisible({ timeout: 5000 })
+    // Should see the user message echoed back (the backend broadcasts a
+    // USER event for every sent message so all viewers see it).
+    await expect(page.locator('text=What is my name?')).toBeVisible({ timeout: 5000 })
 
     // 6. Relinquish control.
     await relinquishBtn.click()
     await page.waitForTimeout(500)
 
-    // Mode pill should go back to 'watching'.
-    await expect(focusPill).toContainText('watching')
+    // Mode chip should go back to WATCHING.
+    await expect(page.locator('text=WATCHING')).toBeVisible()
 
-    // Should see Assume button again.
-    await expect(page.locator('text=Assume')).toBeVisible()
+    // Should see Assume button(s) again — the header and the locked
+    // composer bar both render one in the watching state — and the
+    // composer locked (no input).
+    await expect(page.locator('button:has-text("Assume")').first()).toBeVisible()
+    await expect(page.locator('text=Watching — the agent is driving')).toBeVisible()
 
-    // 7. Send another message in agent mode.
-    await chatInput.fill('What colour did I mention?')
-    await chatInput.press('Enter')
-    await page.waitForTimeout(3000)
-
-    // 8. Navigate back to overview.
-    const backBtn = page.locator('text=Back').first()
-    if (await backBtn.isVisible()) {
-      await backBtn.click()
-    } else {
-      await page.goBack()
-    }
+    // 7. Navigate back to the Dashboard.
+    await page.locator('button:has-text("←")').click()
     await page.waitForTimeout(1000)
 
     // Agent card should still be visible.
@@ -591,7 +584,7 @@ test.describe('cockpit — agent task tools', () => {
     console.log(`Agent finished: status=${updated.status}, progress=${updated.progress.length}`)
 
     // Check cockpit UI for any tool cards that appeared.
-    const toolCards = await page.locator('.tool-card').count()
+    const toolCards = await page.locator('[data-testid="tool-card"]').count()
     console.log(`Tool cards in UI: ${toolCards}`)
 
     expect(updated.progress.length).toBeGreaterThanOrEqual(1)
@@ -1208,47 +1201,43 @@ test.describe('agent panel tabs', () => {
     await authPage(page)
   })
 
-  test('terminal, review, browser tabs switch in agent focus', async ({ page }) => {
-    // Start a session.
+  test('terminal, files, preview tabs switch in agent thread', async ({ page }) => {
+    // Phase 3 consolidated the old 4-tab set (Terminal/Review/Code/
+    // Browser) into 3 right-rail tabs (Terminal/Files/Preview) per
+    // design_handoff_atelier_cockpit/README.md §2 — task info (the old
+    // "Review" tab's content) moved to the always-visible left goal
+    // rail instead of being a tab.
     const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
       data: { prompt: 'Say hello', mode: 'agent' },
     })
     const session = await sessionRes.json()
 
-    // Navigate directly to the agent thread — the Dashboard card's
-    // title area isn't itself a nav target (only its "Open →" link is,
-    // per the Atelier design), so drive the URL instead of a card click.
     await page.goto(`${BASE}/agent/${session.id}`)
     await page.waitForTimeout(2000)
 
-    // Should see tab bar.
-    await expect(page.locator('button:has-text("Terminal")')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('button:has-text("Review")')).toBeVisible()
-    await expect(page.locator('button:has-text("Browser")')).toBeVisible()
+    await expect(page.locator('button:has-text("terminal")')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('button:has-text("files")')).toBeVisible()
+    await expect(page.locator('button:has-text("preview")')).toBeVisible()
 
-    // Terminal tab should be active by default.
+    // Terminal tab is active by default.
     await expect(page.locator('text=Waiting for shell output')).toBeVisible()
 
-    // Switch to Review tab.
-    await page.locator('button:has-text("Review")').click()
+    await page.locator('button:has-text("files")').click()
     await page.waitForTimeout(300)
-    await expect(page.locator('text=No task assigned')).toBeVisible()
+    await expect(page.locator('text=Files the agent reads or edits will appear here.')).toBeVisible()
 
-    // Switch to Browser tab.
-    await page.locator('button:has-text("Browser")').click()
+    await page.locator('button:has-text("preview")').click()
     await page.waitForTimeout(300)
-    await expect(page.locator('text=Browser preview')).toBeVisible()
+    await expect(page.locator('text=proxied preview')).toBeVisible()
 
-    // Switch back to Terminal.
-    await page.locator('button:has-text("Terminal")').click()
+    await page.locator('button:has-text("terminal")').click()
     await page.waitForTimeout(300)
     await expect(page.locator('text=Waiting for shell output')).toBeVisible()
 
-    // Cleanup.
     await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
   })
 
-  test('review panel shows task details when session has task', async ({ page }) => {
+  test('goal rail shows task details when session has task', async ({ page }) => {
     test.setTimeout(120000)
 
     // Create a task with criteria and steps.
@@ -1268,15 +1257,11 @@ test.describe('agent panel tabs', () => {
     })
     const session = await sessionRes.json()
 
-    // Navigate to focus.
     await page.goto(`${BASE}/agent/${session.id}`)
     await page.waitForTimeout(3000)
 
-    // Switch to Review tab.
-    await page.locator('button:has-text("Review")').click()
-    await page.waitForTimeout(500)
-
-    // Should show task title and criteria.
+    // Task title/criteria are always visible in the left goal rail —
+    // no tab click needed (that's the point of the Phase 3 redesign).
     await expect(page.locator('text=Panel review test').first()).toBeVisible({ timeout: 10000 })
     await expect(page.locator('text=Should show in panel')).toBeVisible()
 
@@ -1293,7 +1278,7 @@ test.describe('agent code panel', () => {
     await authPage(page)
   })
 
-  test('code tab shows files agent touches', async ({ page }) => {
+  test('files tab shows files agent touches', async ({ page }) => {
     test.setTimeout(60000)
     const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
       data: { prompt: 'Say hello', mode: 'agent' },
@@ -1303,8 +1288,7 @@ test.describe('agent code panel', () => {
     await page.goto(`${BASE}/agent/${session.id}`)
     await page.waitForTimeout(3000)
 
-    // Click Code tab.
-    await page.locator('button:has-text("Code")').click()
+    await page.locator('button:has-text("files")').click()
     await page.waitForTimeout(300)
     await expect(page.locator('text=touched')).toBeVisible({ timeout: 5000 })
 

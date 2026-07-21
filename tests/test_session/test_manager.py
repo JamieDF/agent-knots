@@ -132,6 +132,41 @@ class TestChunkToEvent:
         assert evt.type == EventType.MESSAGE
         assert "final response" in evt.message
 
+    def test_thinking_split_across_multiple_deltas(self):
+        """Regression: found via a real MiniMax M2.7 call. <think>...</think>
+        commonly arrives split across several data+delta chunks, where only
+        the FIRST fragment literally starts with "<think>". The old
+        per-fragment _is_thinking() heuristic had no memory of a think
+        block already being open, so every later fragment (including the
+        one carrying the closing tag) was misclassified as MESSAGE — most
+        of the model's actual reasoning leaked into the visible reply, tag
+        literals included."""
+        state: dict = {}
+        evt1 = SessionManager._chunk_to_event("sid", {
+            "data": "<think>\nThe user", "delta": {"text": "<think>\nThe user"},
+        }, state)
+        assert evt1.type == EventType.THINKING
+        assert "<think>" not in evt1.message
+        assert evt1.message == "\nThe user"
+
+        # Second fragment carries the closing tag partway through — still
+        # thinking content up to the tag, tag itself stripped.
+        full = "<think>\nThe user wants to know X.\n</think>\n\n"
+        evt2 = SessionManager._chunk_to_event("sid", {
+            "data": full, "delta": {"text": full},
+        }, state)
+        assert evt2.type == EventType.THINKING
+        assert "</think>" not in evt2.message
+        assert "wants to know X" in evt2.message
+
+        # A subsequent fragment with no tags at all is back to MESSAGE.
+        full2 = full + "The answer is 4."
+        evt3 = SessionManager._chunk_to_event("sid", {
+            "data": full2, "delta": {"text": full2},
+        }, state)
+        assert evt3.type == EventType.MESSAGE
+        assert evt3.message == "The answer is 4."
+
     def test_message_with_think(self):
         """MiniMax returns <think> tags in content."""
         evt = SessionManager._chunk_to_event("sid", {
@@ -192,6 +227,37 @@ class TestSessionManager:
         with pytest.raises(ValueError, match="not found"):
             await mgr.set_mode("nonexistent", "assistant")
 
+    def test_checkpoint_nonexistent(self, sessions_dir):
+        mgr = SessionManager(sessions_dir)
+        with pytest.raises(ValueError, match="not found"):
+            mgr.checkpoint("nonexistent", "before refactor")
+
+    def test_revert_nonexistent(self, sessions_dir):
+        mgr = SessionManager(sessions_dir)
+        with pytest.raises(ValueError, match="not found"):
+            mgr.revert("nonexistent", "before refactor")
+
+    def test_checkpoint_broadcasts_event(self, sessions_dir):
+        mgr = SessionManager(sessions_dir)
+        s = Session()
+        mgr._sessions[s.id] = s
+        q = s.subscribe()
+        mgr.checkpoint(s.id, "before refactor")
+        evt = q.get_nowait()
+        assert evt.type == EventType.CHECKPOINT
+        assert evt.message == "before refactor"
+
+    def test_revert_broadcasts_state_change_not_a_real_revert(self, sessions_dir):
+        """revert() is explicitly a no-op — it only logs the action."""
+        mgr = SessionManager(sessions_dir)
+        s = Session()
+        mgr._sessions[s.id] = s
+        q = s.subscribe()
+        mgr.revert(s.id, "before refactor")
+        evt = q.get_nowait()
+        assert evt.type == EventType.STATE_CHANGE
+        assert "not implemented" in evt.message
+
 
 class TestSessionManagerStart:
     """Tests for SessionManager.start() — the core assembly path that had
@@ -216,6 +282,7 @@ class TestSessionManagerStart:
         assert session.id in {s.id for s in mgr.active}
         assert session.mode == "agent"
         assert session._agent is not None
+        assert session.model == "fake/model"
         await mgr.stop(session.id)
 
     @pytest.mark.asyncio
