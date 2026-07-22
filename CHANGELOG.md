@@ -5,6 +5,14 @@ All notable changes to agent-knots are documented here.
 ## [Unreleased]
 
 ### Added
+- **Agent Thread: full-width unattached sessions, framed panel.** A
+  session with no task attached still rendered the 260px goal rail as
+  an empty "No task attached to this session" column — now the rail is
+  skipped entirely for unattached sessions and the center thread takes
+  the full width. The whole thread panel (header + 3 zones) is now
+  wrapped in a rounded, bordered card with a small margin and shadow —
+  matching the floating-card look used everywhere else in the app —
+  instead of sitting flush edge-to-edge against the window.
 - **Settings side nav + Vault folded in.** Settings has grown to eight
   cards, long enough that finding one meant scrolling by hand — added
   a sticky side nav (`Usage · Model providers · Tools · Policies ·

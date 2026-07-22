@@ -169,7 +169,11 @@ function AgentThread() {
   const uptime = agent ? formatUptime(Date.now() / 1000 - agent.started_at) : ''
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}>
+    <div style={{
+      display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, margin: '0 10px 10px',
+      background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 12,
+      boxShadow: 'var(--shadow)', overflow: 'hidden',
+    }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderBottom: '1px solid var(--line)', background: 'var(--card)', flexShrink: 0 }}>
         <button onClick={() => navigate('/')} style={{ fontSize: 16, color: 'var(--ink2)' }}>←</button>
@@ -178,7 +182,7 @@ function AgentThread() {
         <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>{id}</span>
         <Chip color={isDriving ? 'var(--warn-ink)' : 'var(--mut)'} soft>{isDriving ? 'DRIVING' : 'WATCHING'}</Chip>
         {agent?.model && <Chip mono>{agent.model}</Chip>}
-        <button onClick={() => setRailCollapsed(r => !r)} title="Toggle rail (⌘B)" style={{ fontSize: 11, color: 'var(--mut)', fontFamily: 'var(--font-mono)' }}>⌘B</button>
+        {task && <button onClick={() => setRailCollapsed(r => !r)} title="Toggle rail (⌘B)" style={{ fontSize: 11, color: 'var(--mut)', fontFamily: 'var(--font-mono)' }}>⌘B</button>}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>
             {agent?.tokens_used.toLocaleString() ?? 0} tok · ${agent?.cost_usd.toFixed(3) ?? '0.000'} · {uptime}
@@ -192,49 +196,46 @@ function AgentThread() {
       </div>
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Left goal rail */}
-        {!railCollapsed && (
+        {/* Left goal rail — only for sessions with a task attached. An
+            unattached session has nothing to show here, so skip the rail
+            entirely rather than rendering an empty "no task" column; the
+            center thread gets the full width instead. */}
+        {task && !railCollapsed && (
           <div style={{ width: 260, flexShrink: 0, background: 'var(--card2)', borderRight: '1px solid var(--line)', padding: 16, overflowY: 'auto' }}>
-            {task ? (
+            <SectionHeading>Goal</SectionHeading>
+            <Link to={`/tasks/${task.id}`} style={{ fontSize: 13, fontWeight: 600, color: 'var(--acc)', display: 'block', marginBottom: 6 }}>{task.title}</Link>
+            {task.description && <div style={{ fontSize: 12, color: 'var(--ink2)', lineHeight: 1.5, marginBottom: 16 }}>{task.description}</div>}
+
+            {task.steps.length > 0 && (
               <>
-                <SectionHeading>Goal</SectionHeading>
-                <Link to={`/tasks/${task.id}`} style={{ fontSize: 13, fontWeight: 600, color: 'var(--acc)', display: 'block', marginBottom: 6 }}>{task.title}</Link>
-                {task.description && <div style={{ fontSize: 12, color: 'var(--ink2)', lineHeight: 1.5, marginBottom: 16 }}>{task.description}</div>}
-
-                {task.steps.length > 0 && (
-                  <>
-                    <SectionHeading>Steps</SectionHeading>
-                    {(() => {
-                      const done = task.steps.filter(s => s.status === 'done').length
-                      const pct = Math.round((done / task.steps.length) * 100)
-                      return (
-                        <>
-                          <div style={{ height: 4, background: 'var(--line)', borderRadius: 99, marginBottom: 8, overflow: 'hidden' }}>
-                            <div style={{ height: '100%', width: `${pct}%`, background: 'var(--acc)' }} />
-                          </div>
-                          {task.steps.map(s => (
-                            <div key={s.id} style={{ fontSize: 12, color: s.status === 'done' ? 'var(--mut)' : 'var(--ink2)', textDecoration: s.status === 'done' ? 'line-through' : undefined, marginBottom: 4 }}>
-                              {s.status === 'done' ? '✓' : '○'} {s.title}
-                            </div>
-                          ))}
-                        </>
-                      )
-                    })()}
-                  </>
-                )}
-
-                {task.acceptance_criteria.length > 0 && (
-                  <>
-                    <SectionHeading>Criteria</SectionHeading>
-                    {task.acceptance_criteria.map((c, i) => {
-                      const met = task.criteria_met.includes(c)
-                      return <div key={i} style={{ fontSize: 12, color: met ? 'var(--mut)' : 'var(--ink2)', marginBottom: 4 }}>{met ? '✓' : '○'} {c}</div>
-                    })}
-                  </>
-                )}
+                <SectionHeading>Steps</SectionHeading>
+                {(() => {
+                  const done = task.steps.filter(s => s.status === 'done').length
+                  const pct = Math.round((done / task.steps.length) * 100)
+                  return (
+                    <>
+                      <div style={{ height: 4, background: 'var(--line)', borderRadius: 99, marginBottom: 8, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${pct}%`, background: 'var(--acc)' }} />
+                      </div>
+                      {task.steps.map(s => (
+                        <div key={s.id} style={{ fontSize: 12, color: s.status === 'done' ? 'var(--mut)' : 'var(--ink2)', textDecoration: s.status === 'done' ? 'line-through' : undefined, marginBottom: 4 }}>
+                          {s.status === 'done' ? '✓' : '○'} {s.title}
+                        </div>
+                      ))}
+                    </>
+                  )
+                })()}
               </>
-            ) : (
-              <div style={{ fontSize: 12, color: 'var(--mut)' }}>No task attached to this session.</div>
+            )}
+
+            {task.acceptance_criteria.length > 0 && (
+              <>
+                <SectionHeading>Criteria</SectionHeading>
+                {task.acceptance_criteria.map((c, i) => {
+                  const met = task.criteria_met.includes(c)
+                  return <div key={i} style={{ fontSize: 12, color: met ? 'var(--mut)' : 'var(--ink2)', marginBottom: 4 }}>{met ? '✓' : '○'} {c}</div>
+                })}
+              </>
             )}
           </div>
         )}
