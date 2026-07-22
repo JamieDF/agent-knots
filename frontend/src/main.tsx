@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 import App from './App'
 import Dashboard from './views/Dashboard'
 import AgentThread from './views/AgentThread'
@@ -12,13 +12,25 @@ import ToolManager from './views/ToolManager'
 import SettingsPage from './views/Settings'
 import './index.css'
 
+// AgentThread keeps events/agent/task/etc. as local state fetched per
+// session id — navigating from one thread straight to another (e.g.
+// starting a new session while already viewing one) hits the same
+// route element, so React doesn't remount it and the previous
+// session's stale messages/state sit there until new data trickles
+// in, looking like the new session "didn't open". Keying by :id
+// forces a clean remount whenever it changes.
+function AgentThreadRoute() {
+  const { id } = useParams<{ id: string }>()
+  return <AgentThread key={id} />
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <Routes>
         <Route element={<App />}>
           <Route index element={<Dashboard />} />
-          <Route path="agent/:id" element={<AgentThread />} />
+          <Route path="agent/:id" element={<AgentThreadRoute />} />
           {/* /board merged into the Tasks screen's Board tab (Phase 1) —
               redirect so old bookmarks/links still land somewhere real. */}
           <Route path="board" element={<Navigate to="/tasks?view=board" replace />} />

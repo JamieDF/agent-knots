@@ -167,7 +167,12 @@ function AgentThread() {
     await relinquishAgent(id)
   }, [id])
   const handleStop = useCallback(async () => { if (id) await deleteAgent(id) }, [id])
-  const handleDelete = useCallback(async () => { if (id) { await deleteAgent(id); navigate('/') } }, [id, navigate])
+  const handleDelete = useCallback(async () => {
+    if (!id) return
+    if (!window.confirm('Delete this session? This ends the agent and removes its thread — this cannot be undone.')) return
+    await deleteAgent(id)
+    navigate('/')
+  }, [id, navigate])
   const handleSend = useCallback(async () => {
     if (!id || !draft.trim()) return
     await sendMessage(id, draft.trim())
@@ -206,8 +211,8 @@ function AgentThread() {
           {isDriving
             ? <button onClick={handleRelinquish} style={pillBtn('var(--acc-soft)', 'var(--acc)')}>Relinquish</button>
             : <button onClick={handleAssume} style={pillBtn('var(--warn-soft)', 'var(--warn-ink)')}>Assume</button>}
-          <button onClick={handleStop} style={pillBtn('var(--card2)', 'var(--ink2)')}>■ Stop</button>
-          <button onClick={handleDelete} style={pillBtn('var(--card2)', 'var(--err)')}>✕</button>
+          <button onClick={handleStop} title="Stop the agent" style={pillBtn('var(--card2)', 'var(--ink2)')}>■ Stop</button>
+          <button onClick={handleDelete} title="Delete this session" style={pillBtn('var(--card2)', 'var(--err)')}>✕</button>
         </div>
       </div>
 

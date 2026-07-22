@@ -4,6 +4,20 @@ All notable changes to agent-knots are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- **Agent Thread: stale thread state on navigating between sessions.**
+  Starting a new session while already viewing one (or otherwise
+  navigating from `/agent/A` to `/agent/B`) hit the same route element
+  without remounting, so the previous session's events/agent/task
+  state sat there until new data replaced it — looking like the new
+  session hadn't opened. `AgentThread` is now keyed by the session id
+  at the route level, forcing a clean remount on every session switch.
+- **Agent Thread: delete session had no confirmation or tooltip.** The
+  "✕" next to "■ Stop" permanently deleted the session immediately on
+  click — same destructive action as Stop's neighbor with no warning
+  and no indication of what it did. Added a `title` tooltip and a
+  confirm prompt before deleting.
+
 ### Added
 - **Agent Thread: real chat layout, markdown rendering, dedup fix.**
   Agent and user turns now anchor like a real chat — agent left, user
