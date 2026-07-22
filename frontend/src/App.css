@@ -3,9 +3,14 @@
    What's left here is only what Settings.tsx/ToolManager.tsx (not yet
    migrated — Phase 5) still depend on. */
 
-/* Canvas — main content area */
+/* Canvas — main content area. Needs display:flex so DeskLayout's own
+   flex:1 + overflow-y:auto gets a bounded height to scroll within —
+   without it DeskLayout renders as a plain block sized to its content
+   and overflow:hidden here just clips the bottom instead of scrolling. */
 .canvas {
   flex: 1;
+  min-height: 0;
+  display: flex;
   overflow: hidden;
 }
 

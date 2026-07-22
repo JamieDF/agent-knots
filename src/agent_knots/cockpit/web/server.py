@@ -963,10 +963,14 @@ def create_app(
     # ── workspace API ────────────────────────────────────────────────────
 
     @app.get("/api/workspaces")
-    async def list_workspaces():
-        """List all workspaces (projects)."""
+    async def list_workspaces(include_archived: bool = Query(False)):
+        """List workspaces (projects). Archived workspaces are hidden by
+        default — pass include_archived=true (Settings' management view) to
+        see them too."""
         store = ProjectStore(_projects_dir())
         workspaces = store.list()
+        if not include_archived:
+            workspaces = [w for w in workspaces if not w.archived]
         return {
             "workspaces": [
                 {
@@ -978,6 +982,7 @@ def create_app(
                     "tags": w.tags,
                     "auto_assign": w.auto_assign,
                     "max_concurrent": w.max_concurrent,
+                    "archived": w.archived,
                     "created_at": w.created_at,
                 }
                 for w in workspaces
@@ -1022,6 +1027,7 @@ def create_app(
         tags: Optional[list] = None
         auto_assign: Optional[bool] = None
         max_concurrent: Optional[int] = None
+        archived: Optional[bool] = None
 
     @app.patch("/api/workspaces/{workspace_id}")
     async def update_workspace(workspace_id: str, body: UpdateWorkspaceRequest):
@@ -1044,6 +1050,8 @@ def create_app(
             ws.auto_assign = body.auto_assign
         if body.max_concurrent is not None:
             ws.max_concurrent = body.max_concurrent
+        if body.archived is not None:
+            ws.archived = body.archived
         store.update(ws)
         return {"status": "ok"}
 

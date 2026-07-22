@@ -121,6 +121,24 @@ All notable changes to agent-knots are documented here.
     deliberate scope call, not an oversight.
 
 ### Fixed
+- **Settings screen couldn't be scrolled past the fold.** `.canvas`
+  (the flex child wrapping every routed view in `App.tsx`) had
+  `overflow: hidden` but no `display: flex`, so `DeskLayout`'s own
+  `flex: 1; overflow-y: auto` never got a bounded height to scroll
+  within — it just rendered as a plain block sized to its content, and
+  anything past the viewport was clipped instead of scrollable. Fixed
+  by making `.canvas` a flex container (`display: flex; min-height: 0`)
+  so its child actually participates in the flex layout.
+- **No way to archive or delete a workspace.** `Project` gained an
+  `archived: bool` field (persisted, toggled via the existing
+  `PATCH /api/workspaces/{id}` route); `GET /api/workspaces` hides
+  archived workspaces by default (so the topbar scope switcher and
+  Dashboard never offer one) but Settings' management view requests
+  `?include_archived=true` and renders active/archived as separate
+  groups with Archive/Unarchive actions. Deleting a workspace (which
+  already worked server-side) had no confirmation at all — added a
+  browser confirm dialog before the DELETE call, since it's
+  irreversible.
 - **No way to get from a task to its agent's thread.** Task Detail's
   header showed a static "● Agent active" label with no click handler
   at all once a session was assigned, and the Session side-block

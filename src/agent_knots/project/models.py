@@ -21,5 +21,6 @@ class Project:
     # toggle + max concurrent agents), real enforcement is a later phase.
     auto_assign: bool = False
     max_concurrent: int = 2
+    archived: bool = False
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)

@@ -67,6 +67,7 @@ class ProjectStore:
             "tags": project.tags,
             "auto_assign": project.auto_assign,
             "max_concurrent": project.max_concurrent,
+            "archived": project.archived,
             "created_at": project.created_at,
             "updated_at": project.updated_at,
         }
@@ -89,6 +90,7 @@ class ProjectStore:
                 tags=data.get("tags", []),
                 auto_assign=data.get("auto_assign", False),
                 max_concurrent=data.get("max_concurrent", 2),
+                archived=data.get("archived", False),
                 created_at=data.get("created_at", time.time()),
                 updated_at=data.get("updated_at", time.time()),
             )
