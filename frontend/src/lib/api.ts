@@ -95,7 +95,7 @@ export async function fetchTask(id: string): Promise<TaskDetail> {
 
 export async function createTask(data: {
   title: string; description?: string; priority?: string; tags?: string[]
-  acceptance_criteria?: string[]; review_gate?: string
+  acceptance_criteria?: string[]; review_gate?: string; project?: string
 }): Promise<TaskDetail> {
   const res = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
   if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()

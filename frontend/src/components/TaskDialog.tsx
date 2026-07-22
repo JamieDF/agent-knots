@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createTask, updateTask, draftTask, type TaskDetail } from '../lib/api'
+import { useWorkspaceScope } from '../lib/workspaceContext'
 import { Dialog, Chip } from './primitives'
 
 interface Props {
@@ -26,6 +27,7 @@ const REVIEW_GATES = [
  * server-side (PATCH matches by text), this dialog just sends the lists. */
 function TaskDialog({ open, onClose, onSaved, task, initialStatus }: Props) {
   const isEdit = !!task
+  const { workspace } = useWorkspaceScope()
 
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -110,7 +112,7 @@ function TaskDialog({ open, onClose, onSaved, task, initialStatus }: Props) {
       } else {
         await createTask({
           title: title.trim(), description, priority, review_gate: reviewGate,
-          tags, acceptance_criteria: criteria,
+          tags, acceptance_criteria: criteria, project: workspace || undefined,
         })
       }
       onSaved()

@@ -121,6 +121,12 @@ All notable changes to agent-knots are documented here.
     deliberate scope call, not an oversight.
 
 ### Fixed
+- **A task created while scoped to a workspace wasn't saved to it.**
+  `TaskDialog`'s create path never read the current workspace scope at
+  all, so every new task's `project` came back empty regardless of
+  which workspace the Tasks screen was scoped to when you clicked "+
+  New task" — it just silently landed unassigned. Fixed by reading
+  `useWorkspaceScope()` and passing it through as `project` on create.
 - **Workspace scope was silently dropped on every in-app navigation.**
   `WorkspaceProvider` derived the current scope live from the `?ws=`
   URL param, but a plain `<Link>`/`<NavLink>` to another route carries

@@ -1862,4 +1862,36 @@ test.describe('task creation and workflow protocol', () => {
     }
   })
 
+  test('a task created while scoped to a workspace is saved to that workspace', async ({ page }) => {
+    // Regression: TaskDialog's create path never read the current
+    // workspace scope at all, so every new task's `project` came back
+    // empty regardless of which workspace the Tasks screen was scoped
+    // to when you clicked "+ New task".
+    await page.request.post(`${BASE}/api/workspaces`, { data: { id: 'task-scope-e2e', name: 'Task Scope E2E' } })
+
+    try {
+      await page.goto(`${BASE}/tasks`)
+      await page.waitForTimeout(600)
+
+      await page.click('button:has-text("All workspaces")')
+      await page.waitForTimeout(200)
+      await page.click('text=Task Scope E2E')
+      await page.waitForTimeout(300)
+
+      await page.click('button:has-text("+ New task")')
+      await page.waitForTimeout(300)
+      await page.fill('input[placeholder="What needs to be done?"]', 'Scoped task E2E')
+      await page.click('button:has-text("Create task")')
+      await page.waitForTimeout(600)
+
+      const tasks = await (await page.request.get(`${BASE}/api/tasks`)).json()
+      const task = tasks.tasks.find((t: any) => t.title === 'Scoped task E2E')
+      expect(task.project).toBe('task-scope-e2e')
+
+      await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+    } finally {
+      await page.request.delete(`${BASE}/api/workspaces/task-scope-e2e`)
+    }
+  })
+
 })
