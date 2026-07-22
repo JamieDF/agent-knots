@@ -442,6 +442,36 @@ class TestExtractJsonObject:
         with pytest.raises(Exception):
             _extract_json_object("no json here at all")
 
+    def test_think_block_before_json_is_stripped(self):
+        """MiniMax M2.7 (a reasoning model) inlines a <think>...</think>
+        block directly into a plain completion's message.content — there's
+        no separate reasoning field to read instead."""
+        from agent_knots.cockpit.web.server import _extract_json_object
+        text = '<think>Let me plan this out...</think>\n{"a": 1}'
+        assert _extract_json_object(text) == {"a": 1}
+
+    def test_think_block_containing_braces_does_not_break_extraction(self):
+        """Regression: a naive "first { to last }" scan grabs braces from
+        *inside* the reasoning (very plausible when the reasoning discusses
+        code or gives JSON examples) instead of the real object, producing
+        text that isn't valid JSON at all and a cryptic raw json.JSONDecodeError
+        ("Expecting value: line 1 column 1 (char 0)") instead of a clear one."""
+        from agent_knots.cockpit.web.server import _extract_json_object
+        text = (
+            '<think>Something like {"example": "not the real answer"} maybe? '
+            'Let me reconsider.</think>\n'
+            '{"a": 1}'
+        )
+        assert _extract_json_object(text) == {"a": 1}
+
+    def test_unparseable_text_raises_with_a_clear_message(self):
+        """Even after stripping think-blocks/fences, genuinely broken JSON
+        must raise a ValueError with an actionable message — not let a raw
+        json.JSONDecodeError bubble up uncaught."""
+        from agent_knots.cockpit.web.server import _extract_json_object
+        with pytest.raises(ValueError, match="No valid JSON object found"):
+            _extract_json_object('<think>{unbalanced</think>{"a": broken}')
+
 
 class TestSPAFallback:
     @pytest.mark.asyncio

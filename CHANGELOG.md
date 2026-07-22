@@ -171,7 +171,19 @@ All notable changes to agent-knots are documented here.
   an unsupported param 400s the whole completion instead of just
   degrading gracefully. Fixed by dropping it and parsing the completion
   text leniently instead (tolerates markdown code fences and stray
-  commentary around the JSON).
+  commentary around the JSON). That lenient parse then surfaced a
+  second bug: MiniMax M2.7 is a reasoning model that inlines its
+  `<think>...</think>` block directly into a plain completion's
+  `message.content` (there's no separate reasoning field to skip), and
+  since a coding-task "think" block routinely contains its own literal
+  `{`/`}` characters, a naive "first `{` to last `}`" scan could grab
+  braces from *inside* the reasoning instead of the real JSON object —
+  producing text that wasn't valid JSON at all and surfacing a raw,
+  uninformative `json.JSONDecodeError` ("Expecting value: line 1 column
+  1 (char 0)") instead of a clear error. Fixed by stripping any
+  `<think>` block before parsing, and by making the fallback brace-scan
+  itself exception-safe with an actionable error message instead of
+  letting a decode error bubble up raw.
 - **The Agent Thread's page itself could scroll instead of just its
   event stream.** `#root`/`body` used `min-height: 100vh`, which lets
   them grow past the viewport on a tall page instead of clipping at it
