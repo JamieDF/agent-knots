@@ -80,7 +80,7 @@ class TestAgentsAPI:
         """Without auth, /api/agents redirects to login page."""
         resp = await client.get("/api/agents")
         assert resp.status_code == 200  # follows redirect to login page
-        assert "Enter your access token" in resp.text
+        assert "Access token" in resp.text
 
 
 class TestAuth:
@@ -96,7 +96,7 @@ class TestAuth:
         resp = await client.get("/")
         # With follow_redirects=True, ends up at login page
         assert resp.status_code == 200
-        assert "Enter your access token" in resp.text
+        assert "Access token" in resp.text
 
     @pytest.mark.asyncio
     async def test_health_no_auth_required(self, client):
@@ -115,7 +115,7 @@ class TestAuth:
     @pytest.mark.asyncio
     async def test_wrong_query_token_denied(self, client, auth_token):
         resp = await client.get("/api/agents?token=not-the-real-token")
-        assert "Enter your access token" in resp.text
+        assert "Access token" in resp.text
 
     @pytest.mark.asyncio
     async def test_cookie_grants_access(self, raw_client, auth_token):

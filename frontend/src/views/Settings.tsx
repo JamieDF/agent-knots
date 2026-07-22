@@ -10,14 +10,7 @@ import {
   type ProviderInfo, type IntegrationsInfo, type UsageSummary, type PolicyInfo,
   type McpServerInfo, type ToolInfo, type Workspace,
 } from '../lib/api'
-
-const PROVIDER_PRESETS: Record<string, { model: string; base_url: string }> = {
-  openai: { model: 'gpt-4o-mini', base_url: '' },
-  minimax: { model: 'minimax-m2.7', base_url: 'https://api.minimax.io/v1' },
-  anthropic: { model: 'claude-sonnet-4-20250514', base_url: '' },
-  ollama: { model: 'llama3', base_url: 'http://localhost:11434/v1' },
-  custom: { model: '', base_url: '' },
-}
+import { PROVIDER_PRESETS } from '../lib/providerPresets'
 
 /** Settings screen — one 800px scrolling column of cards, in the order
  * specified by design_handoff_atelier_cockpit/README.md §8. First-run

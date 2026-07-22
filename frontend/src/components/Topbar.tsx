@@ -5,6 +5,7 @@ import { fetchWorkspaces, type Workspace } from '../lib/api'
 import { useWorkspaceScope } from '../lib/workspaceContext'
 import { useTheme } from '../theme/ThemeContext'
 import NewSessionDialog from './NewSessionDialog'
+import NotificationBell from './NotificationBell'
 
 interface Props {
   agents: AgentInfo[]
@@ -98,13 +99,7 @@ function Topbar({ agents }: Props) {
       </div>
 
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-        {/* Notification bell — static until Phase 6 wires it to the SSE stream. */}
-        <button
-          title="Notifications"
-          style={{ fontSize: 15, padding: '4px 6px', borderRadius: 8, color: 'var(--ink2)' }}
-        >
-          ◷
-        </button>
+        <NotificationBell />
         <button
           onClick={toggleTheme}
           title="Toggle theme"

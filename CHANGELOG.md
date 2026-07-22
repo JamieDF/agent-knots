@@ -83,6 +83,22 @@ All notable changes to agent-knots are documented here.
     same as MCP servers (registry only, no client) and Integrations
     (GitHub PR-on-review / phone-push toggles, both config-only — no
     OAuth flow or push infra exists).
+  - *Phase 6*: Setup wizard restyled to the real design (logo tile,
+    preset chips, plain-YAML warning, Skip / Finish setup →) — it was
+    already auto-shown whenever `/api/settings` reports unconfigured,
+    since Phase 0/2; this phase just gave it the real look and fixed a
+    stale-default prefill bug (see Fixed). Login page (still
+    server-rendered, deliberately, per the Phase 0 decision that it
+    must work before any JS bundle exists) restyled to the real Atelier
+    tokens in both themes, reading the same `agent-knots-theme`
+    localStorage key the rest of the app uses via one small inline
+    script. A real notification bell replacing the static placeholder —
+    badge count is pending blockers specifically, dropdown covers
+    blocker + recently-done tasks with deep links, footer toggle wired
+    to the real `phone_push` setting from Phase 5. Derived by polling
+    the same tasks list the Dashboard already polls rather than a live
+    SSE subscription across every active session — a disclosed,
+    deliberate scope call, not an oversight.
 
 ### Fixed
 - **`PATCH /api/tasks/{id}` silently dropped description/tags/
@@ -147,6 +163,13 @@ All notable changes to agent-knots are documented here.
   accidentally wipe a real key). Fixed in the test by reading and
   restoring the raw `settings.yaml` directly, rather than adding a new
   API-level way to blank a key that isn't needed anywhere else yet.
+- **The Setup Wizard could show the MiniMax preset chip selected while
+  the Model ID field silently held a stale `openai/gpt-4o-mini`.**
+  `AgentSettings.default_model` has a non-empty dataclass default even
+  on a totally fresh install, and the wizard's prefill effect trusted
+  it unconditionally. Fixed by only prefilling from existing settings
+  when `base_url` or `api_key` is actually non-empty — both correctly
+  default to `""`, unlike `default_model`.
 
 - **`install.sh`.** One script, run after `git clone`: installs `uv` if
   missing, `uv sync`s Python dependencies, builds the web cockpit

@@ -44,7 +44,7 @@ test.describe('public endpoints', () => {
 
   test('login page renders', async ({ page }) => {
     await page.goto(`${BASE}/login`)
-    await expect(page.locator('text=Enter your access token')).toBeVisible()
+    await expect(page.locator('text=Access token').first()).toBeVisible()
   })
 
   test('protected routes redirect to login', async ({ page }) => {
@@ -1580,6 +1580,99 @@ test.describe('settings screen', () => {
     await expect(page.locator('text=E2E Workspace Renamed')).toBeVisible()
 
     await page.request.delete(`${BASE}/api/workspaces/e2e-ws`)
+  })
+
+})
+
+// ── setup wizard ─────────────────────────────────────────────────────────────
+
+test.describe('setup wizard', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('shows on an unconfigured install with MiniMax preselected and no stale model id', async ({ page }) => {
+    const settings = await (await page.request.get(`${BASE}/api/settings`)).json()
+    test.skip(settings.configured, 'server is configured — wizard would not show')
+
+    await page.goto(`${BASE}/`)
+    await page.waitForTimeout(600)
+
+    await expect(page.locator('text=Welcome to agent-knots')).toBeVisible()
+    // Regression: AgentSettings.default_model's dataclass default
+    // ("openai/gpt-4o-mini") used to leak into the Model ID field even
+    // though the MiniMax chip was the one shown selected.
+    await expect(page.getByLabel('Model ID')).toHaveValue('minimax-m2.7')
+  })
+
+  test('Skip dismisses the wizard for this view without marking configured', async ({ page }) => {
+    const settings = await (await page.request.get(`${BASE}/api/settings`)).json()
+    test.skip(settings.configured, 'server is configured — wizard would not show')
+
+    await page.goto(`${BASE}/`)
+    await page.waitForTimeout(600)
+    await expect(page.locator('text=Welcome to agent-knots')).toBeVisible()
+
+    await page.locator('button:has-text("Skip")').click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=Welcome to agent-knots')).not.toBeVisible()
+
+    // Not persisted — a fresh load still shows the wizard.
+    await page.reload()
+    await page.waitForTimeout(600)
+    await expect(page.locator('text=Welcome to agent-knots')).toBeVisible()
+  })
+
+})
+
+// ── notification bell ────────────────────────────────────────────────────────
+
+test.describe('notification bell', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('badge count and dropdown row reflect a blocked task, and deep-links to it', async ({ page }) => {
+    const createRes = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Bell E2E task' } })
+    const task = await createRes.json()
+    await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'blocked' } })
+
+    try {
+      await page.goto(`${BASE}/`)
+      await page.waitForTimeout(6000) // 5s notification poll interval
+
+      const badge = page.locator('button[title="Notifications"] span')
+      await expect(badge).toBeVisible()
+
+      await page.click('button[title="Notifications"]')
+      await page.waitForTimeout(300)
+      await expect(page.locator('text=Bell E2E task')).toBeVisible()
+      await expect(page.locator('text=blocked · ')).toBeVisible()
+
+      await page.click('text=Bell E2E task')
+      await page.waitForTimeout(500)
+      expect(page.url()).toContain(`/tasks/${task.id}`)
+    } finally {
+      await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+    }
+  })
+
+  test('phone-push toggle in the dropdown footer persists via the API', async ({ page }) => {
+    await page.goto(`${BASE}/`)
+    await page.waitForTimeout(600)
+
+    await page.click('button[title="Notifications"]')
+    await page.waitForTimeout(300)
+    await page.locator('text=Push blockers to phone').locator('..').getByRole('switch').click()
+    await page.waitForTimeout(300)
+
+    const settings = await (await page.request.get(`${BASE}/api/settings`)).json()
+    expect(settings.integrations.phone_push).toBe(true)
+
+    // Cleanup — restore default.
+    await page.request.put(`${BASE}/api/integrations`, { data: { phone_push: false } })
   })
 
 })

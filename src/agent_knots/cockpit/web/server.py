@@ -1310,30 +1310,73 @@ LOGIN_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>agent-knots cockpit — login</title>
 <style>
-:root {{ --bg: #12141a; --surface: #1c1e26; --fg: #e4e4e8; --fg-soft: #a0a0b0; --muted: #6b6b80; --border: #2a2a3a; --info: #7aa2f7; }}
+:root {{
+  --bg: #eceef2; --dot: #cdd2db; --card: #ffffff; --card2: #fafbfc;
+  --line: #eef0f3; --line2: #dcdfe5; --ink: #23262b; --ink2: #5a6069; --mut: #8a8f99;
+  --acc: #6c5ce7; --acc-ink: #ffffff; --err: #e05252;
+  --shadow-lg: 0 16px 44px rgba(30, 35, 50, .22);
+  --font: 'DM Sans', system-ui, sans-serif; --font-mono: 'DM Mono', monospace;
+}}
+body[data-theme="dark"] {{
+  --bg: #191b20; --dot: #2c3038; --card: #23262d; --card2: #1e2126;
+  --line: #2e323a; --line2: #3a3f48; --ink: #dfe2e8; --ink2: #aab0ba; --mut: #767c87;
+  --acc: #8f7ff2; --acc-ink: #191b20; --err: #e06a6a;
+  --shadow-lg: 0 16px 44px rgba(0, 0, 0, .5);
+}}
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-body {{ font: 14px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--fg); min-height: 100vh; display: flex; align-items: center; justify-content: center; }}
-.login-box {{ width: 380px; }}
-h2 {{ font-size: 22px; font-weight: 600; margin-bottom: 20px; }}
-label {{ display: block; font-size: 13px; color: var(--fg-soft); margin-bottom: 6px; }}
-input {{ width: 100%; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--fg); font-size: 15px; margin-bottom: 16px; }}
-input:focus {{ outline: none; border-color: var(--info); }}
-button {{ width: 100%; padding: 10px; border-radius: 8px; border: none; font-size: 14px; font-weight: 600; cursor: pointer; background: var(--fg); color: var(--bg); }}
-button:hover {{ opacity: 0.88; }}
-.error {{ color: #f7768e; font-size: 13px; margin-bottom: 12px; }}
+body {{
+  font: 14px/1.5 var(--font); color: var(--ink); min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+  background-size: 22px 22px;
+}}
+.login-card {{
+  width: 380px; max-width: 90vw; background: var(--card); border: 1px solid var(--line);
+  border-radius: 16px; box-shadow: var(--shadow-lg); padding: 28px;
+}}
+.logo {{
+  width: 48px; height: 48px; border-radius: 12px; background: var(--card2);
+  display: flex; align-items: center; justify-content: center; font-size: 22px;
+  margin: 0 auto 14px;
+}}
+h2 {{ font-size: 17px; font-weight: 700; text-align: center; }}
+.sub {{ color: var(--mut); font-size: 12.5px; margin: 6px 0 22px; text-align: center; }}
+.sub code {{ font-family: var(--font-mono); background: var(--card2); padding: 1px 5px; border-radius: 4px; }}
+label {{ display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--mut); margin-bottom: 6px; }}
+input {{
+  width: 100%; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line2);
+  background: var(--card2); color: var(--ink); font-size: 14px; margin-bottom: 16px; font-family: inherit;
+}}
+input:focus {{ outline: none; border-color: var(--acc); }}
+button {{
+  width: 100%; padding: 10px; border-radius: 8px; border: none; font-size: 13.5px; font-weight: 700;
+  cursor: pointer; background: var(--acc); color: var(--acc-ink); font-family: inherit;
+}}
+button:hover {{ opacity: 0.9; }}
+.error {{ color: var(--err); font-size: 12.5px; margin-bottom: 12px; }}
+.note {{ color: var(--mut); font-size: 10.5px; margin-top: 16px; text-align: center; }}
 </style>
 </head>
 <body>
-<div class="login-box">
-  <h2>&#9889; agent-knots cockpit</h2>
-  <p style="color:var(--muted);font-size:13px;margin-bottom:20px">Enter your access token.</p>
+<script>
+(function() {{
+  var t = localStorage.getItem('agent-knots-theme');
+  if (t === 'dark') document.body.setAttribute('data-theme', 'dark');
+}})();
+</script>
+<div class="login-card">
+  <div class="logo">&#9889;</div>
+  <h2>agent-knots cockpit</h2>
+  <p class="sub">Paste the access token printed by<br><code>agent-knots cockpit launch --web</code></p>
   <form method="POST" action="/login">
     <input type="hidden" name="return" value="{return_url}">
-    <label>Token</label>
+    <label>Access token</label>
     <input type="password" name="token" placeholder="Access token" required autofocus>
     <div class="error">{error}</div>
-    <button type="submit">Connect</button>
+    <button type="submit">Continue</button>
   </form>
+  <div class="note">local-only · token stored as a cookie</div>
 </div>
 </body>
 </html>"""

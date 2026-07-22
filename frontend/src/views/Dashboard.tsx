@@ -67,7 +67,12 @@ function Dashboard() {
 
   return (
     <DeskLayout width={850}>
-      {showWizard && <SetupWizard onComplete={() => { setConfigured(true); setShowWizard(false) }} />}
+      {showWizard && (
+        <SetupWizard
+          onComplete={() => { setConfigured(true); setShowWizard(false) }}
+          onSkip={() => setShowWizard(false)}
+        />
+      )}
 
       {!showWizard && (
         <>
