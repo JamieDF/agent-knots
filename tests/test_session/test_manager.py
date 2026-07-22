@@ -363,3 +363,25 @@ class TestSessionManagerStart:
         assert session._task is None
         assert not session.running
         await mgr.stop(session.id)
+
+    @pytest.mark.asyncio
+    async def test_start_with_task_id_but_no_prompt_still_runs(self, sessions_dir, agent_knots_home):
+        """Regression: a session started via a bare 'Start' button on a
+        task (no explicit prompt, task context baked into the system
+        prompt instead) used to sit idle forever — 'agent' mode looked
+        broken until the user manually intervened. task_id alone must be
+        enough to kick off the first turn."""
+        from agent_knots.config import tasks_dir
+        from agent_knots.task.models import Task, new_task_id
+        from agent_knots.task.store import TaskStore
+
+        task = Task(id=new_task_id(), title="Do the thing")
+        TaskStore(tasks_dir()).create(task)
+
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            task_id=task.id, runtime_override="inprocess",
+        )
+        assert session._task is not None
+        await mgr.stop(session.id)

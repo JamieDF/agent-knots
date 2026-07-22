@@ -242,6 +242,31 @@ class TestTaskAPI:
         assert resp.json()["review_gate"] == "manual"
 
     @pytest.mark.asyncio
+    async def test_create_task_defaults_to_draft_status(self, authed_client):
+        """New tasks start in Draft, not Open — they move to Open only
+        once someone deliberately takes them out of draft."""
+        resp = await authed_client.post("/api/tasks", json={"title": "Test task"})
+        assert resp.json()["status"] == "draft"
+
+    @pytest.mark.asyncio
+    async def test_cannot_skip_review_straight_to_done_via_patch(self, authed_client):
+        """Workflow protocol: a task with review_gate != 'none' can't jump
+        straight from in_progress to done, even with no acceptance
+        criteria at all — it must pass through 'review' first."""
+        created = await authed_client.post("/api/tasks", json={"title": "No criteria task"})
+        task_id = created.json()["id"]
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "in_progress"})
+
+        resp = await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "done"})
+        assert resp.status_code == 400
+        assert "review" in resp.json()["detail"]
+
+        # Passing through review first should succeed.
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "review"})
+        resp2 = await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "done"})
+        assert resp2.status_code == 200
+
+    @pytest.mark.asyncio
     async def test_create_task_explicit_review_gate(self, authed_client):
         resp = await authed_client.post(
             "/api/tasks", json={"title": "Test task", "review_gate": "auto"}
@@ -291,17 +316,17 @@ class TestTaskAPI:
         })
         assert resp.status_code == 200
 
-        # c2 is still unmet, so done should be refused — the route doesn't
-        # catch TaskStore's ValueError, so it propagates (matching this
-        # server's existing behavior for the done-gate elsewhere).
-        with pytest.raises(ValueError, match="unmet acceptance criteria"):
-            await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "done"})
+        # c2 is still unmet, so done should be refused with a clean 400.
+        refused = await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "done"})
+        assert refused.status_code == 400
+        assert "unmet acceptance criteria" in refused.json()["detail"]
 
         # Mark c2 too — now done should succeed, proving c1's earlier
         # met state was never lost.
         await authed_client.post(f"/api/tasks/{task_id}/criteria/toggle", json={
             "criterion": "c2", "met": True,
         })
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "review"})
         done2 = await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "done"})
         assert done2.status_code == 200
 
@@ -332,7 +357,9 @@ class TestTaskAPI:
         })
         assert marked.status_code == 200
 
-        # Now DONE transition should succeed since the sole criterion is met.
+        # Now DONE transition should succeed since the sole criterion is met
+        # and the task has passed through review.
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "review"})
         done = await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "done"})
         assert done.status_code == 200
         assert done.json()["status"] == "done"
@@ -384,6 +411,36 @@ class TestDraftTaskAPI:
     async def test_draft_blocked_when_unconfigured(self, authed_client):
         resp = await authed_client.post("/api/tasks/draft", json={"title": "Add dark mode"})
         assert resp.status_code == 400
+
+
+class TestExtractJsonObject:
+    """draft_task() doesn't pass response_format (not every OpenAI-compatible
+    provider — e.g. MiniMax — supports that strict-JSON-mode param), so the
+    completion text has to be parsed leniently instead."""
+
+    def test_plain_json(self):
+        from agent_knots.cockpit.web.server import _extract_json_object
+        assert _extract_json_object('{"a": 1}') == {"a": 1}
+
+    def test_markdown_code_fence(self):
+        from agent_knots.cockpit.web.server import _extract_json_object
+        text = '```json\n{"a": 1}\n```'
+        assert _extract_json_object(text) == {"a": 1}
+
+    def test_plain_code_fence_no_language(self):
+        from agent_knots.cockpit.web.server import _extract_json_object
+        text = '```\n{"a": 1}\n```'
+        assert _extract_json_object(text) == {"a": 1}
+
+    def test_stray_commentary_around_json(self):
+        from agent_knots.cockpit.web.server import _extract_json_object
+        text = 'Sure, here you go:\n{"a": 1}\nHope that helps!'
+        assert _extract_json_object(text) == {"a": 1}
+
+    def test_no_json_raises(self):
+        from agent_knots.cockpit.web.server import _extract_json_object
+        with pytest.raises(Exception):
+            _extract_json_object("no json here at all")
 
 
 class TestSPAFallback:
@@ -577,7 +634,7 @@ class TestRoleTriggers:
     @pytest.mark.asyncio
     async def test_enabled_role_fires_on_matching_transition(self, authed_client, session_manager, monkeypatch):
         """Enabling "builder" (trigger=is_started) and moving a task from
-        open to in_progress should auto-start a session — the trigger
+        draft to in_progress should auto-start a session — the trigger
         wiring in update_task()'s PATCH handler."""
         monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
         monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
@@ -598,6 +655,32 @@ class TestRoleTriggers:
             if len(session_manager.active) > before:
                 break
         assert len(session_manager.active) > before
+
+    @pytest.mark.asyncio
+    async def test_draft_to_in_progress_fires_both_leaves_draft_and_is_started(self, authed_client, session_manager, monkeypatch):
+        """Regression: a task now starts in Draft, so a single PATCH can
+        jump straight from draft to in_progress, skipping Open entirely.
+        That must fire *both* leaves_draft (planner) and is_started
+        (builder), not just whichever came first in an if/elif chain."""
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        await authed_client.patch("/api/roles/planner", json={"enabled": True})
+        await authed_client.patch("/api/roles/builder", json={"enabled": True})
+        created = await authed_client.post("/api/tasks", json={"title": "Dual trigger test"})
+        task_id = created.json()["id"]
+        assert created.json()["status"] == "draft"
+
+        before = len(session_manager.active)
+        resp = await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "in_progress"})
+        assert resp.status_code == 200
+
+        for _ in range(5):
+            await asyncio.sleep(0.05)
+            if len(session_manager.active) - before >= 2:
+                break
+        assert len(session_manager.active) - before == 2
 
     @pytest.mark.asyncio
     async def test_disabled_role_does_not_fire(self, authed_client, session_manager):

@@ -11,10 +11,12 @@ const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, 
 /** Board tab of the Tasks screen — stage-driven columns per
  * design_handoff_atelier_cockpit/README.md §3, backed by the real
  * Workflows stage config (Phase 4). */
-function Board() {
+function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [dialogStatus, setDialogStatus] = useState<string | null>(null)
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dragOverStage, setDragOverStage] = useState<string | null>(null)
   const { workspace } = useWorkspaceScope()
   const navigate = useNavigate()
   const allStages = useStages()
@@ -31,6 +33,10 @@ function Board() {
     const interval = setInterval(load, 5000)
     return () => clearInterval(interval)
   }, [load])
+
+  // A task created elsewhere (the Tasks screen header's own dialog)
+  // should show up immediately, not on the next poll tick.
+  useEffect(() => { if (reloadSignal !== undefined) load() }, [reloadSignal]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleMove = async (taskId: string, newStatus: string) => {
     await updateTask(taskId, { status: newStatus })
@@ -53,7 +59,23 @@ function Board() {
       {stages.map(stage => {
         const items = tasksForStage(stage.key)
         return (
-          <div key={stage.key} style={{ flex: '1 1 0', minWidth: 230, maxWidth: 250, display: 'flex', flexDirection: 'column' }}>
+          <div
+            key={stage.key}
+            onDragOver={e => { e.preventDefault(); setDragOverStage(stage.key) }}
+            onDragLeave={() => setDragOverStage(prev => (prev === stage.key ? null : prev))}
+            onDrop={e => {
+              e.preventDefault()
+              const taskId = e.dataTransfer.getData('text/plain')
+              setDragOverStage(null)
+              setDraggingId(null)
+              if (taskId) handleMove(taskId, stage.statuses[0])
+            }}
+            style={{
+              flex: '1 1 0', minWidth: 230, maxWidth: 250, display: 'flex', flexDirection: 'column',
+              borderRadius: 12, transition: 'background 0.1s',
+              background: dragOverStage === stage.key ? 'var(--acc-soft)' : undefined,
+            }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', marginBottom: 8, borderRadius: 10, background: 'var(--card2)' }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--mut)', flexShrink: 0 }} />
               <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink)' }}>{stage.label}</span>
@@ -65,12 +87,15 @@ function Board() {
               >+</button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 4, minHeight: 40 }}>
               {items.map(task => (
                 <TaskCard
                   key={task.id}
                   task={task}
                   expanded={expandedId === task.id}
+                  dragging={draggingId === task.id}
+                  onDragStart={() => setDraggingId(task.id)}
+                  onDragEnd={() => { setDraggingId(null); setDragOverStage(null) }}
                   onExpand={() => setExpandedId(expandedId === task.id ? null : task.id)}
                   onMove={s => handleMove(task.id, s)}
                   onDetails={() => navigate(`/tasks/${task.id}`)}
@@ -98,9 +123,12 @@ function Board() {
   )
 }
 
-function TaskCard({ task, expanded, onExpand, onMove, onDetails, onStart, allStages }: {
+function TaskCard({ task, expanded, dragging, onDragStart, onDragEnd, onExpand, onMove, onDetails, onStart, allStages }: {
   task: TaskSummary
   expanded: boolean
+  dragging: boolean
+  onDragStart: () => void
+  onDragEnd: () => void
   onExpand: () => void
   onMove: (status: string) => void
   onDetails: () => void
@@ -111,10 +139,14 @@ function TaskCard({ task, expanded, onExpand, onMove, onDetails, onStart, allSta
   return (
     <div
       onClick={onExpand}
+      draggable
+      onDragStart={e => { e.dataTransfer.setData('text/plain', task.id); e.dataTransfer.effectAllowed = 'move'; onDragStart() }}
+      onDragEnd={onDragEnd}
       style={{
         background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 10,
         borderLeft: `3px solid ${priorityColor(task.priority)}`,
-        padding: '10px 12px', cursor: 'pointer', boxShadow: 'var(--shadow)',
+        padding: '10px 12px', cursor: 'grab', boxShadow: 'var(--shadow)',
+        opacity: dragging ? 0.4 : 1,
       }}
     >
       <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', marginBottom: 6, lineHeight: 1.35 }}>{task.title}</div>

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { getActiveWorkspace, setActiveWorkspace } from './workspace'
 
@@ -9,32 +9,33 @@ interface WorkspaceContextValue {
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null)
 
-/** Reactive workspace scope, synced to the `?ws=` URL param so it survives
- * reload/bookmark. Replaces the old plain localStorage getter/setter
- * (still kept in lib/workspace.ts for views not yet migrated to this
- * context) which required a full page reload to propagate a change. */
+/** Reactive workspace scope. Kept as its own React state (initialized
+ * from the `?ws=` URL param or localStorage, whichever's set) rather
+ * than derived live from searchParams — deriving it directly meant
+ * the scope was silently dropped on every in-app navigation, since a
+ * plain <Link>/<NavLink> to another route carries no query string at
+ * all and WorkspaceProvider only mounts once for the whole app, so
+ * there was nothing left to re-seed it from `?ws=` after the first
+ * load. State that just lives here survives navigation for free; the
+ * URL is kept in sync on top of it so a scoped link is still
+ * bookmarkable/shareable. */
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const workspace = searchParams.get('ws') ?? ''
+  const [workspace, setWorkspaceState] = useState<string>(
+    () => searchParams.get('ws') ?? getActiveWorkspace() ?? ''
+  )
 
-  // Seed the URL from any previously-stored preference, once, if the URL
-  // doesn't already specify a scope.
+  // Adopt an explicit ?ws= from the URL (e.g. a bookmarked/shared link)
+  // if it differs from the current scope.
   useEffect(() => {
-    if (!searchParams.has('ws')) {
-      const stored = getActiveWorkspace()
-      if (stored) {
-        setSearchParams(prev => {
-          const next = new URLSearchParams(prev)
-          next.set('ws', stored)
-          return next
-        }, { replace: true })
-      }
-    }
+    const fromUrl = searchParams.get('ws')
+    if (fromUrl && fromUrl !== workspace) setWorkspaceState(fromUrl)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [searchParams])
 
   const setWorkspace = useCallback((id: string) => {
     setActiveWorkspace(id)
+    setWorkspaceState(id)
     setSearchParams(prev => {
       const next = new URLSearchParams(prev)
       if (id) next.set('ws', id)

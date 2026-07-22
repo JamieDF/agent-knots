@@ -5,6 +5,12 @@ All notable changes to agent-knots are documented here.
 ## [Unreleased]
 
 ### Added
+- **Kanban drag-and-drop.** Task cards on the Board can now be dragged
+  between columns to change status, alongside the existing click-to-
+  expand-then-click-a-stage-button flow (kept as-is, not replaced).
+- **Nicer workspace switcher.** The topbar's workspace scope picker is
+  now a proper dropdown (`WorkspaceSwitcher.tsx`) matching the rest of
+  the design, instead of a bare native `<select>`.
 - **Create-workspace flow from the Dashboard.** A "No workspaces yet"
   prompt now offers "+ Create workspace" whenever there are none,
   instead of only "+ New session" with no way to actually add a
@@ -115,6 +121,66 @@ All notable changes to agent-knots are documented here.
     deliberate scope call, not an oversight.
 
 ### Fixed
+- **Workspace scope was silently dropped on every in-app navigation.**
+  `WorkspaceProvider` derived the current scope live from the `?ws=`
+  URL param, but a plain `<Link>`/`<NavLink>` to another route carries
+  no query string at all, and the provider only mounts once for the
+  whole app — so there was nothing left to re-seed the scope from after
+  the first load. Picking a workspace then clicking any nav link reset
+  it back to "All workspaces" immediately. Fixed by keeping the scope
+  as its own React state (initialized from the URL or localStorage,
+  whichever's set), with the URL kept in sync on top of it rather than
+  being the source of truth.
+- **A session started via a bare "Start" button on a task never
+  actually began running.** `SessionManager.start()` only kicks off the
+  agent's first turn when `task_description` (the literal prompt text)
+  is non-empty — every "Start" action across the Dashboard, Task
+  Detail, and Board starts a session with an empty prompt on purpose
+  (the task's full context is already baked into the system prompt
+  instead). The agent mode session just sat idle, looking dead, until
+  something else happened to trigger a turn (e.g. assuming control and
+  typing a message). Fixed by falling back to a generic kickoff message
+  when a task is attached but no explicit prompt was given.
+- **Tasks could skip straight from in_progress to done, bypassing
+  review entirely.** `_validate_transition()` only checked acceptance
+  criteria for the done gate — a task with none at all (or all of them
+  met) could go straight to done from any status. Now a task with
+  `review_gate` other than `none` must already be in `review` status
+  before it can be marked done; `PATCH /api/tasks/{id}` also now wraps
+  this in a clean 400 instead of letting the store's `ValueError`
+  propagate as a bare 500.
+- **New tasks started in Open, not Draft.** Per the intended workflow
+  (draft → open → in_progress → review → done), a task should sit in
+  Draft until someone deliberately takes it out. Fixed by changing both
+  the `Task` dataclass default and `CreateTaskRequest`'s default to
+  `draft`; the CLI, agent-callable `create_task` tool, and web API all
+  picked this up automatically since none of them passed an explicit
+  status. Also fixed a role-trigger bug this exposed: a task can now
+  jump straight from draft to in_progress in one hop (skipping Open),
+  which used to fire only the `leaves_draft` trigger or only the
+  `is_started` one (an if/elif chain) instead of both.
+- **The Tasks screen header's "+ New task" dialog didn't refresh the
+  board/list.** It closed the dialog but never told whichever view was
+  showing to reload, so a new task only appeared after the next 5s poll
+  tick or a manual page refresh. Fixed with a reload-signal prop passed
+  down from the shared `Tasks.tsx` shell.
+- **"✨ Draft with agent" could fail against MiniMax and other
+  OpenAI-*compatible* (not literally OpenAI) providers.** It passed
+  `response_format={"type": "json_object"}`, an OpenAI-specific
+  strict-JSON-mode parameter not every compatible provider implements —
+  an unsupported param 400s the whole completion instead of just
+  degrading gracefully. Fixed by dropping it and parsing the completion
+  text leniently instead (tolerates markdown code fences and stray
+  commentary around the JSON).
+- **The Agent Thread's page itself could scroll instead of just its
+  event stream.** `#root`/`body` used `min-height: 100vh`, which lets
+  them grow past the viewport on a tall page instead of clipping at it
+  — so `.canvas`'s `flex: 1; overflow: hidden` had nothing determinate
+  to clip against, and the whole page scrolled. Fixed with a fixed
+  `height: 100%` (and `overflow: hidden` on body) so the header, goal
+  rail, and composer stay fixed in place and only the event stream
+  itself scrolls, matching every other screen's `DeskLayout` scroll
+  behavior.
 - **`PATCH /api/tasks/{id}` silently dropped description/tags/
   acceptance_criteria/steps edits.** `UpdateTaskRequest` was missing
   those fields entirely; the frontend's edit dialog sent them but

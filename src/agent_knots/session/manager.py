@@ -308,6 +308,16 @@ class SessionManager:
             from agent_knots.session.runtime import get_runtime_type
             runtime_type = get_runtime_type()
 
+        # A session started with no explicit prompt but a bound task still
+        # needs its first turn kicked off — the task's full context is
+        # already in full_prompt above, but both runtimes only start the
+        # agent when task_description is non-empty, so an "agent" mode
+        # session attached to a task via a bare "Start" button (prompt
+        # always "") would otherwise sit idle forever, looking dead until
+        # something else (e.g. assume/relinquish + a typed message)
+        # happened to trigger a turn.
+        initial_message = task_description or ("Begin working on the assigned task." if task_id else "")
+
         from agent_knots.session.runtime import create_runtime
         runtime = create_runtime(self, runtime_type=runtime_type)
         await runtime.start(session, {
@@ -316,7 +326,7 @@ class SessionManager:
             "base_url": provider.base_url or "",
             "workspace_dir": resolved_working_dir or "",
             "system_prompt": full_prompt,
-            "task_description": task_description or "",
+            "task_description": initial_message,
         })
 
         return session
@@ -658,6 +668,12 @@ def _build_task_prompt(task: Any) -> str:
         f"Status: {t.status.value}",
         f"Priority: {t.priority.value}",
     ]
+    if t.review_gate.value != "none":
+        parts.append(
+            "\nThis task requires a review step: move it to 'review' status "
+            "first, not straight to 'done' — attempting 'done' from any "
+            "other status will be refused."
+        )
     if t.description:
         parts.append(f"\nDescription:\n{t.description}")
     if t.acceptance_criteria:

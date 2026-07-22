@@ -69,7 +69,7 @@ class CreateTaskRequest(BaseModel):
     title: str
     description: str = ""
     priority: str = "medium"
-    status: str = "open"
+    status: str = "draft"
     project: str = ""
     tags: list = []
     acceptance_criteria: list = []
@@ -692,7 +692,7 @@ def create_app(
             title=body.title,
             description=body.description,
             priority=Priority(body.priority),
-            status=TaskStatus(body.status) if body.status else TaskStatus.OPEN,
+            status=TaskStatus(body.status) if body.status else TaskStatus.DRAFT,
             project=body.project,
             tags=body.tags,
             acceptance_criteria=body.acceptance_criteria,
@@ -718,24 +718,27 @@ def create_app(
         if old_stage is None or new_stage is None or old_stage.key == new_stage.key:
             return
 
-        trigger: Trigger | None = None
+        # Independent checks, not if/elif — tasks now start in Draft by
+        # default, so a single PATCH can jump straight from draft to
+        # in_progress (skipping Open entirely) and should fire *both*
+        # the leaves-draft and is-started triggers, not just one.
+        triggers: list[Trigger] = []
         if old_stage.key == "draft" and new_stage.key != "draft":
-            trigger = Trigger.LEAVES_DRAFT
-        elif new_stage.key == "in_progress":
-            trigger = Trigger.IS_STARTED
-        elif new_stage.key == "review":
-            trigger = Trigger.ENTERS_REVIEW
-        if trigger is None:
-            return
+            triggers.append(Trigger.LEAVES_DRAFT)
+        if new_stage.key == "in_progress":
+            triggers.append(Trigger.IS_STARTED)
+        if new_stage.key == "review":
+            triggers.append(Trigger.ENTERS_REVIEW)
 
-        for role in RolesStore(roles_file()).enabled_for_trigger(trigger):
-            asyncio.create_task(session_manager.start(
-                mode="agent",
-                model=role.model,
-                system_prompt=role.prompt,
-                task_id=task.id,
-                task_description=f"({role.name}) {task.title}",
-            ))
+        for trigger in triggers:
+            for role in RolesStore(roles_file()).enabled_for_trigger(trigger):
+                asyncio.create_task(session_manager.start(
+                    mode="agent",
+                    model=role.model,
+                    system_prompt=role.prompt,
+                    task_id=task.id,
+                    task_description=f"({role.name}) {task.title}",
+                ))
 
     @app.patch("/api/tasks/{task_id}")
     async def update_task(task_id: str, body: UpdateTaskRequest):
@@ -752,7 +755,10 @@ def create_app(
 
         old_status = task.status.value
         if body.status:
-            task = store.set_status(task_id, TaskStatus(body.status))
+            try:
+                task = store.set_status(task_id, TaskStatus(body.status))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
             _maybe_fire_role_triggers(old_status, task.status.value, task)
         if body.priority:
             task.priority = Priority(body.priority)
@@ -821,16 +827,24 @@ def create_app(
             "Given a task title, draft a JSON object with fields: "
             "description (string), acceptance_criteria (list of strings), "
             "tags (list of strings), steps (list of strings). "
-            "Respond with ONLY the JSON object, no other text.\n\n"
+            "Respond with ONLY the raw JSON object — no markdown code fences, "
+            "no commentary before or after it.\n\n"
             f"Title: {body.title}"
         )
         try:
+            # No response_format — it's an OpenAI-specific strict-JSON-mode
+            # parameter that not every OpenAI-*compatible* provider (e.g.
+            # MiniMax) actually implements, and this app always goes
+            # through OpenAIModel/AsyncOpenAI regardless of provider (see
+            # provider.py). Passing an unsupported param 400s the whole
+            # request instead of just getting a slightly less strict
+            # completion, so ask for raw JSON in the prompt instead and
+            # parse leniently below.
             resp = await client.chat.completions.create(
                 model=provider.model,
                 messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
             )
-            draft = json.loads(resp.choices[0].message.content)
+            draft = _extract_json_object(resp.choices[0].message.content or "")
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Draft generation failed: {e}")
 
@@ -1289,6 +1303,25 @@ def _git_diff_stat(repo: Path) -> list[dict]:
 
 def _git_diff_for_file(repo: Path, path: str) -> str:
     return _run_git(repo, ["diff", "--", path]).stdout
+
+
+def _extract_json_object(text: str) -> dict:
+    """Parse a JSON object out of a completion's raw text, tolerating the
+    markdown code fences and stray commentary models commonly add even
+    when explicitly told not to (no response_format to enforce it —
+    see draft_task())."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return json.loads(text[start:end + 1])
+    raise ValueError("No JSON object found in completion")
 
 
 def _unique_project_id(store: ProjectStore, name: str) -> str:

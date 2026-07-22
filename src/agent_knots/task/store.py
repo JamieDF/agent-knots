@@ -265,11 +265,22 @@ class TaskStore:
         """Raise ValueError if transitioning to new_status isn't allowed."""
         if task.status.is_terminal():
             raise ValueError(f"cannot change status of terminal task {task.id!r}")
-        if new_status == TaskStatus.DONE and not task.all_criteria_met():
-            unmet = task.unmet_criteria()
-            raise ValueError(
-                f"cannot mark task {task.id!r} done — unmet acceptance criteria: {unmet}"
-            )
+        if new_status == TaskStatus.DONE:
+            if not task.all_criteria_met():
+                unmet = task.unmet_criteria()
+                raise ValueError(
+                    f"cannot mark task {task.id!r} done — unmet acceptance criteria: {unmet}"
+                )
+            # The workflow requires a review step before done, unless the
+            # task's own review_gate opts out of it — a task with zero
+            # acceptance criteria would otherwise sail straight from
+            # in_progress to done with no check at all.
+            if task.review_gate != ReviewGate.NONE and task.status != TaskStatus.REVIEW:
+                raise ValueError(
+                    f"cannot mark task {task.id!r} done directly from {task.status.value!r} — "
+                    f"move it to 'review' first (review_gate={task.review_gate.value!r}; "
+                    f"set review_gate to 'none' to skip review for this task)"
+                )
 
     def mark_criterion_met(self, task_id: str, criterion: str) -> Task:
         """Mark a single acceptance criterion as satisfied."""

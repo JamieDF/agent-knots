@@ -13,6 +13,13 @@ function Tasks() {
   const [searchParams, setSearchParams] = useSearchParams()
   const view = searchParams.get('view') === 'list' ? 'list' : 'board'
   const [showCreate, setShowCreate] = useState(false)
+  // Board/List each own their own task list + polling — this header's
+  // "+ New task" dialog lives outside both, so saving it used to close
+  // the dialog with no way to tell whichever view was showing to reload;
+  // the new task only appeared after the next 5s poll tick or a manual
+  // refresh. Bumping this and passing it down as a prop forces an
+  // immediate reload in whichever view is active.
+  const [reloadSignal, setReloadSignal] = useState(0)
   const navigate = useNavigate()
 
   const setView = (v: 'board' | 'list') => {
@@ -59,12 +66,12 @@ function Tasks() {
         </div>
       </div>
 
-      {view === 'board' ? <Board /> : <List />}
+      {view === 'board' ? <Board reloadSignal={reloadSignal} /> : <List reloadSignal={reloadSignal} />}
 
       <TaskDialog
         open={showCreate}
         onClose={() => setShowCreate(false)}
-        onSaved={() => setShowCreate(false)}
+        onSaved={() => { setShowCreate(false); setReloadSignal(n => n + 1) }}
       />
     </DeskLayout>
   )

@@ -202,6 +202,7 @@ class TestAcceptanceCriteria:
         store.create(sample_task)
         for c in sample_task.acceptance_criteria:
             store.mark_criterion_met(sample_task.id, c)
+        store.set_status(sample_task.id, TaskStatus.REVIEW)  # workflow requires review before done
         task = store.set_status(sample_task.id, TaskStatus.DONE)
         assert task.status == TaskStatus.DONE
 
@@ -235,6 +236,22 @@ class TestAcceptanceCriteria:
     def test_task_with_no_criteria_can_be_marked_done(self, store):
         task = Task(id=new_task_id(), title="No criteria task", status=TaskStatus.OPEN)
         store.create(task)
+        store.set_status(task.id, TaskStatus.REVIEW)  # workflow requires review before done
+        updated = store.set_status(task.id, TaskStatus.DONE)
+        assert updated.status == TaskStatus.DONE
+
+    def test_cannot_skip_review_straight_to_done(self, store):
+        """The one guard that doesn't depend on acceptance criteria at
+        all — even a task with none must still pass through review,
+        unless it opts out via review_gate='none'."""
+        task = Task(id=new_task_id(), title="No criteria task", status=TaskStatus.IN_PROGRESS)
+        store.create(task)
+        with pytest.raises(ValueError, match="move it to 'review' first"):
+            store.set_status(task.id, TaskStatus.DONE)
+
+    def test_review_gate_none_allows_skipping_review(self, store):
+        task = Task(id=new_task_id(), title="Trivial task", status=TaskStatus.IN_PROGRESS, review_gate=ReviewGate.NONE)
+        store.create(task)
         updated = store.set_status(task.id, TaskStatus.DONE)
         assert updated.status == TaskStatus.DONE
 
@@ -250,6 +267,7 @@ class TestAcceptanceCriteria:
         store.create(sample_task)
         for c in sample_task.acceptance_criteria:
             store.mark_criterion_met(sample_task.id, c)
+        store.set_status(sample_task.id, TaskStatus.REVIEW)  # workflow requires review before done
         entry = ProgressEntry(entry="Finished.", status=TaskStatus.DONE, caller="agent:test")
         task = store.log_progress(sample_task.id, entry)
         assert task.status == TaskStatus.DONE

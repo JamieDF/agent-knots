@@ -288,6 +288,7 @@ test.describe('task API', () => {
         title: 'E2E test task',
         description: 'A task created by Playwright',
         priority: 'high',
+        status: 'open', // tasks default to 'draft' now — set explicitly to exercise the status=open list filter below
         tags: ['e2e', 'test'],
         acceptance_criteria: ['Must pass', 'Must be fast'],
       },
@@ -1008,8 +1009,11 @@ test.describe('session-task assignment', () => {
     // buttons, so task options are asserted via the select's contents
     // rather than toBeVisible() (closed <select> options aren't
     // considered "visible" by Playwright).
-    const t1 = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Picker task 1' } })
-    const t2 = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Picker task 2' } })
+    // Explicit status: 'open' — tasks default to 'draft' now, and the
+    // attach-to-task picker only offers Open tasks (a Draft task isn't
+    // ready to attach a session to yet; that's the point of Draft).
+    const t1 = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Picker task 1', status: 'open' } })
+    const t2 = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Picker task 2', status: 'open' } })
     const id1 = (await t1.json()).id; const id2 = (await t2.json()).id
 
     await page.goto(BASE)
@@ -1747,6 +1751,115 @@ test.describe('workspace creation UI', () => {
     await expect(page.locator('text=github.com/jamiedf/agent-knots')).toBeVisible()
 
     await page.click('button:text-is("Cancel")')
+  })
+
+})
+
+// ── workspace scope persistence ──────────────────────────────────────────────
+
+test.describe('workspace scope persistence', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('selecting a workspace survives navigating to another page', async ({ page }) => {
+    await page.request.post(`${BASE}/api/workspaces`, { data: { id: 'scope-e2e', name: 'Scope E2E' } })
+
+    try {
+      await page.goto(`${BASE}/`)
+      await page.waitForTimeout(500)
+
+      await page.click('button:has-text("All workspaces")')
+      await page.waitForTimeout(200)
+      await page.click('text=Scope E2E')
+      await page.waitForTimeout(300)
+      await expect(page.locator('button:has-text("Scope E2E")')).toBeVisible()
+
+      // Plain in-app navigation carries no ?ws= query string at all —
+      // the scope must survive from React state, not the URL.
+      await page.click('nav >> text=Tasks')
+      await page.waitForTimeout(400)
+      await expect(page.locator('button:has-text("Scope E2E")')).toBeVisible()
+    } finally {
+      await page.request.delete(`${BASE}/api/workspaces/scope-e2e`)
+    }
+  })
+
+})
+
+// ── kanban drag and drop ──────────────────────────────────────────────────────
+
+test.describe('kanban drag and drop', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('dragging a card to another column moves it and persists via the API', async ({ page }) => {
+    const createRes = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Drag drop E2E' } })
+    const taskId = (await createRes.json()).id
+
+    try {
+      await page.goto(`${BASE}/tasks`)
+      await page.waitForTimeout(600)
+
+      const card = page.locator('text=Drag drop E2E')
+      const openColumn = page.locator('text=Open').first().locator('..').locator('..')
+      const cardBox = await card.boundingBox()
+      const openBox = await openColumn.boundingBox()
+
+      await page.mouse.move(cardBox!.x + cardBox!.width / 2, cardBox!.y + cardBox!.height / 2)
+      await page.mouse.down()
+      await page.waitForTimeout(100)
+      await page.mouse.move(openBox!.x + openBox!.width / 2, openBox!.y + 100, { steps: 10 })
+      await page.waitForTimeout(100)
+      await page.mouse.up()
+      await page.waitForTimeout(500)
+
+      const after = await (await page.request.get(`${BASE}/api/tasks`)).json()
+      const task = after.tasks.find((t: any) => t.id === taskId)
+      expect(task.status).toBe('open')
+    } finally {
+      await page.request.delete(`${BASE}/api/tasks/${taskId}`)
+    }
+  })
+
+})
+
+// ── task creation and workflow protocol ──────────────────────────────────────
+
+test.describe('task creation and workflow protocol', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('new tasks default to draft status', async ({ page }) => {
+    const createRes = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Draft default E2E' } })
+    const created = await createRes.json()
+    expect(created.status).toBe('draft')
+    await page.request.delete(`${BASE}/api/tasks/${created.id}`)
+  })
+
+  test('cannot skip review straight to done, even with no acceptance criteria', async ({ page }) => {
+    const createRes = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Review gate E2E' } })
+    const taskId = (await createRes.json()).id
+
+    try {
+      await page.request.patch(`${BASE}/api/tasks/${taskId}`, { data: { status: 'in_progress' } })
+
+      const blocked = await page.request.patch(`${BASE}/api/tasks/${taskId}`, { data: { status: 'done' } })
+      expect(blocked.status()).toBe(400)
+      const body = await blocked.json()
+      expect(body.detail).toContain('review')
+
+      await page.request.patch(`${BASE}/api/tasks/${taskId}`, { data: { status: 'review' } })
+      const allowed = await page.request.patch(`${BASE}/api/tasks/${taskId}`, { data: { status: 'done' } })
+      expect(allowed.status()).toBe(200)
+    } finally {
+      await page.request.delete(`${BASE}/api/tasks/${taskId}`)
+    }
   })
 
 })

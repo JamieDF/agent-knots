@@ -88,7 +88,7 @@ class Task:
     id: str
     title: str
     description: str = ""
-    status: TaskStatus = TaskStatus.OPEN
+    status: TaskStatus = TaskStatus.DRAFT
     priority: Priority = Priority.MEDIUM
     tags: list[str] = field(default_factory=list)
     project: str = ""

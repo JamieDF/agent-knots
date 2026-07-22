@@ -78,15 +78,24 @@ body[data-theme="dark"] {
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+html, body {
+  height: 100%;
+}
+
 body {
   font: 14px/1.5 var(--font);
   background: var(--bg);
   color: var(--ink);
-  min-height: 100vh;
+  overflow: hidden;
 }
 
+/* Fixed height (not min-height) so `.canvas`'s flex:1 + overflow:hidden
+ * below it actually has something determinate to clip against — with
+ * min-height, #root/body just grew past the viewport on tall pages
+ * (like the Agent Thread's event stream) and the whole page scrolled
+ * instead of the one inner region meant to. */
 #root {
-  min-height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
 }

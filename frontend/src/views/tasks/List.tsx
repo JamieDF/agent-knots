@@ -11,7 +11,7 @@ const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, 
 
 /** List tab of the Tasks screen — stage filter chips + task rows, per
  * design_handoff_atelier_cockpit/README.md §3. */
-function List() {
+function List({ reloadSignal }: { reloadSignal?: number } = {}) {
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [stageFilter, setStageFilter] = useState<string | null>(null)
   const { workspace } = useWorkspaceScope()
@@ -29,6 +29,10 @@ function List() {
     const interval = setInterval(load, 5000)
     return () => clearInterval(interval)
   }, [load])
+
+  // A task created elsewhere (the Tasks screen header's own dialog)
+  // should show up immediately, not on the next poll tick.
+  useEffect(() => { if (reloadSignal !== undefined) load() }, [reloadSignal]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const allStages = useStages()
   const stages = enabledStages(allStages)

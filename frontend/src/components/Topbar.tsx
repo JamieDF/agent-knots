@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import type { AgentInfo } from '../lib/api'
-import { fetchWorkspaces, type Workspace } from '../lib/api'
 import { useWorkspaceScope } from '../lib/workspaceContext'
 import { useTheme } from '../theme/ThemeContext'
 import NewSessionDialog from './NewSessionDialog'
 import NotificationBell from './NotificationBell'
+import WorkspaceSwitcher from './WorkspaceSwitcher'
 
 interface Props {
   agents: AgentInfo[]
@@ -25,14 +25,9 @@ const NAV_ITEMS = [
  * workspace scope, stats, notifications, theme toggle, + New session. */
 function Topbar({ agents }: Props) {
   const totalTokens = agents.reduce((s, a) => s + a.tokens_used, 0)
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
-  const { workspace, setWorkspace } = useWorkspaceScope()
+  const { workspace } = useWorkspaceScope()
   const { theme, toggleTheme } = useTheme()
   const [showNewSession, setShowNewSession] = useState(false)
-
-  useEffect(() => {
-    fetchWorkspaces().then(d => setWorkspaces(d.workspaces)).catch(() => {})
-  }, [])
 
   return (
     <header
@@ -72,21 +67,7 @@ function Topbar({ agents }: Props) {
         ))}
       </nav>
 
-      <select
-        value={workspace}
-        onChange={e => setWorkspace(e.target.value)}
-        style={{
-          marginLeft: 8, padding: '3px 8px', borderRadius: 8, fontSize: 12,
-          border: '1px solid var(--line2)', background: 'var(--card2)',
-          color: 'var(--ink2)', outline: 'none', fontFamily: 'inherit', cursor: 'pointer',
-          maxWidth: 160,
-        }}
-      >
-        <option value="">All workspaces</option>
-        {workspaces.map(w => (
-          <option key={w.id} value={w.id}>{w.name}</option>
-        ))}
-      </select>
+      <WorkspaceSwitcher />
 
       <div
         style={{

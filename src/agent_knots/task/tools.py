@@ -160,7 +160,7 @@ def list_tasks(status: str = "") -> dict:
     }
 
 
-@tool(description="Update a task's status. Use this to move tasks through the workflow. Moving to 'done' requires every acceptance criterion to already be marked met via mark_criterion_met — otherwise this returns an error listing what's still unmet.")
+@tool(description="Update a task's status. Use this to move tasks through the workflow. Moving to 'done' requires every acceptance criterion to already be marked met via mark_criterion_met, AND (unless the task's review_gate is 'none') the task must already be in 'review' status — go in_progress -> review -> done, not straight to done. Both are refused otherwise.")
 def update_task_status(task_id: str, status: str) -> dict:
     """Update a task's status.
 
@@ -242,7 +242,7 @@ def update_task(
     }
 
 
-@tool(description="Log progress on a task. Call this after every meaningful action so progress survives context loss. The status field can also move the task forward, subject to the same rules as update_task_status (e.g. 'done' needs all acceptance criteria marked met first).")
+@tool(description="Log progress on a task. Call this after every meaningful action so progress survives context loss. The status field can also move the task forward, subject to the same rules as update_task_status (e.g. 'done' needs all acceptance criteria met and, unless review_gate is 'none', the task already in 'review').")
 def log_progress(
     task_id: str,
     entry: str,
