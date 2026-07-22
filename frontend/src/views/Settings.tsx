@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef, useLayoutEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import DeskLayout from '../components/DeskLayout'
 import { Card, Chip, Toggle, SectionLabel, Dialog } from '../components/primitives'
 import WorkspaceDialog from '../components/WorkspaceDialog'
@@ -8,26 +9,129 @@ import {
   fetchMcpServers, addMcpServer, toggleMcpServer, deleteMcpServer,
   fetchTools, createTool, deleteTool, toggleTool,
   fetchWorkspaces, deleteWorkspace, updateWorkspace,
+  fetchVaultStatus, unlockVault, lockVault,
+  fetchCredentials, addCredential, deleteCredential, fetchAuditLog,
   type ProviderInfo, type IntegrationsInfo, type UsageSummary, type PolicyInfo,
-  type McpServerInfo, type ToolInfo, type Workspace,
+  type McpServerInfo, type ToolInfo, type Workspace, type CredentialInfo, type AuditEntryInfo,
 } from '../lib/api'
 import { PROVIDER_PRESETS } from '../lib/providerPresets'
 
-/** Settings screen — one 800px scrolling column of cards, in the order
- * specified by design_handoff_atelier_cockpit/README.md §8. First-run
- * flow previews (item 8) are deferred to Phase 6, which is what
- * actually builds the setup-wizard route these would link to. */
+const SECTIONS = [
+  { id: 'usage', label: 'Usage' },
+  { id: 'providers', label: 'Model providers' },
+  { id: 'tools', label: 'Tools' },
+  { id: 'policies', label: 'Policies' },
+  { id: 'mcp', label: 'MCP servers' },
+  { id: 'integrations', label: 'Integrations' },
+  { id: 'vault', label: 'Vault' },
+  { id: 'workspaces', label: 'Workspaces' },
+]
+
+/** Settings screen — a scrolling column of cards (one per SECTIONS
+ * entry), in the order specified by design_handoff_atelier_cockpit/
+ * README.md §8, with a sticky side nav for jumping between them
+ * directly since the page has grown long enough that scrolling to a
+ * specific card by hand is tedious. First-run flow previews (README
+ * item 8) are deferred to Phase 6, which is what actually builds the
+ * setup-wizard route these would link to. */
 function SettingsPage() {
+  const location = useLocation()
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [activeId, setActiveId] = useState(SECTIONS[0].id)
+
+  const scrollToSection = useCallback((id: string, smooth = true) => {
+    const el = document.getElementById(id)
+    el?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' })
+  }, [])
+
+  // Land on the right section when arriving via a #hash (bookmark, or
+  // the /vault -> /settings#vault redirect for the old standalone route).
+  // Every card fetches its own data on mount, so the page's layout keeps
+  // shifting for a beat after first paint — one scrollIntoView right away
+  // gets shoved out from under itself as later cards finish loading and
+  // grow taller. Re-correct a few times as things settle instead of once.
+  useLayoutEffect(() => {
+    const id = location.hash.replace(/^#/, '')
+    if (id && SECTIONS.some(s => s.id === id)) {
+      setActiveId(id)
+      const timers = [0, 150, 400, 900].map(delay =>
+        window.setTimeout(() => scrollToSection(id, false), delay)
+      )
+      return () => timers.forEach(clearTimeout)
+    }
+    // Only on mount / hash change — not on every scroll-driven activeId update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.hash])
+
+  // Scroll-spy: whichever section's top has crossed closest above the
+  // container's top edge is the "current" one.
+  useEffect(() => {
+    const container = scrollRef.current
+    if (!container) return
+    let raf = 0
+    const onScroll = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        const containerTop = container.getBoundingClientRect().top
+        let current = SECTIONS[0].id
+        for (const s of SECTIONS) {
+          const el = document.getElementById(s.id)
+          if (!el) continue
+          if (el.getBoundingClientRect().top - containerTop <= 80) current = s.id
+        }
+        setActiveId(current)
+      })
+    }
+    container.addEventListener('scroll', onScroll, { passive: true })
+    onScroll()
+    return () => { container.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf) }
+  }, [])
+
   return (
-    <DeskLayout width={800}>
-      <UsageCard />
-      <ProvidersCard />
-      <ToolsCard />
-      <PoliciesCard />
-      <McpServersCard />
-      <IntegrationsCard />
-      <WorkspacesCard />
+    <DeskLayout width={1040} ref={scrollRef}>
+      <div style={{ display: 'flex', gap: 28, alignItems: 'flex-start' }}>
+        <nav style={{ position: 'sticky', top: 0, width: 150, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {SECTIONS.map(s => (
+            <button
+              key={s.id}
+              onClick={() => scrollToSection(s.id)}
+              style={{
+                textAlign: 'left', padding: '6px 10px', borderRadius: 8, fontSize: 12.5, fontWeight: 600,
+                color: activeId === s.id ? 'var(--acc)' : 'var(--ink2)',
+                background: activeId === s.id ? 'var(--acc-soft)' : 'transparent',
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </nav>
+
+        <div style={{ flex: 1, minWidth: 0, maxWidth: 800 }}>
+          <Section id="usage"><UsageCard /></Section>
+          <Section id="providers"><ProvidersCard /></Section>
+          <Section id="tools"><ToolsCard /></Section>
+          <Section id="policies"><PoliciesCard /></Section>
+          <Section id="mcp"><McpServersCard /></Section>
+          <Section id="integrations"><IntegrationsCard /></Section>
+          <Section id="vault"><VaultCard /></Section>
+          <Section id="workspaces" last><WorkspacesCard /></Section>
+          {/* Without trailing space, a short last section (or two) can
+              never scroll flush to the container's top — there just isn't
+              enough content below it to push it up that far. That leaves
+              the side nav's active-highlight visibly stuck on an earlier
+              section whenever you jump to one of these. */}
+          <div style={{ height: '70vh' }} />
+        </div>
+      </div>
     </DeskLayout>
+  )
+}
+
+function Section({ id, last, children }: { id: string; last?: boolean; children: React.ReactNode }) {
+  return (
+    <div id={id} style={{ scrollMarginTop: 16, marginBottom: last ? 0 : 16 }}>
+      {children}
+    </div>
   )
 }
 
@@ -44,7 +148,7 @@ function UsageCard() {
   const maxTaskTokens = Math.max(1, ...usage.top_tasks.map(t => t.tokens))
 
   return (
-    <Card style={{ marginBottom: 16 }}>
+    <Card>
       <SectionLabel>Usage</SectionLabel>
       <div style={{ fontSize: 11.5, color: 'var(--mut)', margin: '4px 0 14px' }}>
         Token counts are exact; cost is an estimate from each provider's pricing.
@@ -111,7 +215,7 @@ function ProvidersCard() {
   const handleDelete = async (name: string) => { try { await deleteProvider(name) } catch { /* synthetic legacy row, nothing to delete server-side */ } load() }
 
   return (
-    <Card style={{ marginBottom: 16 }}>
+    <Card>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
         <SectionLabel>Model providers</SectionLabel>
         <button onClick={() => setShowAdd(true)} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: 'var(--acc)' }}>+ Add provider</button>
@@ -206,7 +310,7 @@ function ToolsCard() {
   useEffect(() => { load() }, [load])
 
   return (
-    <Card style={{ marginBottom: 16 }}>
+    <Card>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
         <SectionLabel>Tools</SectionLabel>
         <button onClick={() => setShowAdd(true)} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: 'var(--acc)' }}>+ Custom tool</button>
@@ -282,7 +386,7 @@ function PoliciesCard() {
   useEffect(() => { load() }, [load])
 
   return (
-    <Card style={{ marginBottom: 16 }}>
+    <Card>
       <SectionLabel>Policies</SectionLabel>
       <div style={{ fontSize: 11, color: 'var(--mut)', margin: '4px 0 10px' }}>
         Only the spend cap is actually enforced today — the rest are configured for later.
@@ -329,7 +433,7 @@ function McpServersCard() {
   }
 
   return (
-    <Card style={{ marginBottom: 16 }}>
+    <Card>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
         <SectionLabel>MCP servers</SectionLabel>
       </div>
@@ -371,7 +475,7 @@ function IntegrationsCard() {
   }
 
   return (
-    <Card style={{ marginBottom: 16 }}>
+    <Card>
       <SectionLabel>Integrations</SectionLabel>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid var(--line)' }}>
         <div style={{ flex: 1 }}>
@@ -391,7 +495,248 @@ function IntegrationsCard() {
   )
 }
 
-// ── 7. Workspaces ────────────────────────────────────────────────────────────
+// ── 7. Vault ─────────────────────────────────────────────────────────────────
+
+/** VaultStore's AuditEntry has no explicit action field — every
+ * successful call (add, use) logs the same shape, distinguished only
+ * by whether a command/template was involved. This is a best-effort
+ * label from what's actually determinable, not a literal action enum. */
+function auditAction(e: { success: boolean; command: string }): { label: string; color: string } {
+  if (!e.success) return { label: 'ERROR', color: 'var(--err)' }
+  if (e.command) return { label: 'INJECT', color: 'var(--acc)' }
+  return { label: 'ACCESS', color: 'var(--warn-ink)' }
+}
+
+function templateChips(c: CredentialInfo): string[] {
+  const chips: string[] = []
+  for (const t of c.templates) {
+    for (const key of Object.keys(t.env)) chips.push(`env:${key}`)
+    if (t.file_path) chips.push(`file:${t.file_path}`)
+    if (t.command_wrapper) chips.push('wrapper')
+  }
+  return chips
+}
+
+function timeAgo(ts: number): string {
+  if (!ts) return 'never'
+  const s = Date.now() / 1000 - ts
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  return `${Math.floor(s / 86400)}d ago`
+}
+
+/** Vault card — locked/unlocked states, credentials list, audit log.
+ * Values never reach this component; the API only ever returns
+ * metadata. Folded into Settings (was its own top-nav screen) since
+ * it's just more config, per README.md §7. */
+function VaultCard() {
+  const [lockState, setLockState] = useState<'locked' | 'unlocked' | 'uninitialized' | null>(null)
+  const [passphrase, setPassphrase] = useState('')
+  const [unlockError, setUnlockError] = useState('')
+  const [unlocking, setUnlocking] = useState(false)
+
+  const [credentials, setCredentials] = useState<CredentialInfo[]>([])
+  const [audit, setAudit] = useState<AuditEntryInfo[]>([])
+  const [showAdd, setShowAdd] = useState(false)
+
+  const loadStatus = useCallback(async () => {
+    const s = await fetchVaultStatus()
+    setLockState(s.lock_state)
+    return s.lock_state
+  }, [])
+
+  const loadUnlockedData = useCallback(async () => {
+    const [c, a] = await Promise.all([fetchCredentials(), fetchAuditLog()])
+    setCredentials(c.credentials)
+    setAudit(a.entries)
+  }, [])
+
+  useEffect(() => {
+    loadStatus().then(state => { if (state === 'unlocked') loadUnlockedData() })
+  }, [loadStatus, loadUnlockedData])
+
+  const handleUnlock = async () => {
+    setUnlocking(true); setUnlockError('')
+    try {
+      await unlockVault(passphrase)
+      setPassphrase('')
+      await loadStatus()
+      await loadUnlockedData()
+    } catch (e) {
+      setUnlockError(e instanceof Error ? e.message : 'Failed to unlock')
+    } finally {
+      setUnlocking(false)
+    }
+  }
+
+  const handleLock = async () => {
+    await lockVault()
+    setCredentials([]); setAudit([])
+    await loadStatus()
+  }
+
+  const handleDelete = async (id: string) => {
+    await deleteCredential(id)
+    loadUnlockedData()
+  }
+
+  if (lockState === null) return <Card><SectionLabel>Vault</SectionLabel></Card>
+
+  if (lockState !== 'unlocked') {
+    return (
+      <Card>
+        <SectionLabel>Vault</SectionLabel>
+        <div style={{ textAlign: 'center', padding: '16px 0 4px' }}>
+          <div style={{
+            width: 52, height: 52, borderRadius: 14, background: 'var(--card2)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 24, margin: '0 auto 14px',
+          }}>🔒</div>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>
+            {lockState === 'uninitialized' ? 'Set up the vault' : 'Vault is locked'}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--mut)', marginBottom: 16 }}>
+            AES-256-GCM encrypted credential store
+          </div>
+          <div style={{ maxWidth: 280, margin: '0 auto' }}>
+            <input
+              type="password"
+              aria-label="Passphrase"
+              value={passphrase}
+              onChange={e => setPassphrase(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleUnlock()}
+              placeholder="Passphrase"
+              style={{ ...inputStyle, marginBottom: 12, textAlign: 'center' }}
+              autoFocus
+            />
+            {unlockError && <div style={{ fontSize: 11.5, color: 'var(--err)', marginBottom: 10 }}>{unlockError}</div>}
+            <button
+              onClick={handleUnlock}
+              disabled={unlocking || !passphrase}
+              style={{
+                width: '100%', padding: '9px 14px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                background: 'var(--acc)', color: 'var(--acc-ink)', opacity: unlocking || !passphrase ? 0.6 : 1,
+              }}
+            >
+              {unlocking ? 'Unlocking…' : lockState === 'uninitialized' ? 'Create vault' : 'Unlock vault'}
+            </button>
+          </div>
+        </div>
+      </Card>
+    )
+  }
+
+  return (
+    <>
+      <Card style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <SectionLabel>Vault</SectionLabel>
+          <Chip color="var(--ok)" soft>UNLOCKED</Chip>
+          <button onClick={handleLock} style={{ fontSize: 12, fontWeight: 600, color: 'var(--acc)' }}>Lock</button>
+          <div style={{ marginLeft: 'auto' }}>
+            <button
+              onClick={() => setShowAdd(true)}
+              style={{ padding: '6px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}
+            >
+              + Add credential
+            </button>
+          </div>
+        </div>
+
+        {credentials.length === 0 && (
+          <div style={{ textAlign: 'center', padding: 16, color: 'var(--mut)', fontSize: 13 }}>No credentials yet.</div>
+        )}
+
+        {credentials.map(c => (
+          <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: '1px solid var(--line)' }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, color: 'var(--ink)', minWidth: 100 }}>{c.id}</span>
+            <span style={{ fontSize: 11.5, color: 'var(--mut)', flex: 1 }}>{c.description}</span>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {templateChips(c).map((t, i) => <Chip key={i} mono>{t}</Chip>)}
+            </div>
+            <span style={{ fontSize: 10.5, color: 'var(--mut)', minWidth: 70, textAlign: 'right' }}>{timeAgo(c.last_used)}</span>
+            <button onClick={() => handleDelete(c.id)} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
+          </div>
+        ))}
+      </Card>
+
+      <Card>
+        <div style={{ marginBottom: 10, fontSize: 13, fontWeight: 700 }}>Audit log</div>
+        {audit.length === 0 && (
+          <div style={{ textAlign: 'center', padding: 16, color: 'var(--mut)', fontSize: 13 }}>No activity yet.</div>
+        )}
+        {audit.map((e, i) => {
+          const action = auditAction(e)
+          return (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 0', borderBottom: '1px solid var(--line)', fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>
+              <span style={{ color: 'var(--mut)', minWidth: 130 }}>{new Date(e.timestamp * 1000).toLocaleString()}</span>
+              <span style={{ color: action.color, fontWeight: 700, minWidth: 60 }}>{action.label}</span>
+              <span style={{ color: 'var(--ink)', flex: 1 }}>{e.credential}</span>
+              <span style={{ color: 'var(--mut)' }}>{e.caller}</span>
+            </div>
+          )
+        })}
+      </Card>
+
+      <AddCredentialDialog
+        open={showAdd}
+        onClose={() => setShowAdd(false)}
+        onSaved={() => { setShowAdd(false); loadUnlockedData() }}
+      />
+    </>
+  )
+}
+
+function AddCredentialDialog({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
+  const [id, setId] = useState('')
+  const [description, setDescription] = useState('')
+  const [value, setValue] = useState('')
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const reset = () => { setId(''); setDescription(''); setValue(''); setError('') }
+
+  const handleSave = async () => {
+    if (!id.trim() || !value) return
+    setSaving(true); setError('')
+    try {
+      await addCredential({ id: id.trim(), description, value })
+      reset()
+      onSaved()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to add credential')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onClose={() => { reset(); onClose() }} width={420}>
+      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>+ Add credential</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <Field label="ID">
+          <input aria-label="Credential ID" value={id} onChange={e => setId(e.target.value)} placeholder="github" style={inputStyle} />
+        </Field>
+        <Field label="Description">
+          <input aria-label="Description" value={description} onChange={e => setDescription(e.target.value)} placeholder="optional" style={inputStyle} />
+        </Field>
+        <Field label="Value">
+          <input aria-label="Credential value" type="password" value={value} onChange={e => setValue(e.target.value)} placeholder="ghp_xxx" style={inputStyle} />
+        </Field>
+        {error && <div style={{ fontSize: 11.5, color: 'var(--err)' }}>{error}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+          <button onClick={() => { reset(); onClose() }} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving || !id.trim() || !value} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: saving || !id.trim() || !value ? 0.6 : 1 }}>
+            {saving ? 'Adding…' : 'Add'}
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  )
+}
+
+// ── 8. Workspaces ────────────────────────────────────────────────────────────
 
 function WorkspacesCard() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])

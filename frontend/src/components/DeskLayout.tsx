@@ -1,17 +1,21 @@
-import type { ReactNode } from 'react'
+import { forwardRef, type ReactNode } from 'react'
 
 interface Props {
   children: ReactNode
-  width?: 420 | 800 | 850 | 880 | 900 | 1000 | 1240 | 1280
+  width?: 420 | 800 | 850 | 880 | 900 | 1000 | 1040 | 1240 | 1280
 }
 
 /** The dotted-grid "desk" background + centered-column page scaffold used
  * by every Atelier screen. Width follows the per-screen values from the
  * design handoff (Dashboard 850, Task Detail 880, Tasks list 1000, board
- * 1240, Thread 1280, Vault locked 420 / unlocked 900, Settings 800). */
-function DeskLayout({ children, width = 850 }: Props) {
+ * 1240, Thread 1280, Vault locked 420 / unlocked 900, Settings 800/1040
+ * — 1040 when a side section nav sits alongside the 800px column).
+ * Forwards a ref to the scrollable outer div so pages with in-page
+ * navigation (Settings) can scroll-spy / scrollIntoView within it. */
+const DeskLayout = forwardRef<HTMLDivElement, Props>(function DeskLayout({ children, width = 850 }, ref) {
   return (
     <div
+      ref={ref}
       style={{
         flex: 1,
         overflowY: 'auto',
@@ -33,6 +37,6 @@ function DeskLayout({ children, width = 850 }: Props) {
       </div>
     </div>
   )
-}
+})
 
 export default DeskLayout

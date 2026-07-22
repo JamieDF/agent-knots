@@ -8,7 +8,6 @@ import Tasks from './views/Tasks'
 import TaskDetail from './views/TaskDetail'
 import Review from './views/Review'
 import Workflows from './views/Workflows'
-import Vault from './views/Vault'
 import ToolManager from './views/ToolManager'
 import SettingsPage from './views/Settings'
 import './index.css'
@@ -27,7 +26,9 @@ createRoot(document.getElementById('root')!).render(
           <Route path="tasks/:id" element={<TaskDetail />} />
           <Route path="review" element={<Review />} />
           <Route path="workflows" element={<Workflows />} />
-          <Route path="vault" element={<Vault />} />
+          {/* Vault folded into a Settings section (jump-to via the side
+              nav's #vault anchor) instead of its own top-nav screen. */}
+          <Route path="vault" element={<Navigate to="/settings#vault" replace />} />
           <Route path="tools" element={<ToolManager />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>

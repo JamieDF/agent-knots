@@ -1408,11 +1408,11 @@ test.describe('review screen', () => {
 
 })
 
-// ── vault screen ─────────────────────────────────────────────────────────────
+// ── vault section (folded into Settings) ────────────────────────────────────
 
 const VAULT_PASSPHRASE = 'e2e-test-passphrase'
 
-test.describe('vault screen', () => {
+test.describe('vault section', () => {
 
   test.beforeEach(async ({ page }) => {
     await authPage(page)
@@ -1420,7 +1420,7 @@ test.describe('vault screen', () => {
 
   test('locked card shows unlock form, unlocking reveals credentials + audit log', async ({ page }) => {
     await page.request.post(`${BASE}/api/vault/lock`)
-    await page.goto(`${BASE}/vault`)
+    await page.goto(`${BASE}/settings#vault`)
     await page.waitForTimeout(500)
 
     await expect(page.getByLabel('Passphrase')).toBeVisible()
@@ -1437,13 +1437,13 @@ test.describe('vault screen', () => {
   test('add credential never leaks the value to the page, and Lock returns to the locked card', async ({ page }) => {
     await page.request.post(`${BASE}/api/vault/unlock`, { data: { passphrase: VAULT_PASSPHRASE } })
     await page.request.delete(`${BASE}/api/vault/credentials/e2e-cred`) // leftover from a prior interrupted run
-    await page.goto(`${BASE}/vault`)
+    await page.goto(`${BASE}/settings#vault`)
     await page.waitForTimeout(500)
 
     await page.locator('button:has-text("+ Add credential")').click()
     await page.waitForTimeout(300)
     await page.getByLabel('Credential ID').fill('e2e-cred')
-    await page.getByLabel('Value').fill('super-secret-value-xyz')
+    await page.getByLabel('Credential value').fill('super-secret-value-xyz')
     await page.locator('button:text-is("Add")').click()
     await page.waitForTimeout(500)
 
@@ -1480,6 +1480,21 @@ test.describe('settings screen', () => {
     // "Workspaces" alone also case-insensitively matches the topbar's
     // "All workspaces" <option> — check the card's unique button instead.
     await expect(page.locator('text=+ Add workspace')).toBeVisible()
+  })
+
+  test('side nav jumps to a section, and /vault redirects into it', async ({ page }) => {
+    await page.goto(`${BASE}/settings`)
+    await page.waitForTimeout(800)
+
+    await page.locator('nav button:has-text("Workspaces")').click()
+    await page.waitForTimeout(500)
+    await expect(page.locator('text=+ Add workspace')).toBeInViewport()
+
+    // Old standalone /vault route should land on the Vault section.
+    await page.goto(`${BASE}/vault`)
+    await page.waitForTimeout(600)
+    expect(page.url()).toContain('/settings#vault')
+    await expect(page.locator('nav button:has-text("Vault")')).toHaveCSS('color', 'rgb(108, 92, 231)')
   })
 
   test('add provider then set default persists via the API', async ({ page }) => {

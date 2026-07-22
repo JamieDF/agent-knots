@@ -5,6 +5,23 @@ All notable changes to agent-knots are documented here.
 ## [Unreleased]
 
 ### Added
+- **Settings side nav + Vault folded in.** Settings has grown to eight
+  cards, long enough that finding one meant scrolling by hand — added
+  a sticky side nav (`Usage · Model providers · Tools · Policies ·
+  MCP servers · Integrations · Vault · Workspaces`) that jumps to and
+  highlights the current section as you scroll. Vault (locked/unlocked
+  state, credentials, audit log) was previously its own top-nav screen;
+  it's just more config, so it's now a Settings section instead — the
+  old `/vault` route redirects to `/settings#vault` for old links/
+  bookmarks. Landing on a section via hash needed a few retries over
+  ~1s rather than one scroll-on-mount: every card fetches its own data,
+  so the page keeps growing taller for a beat after first paint and a
+  single early scroll gets shoved out from under itself. Also needed
+  generous bottom padding after the last section — without it, a short
+  trailing section (Vault, Workspaces) can never be scrolled flush to
+  the top since there isn't enough content below it to push it there,
+  which left the nav's active-highlight visibly stuck on an earlier
+  section whenever you jumped to one.
 - **Kanban drag-and-drop.** Task cards on the Board can now be dragged
   between columns to change status, alongside the existing click-to-
   expand-then-click-a-stage-button flow (kept as-is, not replaced).
