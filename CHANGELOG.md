@@ -121,6 +121,16 @@ All notable changes to agent-knots are documented here.
     deliberate scope call, not an oversight.
 
 ### Fixed
+- **No way to get from a task to its agent's thread.** Task Detail's
+  header showed a static "● Agent active" label with no click handler
+  at all once a session was assigned, and the Session side-block
+  (mode/tokens/cost) had no link either — there was genuinely no path
+  from a task back to the conversation working on it. Both now
+  navigate to `/agent/{assigned_to}`. Verified the full lifecycle end
+  to end while fixing this: create (lands in draft) → open → start
+  agent → in_progress → blocked from skipping straight to done →
+  review → done, plus the `review_gate: auto` "Run review now" button's
+  refuse-then-succeed path once unmet criteria are marked met.
 - **A task created while scoped to a workspace wasn't saved to it.**
   `TaskDialog`'s create path never read the current workspace scope at
   all, so every new task's `project` came back empty regardless of

@@ -1895,3 +1895,132 @@ test.describe('task creation and workflow protocol', () => {
   })
 
 })
+
+// ── task → agent thread lifecycle ────────────────────────────────────────────
+
+test.describe('task to agent thread lifecycle', () => {
+  // A real provider isn't configured on this test server — fake one in
+  // via the raw settings file (not PUT /api/settings, which has no way
+  // to blank an api_key back out afterward — see the Settings-screen
+  // "Set default" test's own note on this) so POST /api/sessions
+  // succeeds. No actual network call completes with an empty prompt
+  // and nothing here awaits a real completion.
+  const settingsPath = join(homedir(), '.agent-knots', 'settings.yaml')
+  let hadSettingsFile = false
+  let originalSettings: string | null = null
+
+  test.beforeAll(async () => {
+    const { readFileSync, existsSync, writeFileSync } = await import('fs')
+    hadSettingsFile = existsSync(settingsPath)
+    originalSettings = hadSettingsFile ? readFileSync(settingsPath, 'utf-8') : null
+    const yaml = 'agent:\n  default_model: fake/model\n  api_key: sk-fake\n  base_url: http://fake-does-not-exist.invalid\n  default_mode: agent\n  runtime: inprocess\n'
+    writeFileSync(settingsPath, yaml)
+  })
+
+  test.afterAll(async () => {
+    const { writeFileSync, existsSync, rmSync } = await import('fs')
+    if (hadSettingsFile) writeFileSync(settingsPath, originalSettings as string)
+    else if (existsSync(settingsPath)) rmSync(settingsPath)
+  })
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('Task Detail links to the agent thread once a session is assigned', async ({ page }) => {
+    const created = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Thread link E2E' } })
+    const task = await created.json()
+
+    try {
+      await page.goto(`${BASE}/tasks/${task.id}`)
+      await page.waitForTimeout(500)
+
+      // No session yet — header shows "Start agent on this task", not a thread link.
+      await expect(page.locator('button:has-text("Start agent on this task")')).toBeVisible()
+      await expect(page.locator('button:has-text("Agent active")')).toHaveCount(0)
+
+      await page.click('button:has-text("Start agent on this task")')
+      await page.waitForTimeout(1000)
+      const threadUrl = page.url()
+      expect(threadUrl).toMatch(/\/agent\/[a-f0-9]+$/)
+
+      // Back on Task Detail, both the header button and the Session
+      // side-block link must now navigate to that same agent thread.
+      await page.goto(`${BASE}/tasks/${task.id}`)
+      await page.waitForTimeout(600)
+
+      await expect(page.locator('button:has-text("Agent active")')).toBeVisible()
+      await page.click('button:has-text("Agent active")')
+      await page.waitForTimeout(400)
+      expect(page.url()).toBe(threadUrl)
+
+      await page.goto(`${BASE}/tasks/${task.id}`)
+      await page.waitForTimeout(600)
+      await page.click('button:has-text("Open thread")')
+      await page.waitForTimeout(400)
+      expect(page.url()).toBe(threadUrl)
+    } finally {
+      await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+    }
+  })
+
+  test('full lifecycle: create in draft, start agent, blocked from skipping review, done after review', async ({ page }) => {
+    const created = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Full lifecycle E2E' } })
+    const task = await created.json()
+
+    try {
+      expect(task.status).toBe('draft')
+
+      await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'open' } })
+
+      await page.goto(`${BASE}/tasks/${task.id}`)
+      await page.waitForTimeout(500)
+      await page.click('button:has-text("Start agent on this task")')
+      await page.waitForTimeout(1000)
+
+      let current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+      expect(current.status).toBe('in_progress')
+      expect(current.assigned_to).toBeTruthy()
+
+      const blocked = await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'done' } })
+      expect(blocked.status()).toBe(400)
+
+      await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'review' } })
+      const done = await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'done' } })
+      expect(done.status()).toBe(200)
+    } finally {
+      await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+    }
+  })
+
+  test('auto review_gate: "Run review now" refuses with unmet criteria, succeeds once met', async ({ page }) => {
+    const created = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Auto review E2E', review_gate: 'auto', acceptance_criteria: ['Must pass tests'] },
+    })
+    const task = await created.json()
+
+    try {
+      await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'in_progress' } })
+      await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'review' } })
+
+      await page.goto(`${BASE}/tasks/${task.id}`)
+      await page.waitForTimeout(600)
+
+      await page.click('button:has-text("Run review now")')
+      await page.waitForTimeout(400)
+      await expect(page.locator('text=done was refused')).toBeVisible()
+
+      await page.request.post(`${BASE}/api/tasks/${task.id}/criteria/toggle`, { data: { criterion: 'Must pass tests', met: true } })
+      await page.reload()
+      await page.waitForTimeout(500)
+      await page.click('button:has-text("Run review now")')
+      await page.waitForTimeout(500)
+
+      const final = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+      expect(final.status).toBe('done')
+    } finally {
+      await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+    }
+  })
+
+})

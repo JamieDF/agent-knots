@@ -103,7 +103,12 @@ function TaskDetail() {
         {task.project && <Chip mono>{task.project}</Chip>}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           {task.assigned_to ? (
-            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ok)' }}>● Agent active</span>
+            <button
+              onClick={() => navigate(`/agent/${task.assigned_to}`)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--ok-soft)', color: 'var(--ok)' }}
+            >
+              ● Agent active — open thread →
+            </button>
           ) : (
             <button onClick={handleStart} style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}>
               ▶ Start agent on this task
@@ -251,6 +256,12 @@ function TaskDetail() {
               <Row l="Mode" v={agent.mode} />
               <Row l="Tokens" v={agent.tokens_used.toLocaleString()} />
               <Row l="Cost" v={`$${agent.cost_usd.toFixed(3)}`} />
+              <button
+                onClick={() => navigate(`/agent/${agent.id}`)}
+                style={{ marginTop: 6, fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}
+              >
+                Open thread →
+              </button>
             </SideBlock>
           )}
           <SideBlock label="Tools used">
