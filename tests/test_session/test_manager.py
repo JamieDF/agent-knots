@@ -149,15 +149,21 @@ class TestChunkToEvent:
         assert "<think>" not in evt1.message
         assert evt1.message == "\nThe user"
 
-        # Second fragment carries the closing tag partway through — still
-        # thinking content up to the tag, tag itself stripped.
+        # Second fragment carries the closing tag partway through, AND
+        # some (whitespace) message text right after it in the very same
+        # delta — this must split into two events, not get lumped into
+        # one THINKING blob (that used to leak real response text into
+        # the thinking bubble) or one MESSAGE blob (which would show the
+        # tail of the model's reasoning as if it were the actual reply).
         full = "<think>\nThe user wants to know X.\n</think>\n\n"
         evt2 = SessionManager._chunk_to_event("sid", {
             "data": full, "delta": {"text": full},
         }, state)
-        assert evt2.type == EventType.THINKING
-        assert "</think>" not in evt2.message
-        assert "wants to know X" in evt2.message
+        assert isinstance(evt2, list) and len(evt2) == 2
+        assert evt2[0].type == EventType.THINKING
+        assert "</think>" not in evt2[0].message
+        assert "wants to know X" in evt2[0].message
+        assert evt2[1].type == EventType.MESSAGE
 
         # A subsequent fragment with no tags at all is back to MESSAGE.
         full2 = full + "The answer is 4."
@@ -166,6 +172,53 @@ class TestChunkToEvent:
         }, state)
         assert evt3.type == EventType.MESSAGE
         assert evt3.message == "The answer is 4."
+
+    def test_think_close_and_response_in_same_delta(self):
+        """Regression: a real MiniMax response where the </think> close tag
+        and the start of the actual reply arrived in the exact same delta
+        fragment (not split across chunks like the test above) — e.g.
+        "...to help</think>\\n\\nHello! I'm here...". The old code
+        classified the WHOLE fragment as one type based only on the state
+        from before this delta, so the real reply text after the tag got
+        rendered inside the collapsed "thinking" bubble instead of as the
+        actual message."""
+        state = {"in_think": True}
+        evt = SessionManager._chunk_to_event("sid", {
+            "data": "...to help</think>\n\nHello! I'm here.",
+            "delta": {"text": "...to help</think>\n\nHello! I'm here."},
+        }, state)
+        assert isinstance(evt, list) and len(evt) == 2
+        assert evt[0].type == EventType.THINKING
+        assert evt[0].message == "...to help"
+        assert evt[1].type == EventType.MESSAGE
+        assert evt[1].message == "\n\nHello! I'm here."
+        assert state["in_think"] is False
+
+    def test_final_message_chunk_suppressed_after_streaming(self):
+        """Once a turn's text was already streamed via data+delta chunks,
+        Strands' final 'message' chunk re-sends the whole thing again —
+        emitting another event for it doubled every response in the UI."""
+        state: dict = {}
+        SessionManager._chunk_to_event("sid", {
+            "data": "Hello!", "delta": {"text": "Hello!"},
+        }, state)
+        assert state["streamed_any"] is True
+
+        evt = SessionManager._chunk_to_event("sid", {
+            "message": {"role": "assistant", "content": [{"text": "Hello!"}]},
+        }, state)
+        assert evt is None
+
+    def test_final_message_chunk_kept_when_nothing_streamed(self):
+        """A provider that never sends data+delta chunks (no streaming)
+        still needs its one final message chunk to actually show up."""
+        state: dict = {}
+        evt = SessionManager._chunk_to_event("sid", {
+            "message": {"role": "assistant", "content": [{"text": "Hello!"}]},
+        }, state)
+        assert evt is not None
+        assert evt.type == EventType.MESSAGE
+        assert evt.message == "Hello!"
 
     def test_message_with_think(self):
         """MiniMax returns <think> tags in content."""

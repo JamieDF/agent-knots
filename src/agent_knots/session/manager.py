@@ -457,9 +457,10 @@ class SessionManager:
                 if session._cancelled:
                     break
 
-                event = self._chunk_to_event(session.id, chunk, chunk_state)
-                if event is not None:
-                    session._broadcast(event)
+                result = self._chunk_to_event(session.id, chunk, chunk_state)
+                if result is not None:
+                    for event in (result if isinstance(result, list) else [result]):
+                        session._broadcast(event)
 
             if not session._cancelled:
                 finished = True
@@ -492,8 +493,11 @@ class SessionManager:
             session._cancelled = False
 
     @staticmethod
-    def _chunk_to_event(session_id: str, chunk: Any, _state: dict[str, Any] | None = None) -> Event | None:
-        """Translate a Strands stream chunk into an agent-knots Event.
+    def _chunk_to_event(
+        session_id: str, chunk: Any, _state: dict[str, Any] | None = None
+    ) -> Event | list[Event] | None:
+        """Translate a Strands stream chunk into an agent-knots Event (or,
+        when a single delta straddles a <think>/</think> boundary, two).
 
         Uses _state dict to track accumulated text and avoid duplicates
         (Strands sends both incremental contentBlockDelta and accumulated
@@ -557,30 +561,46 @@ class SessionManager:
                     _state['last_data_text'] = delta
 
                     # <think>...</think> markers can arrive split across
-                    # multiple deltas — track whether we're inside a
-                    # think block across calls (a per-fragment check like
-                    # the old _is_thinking() misclassifies any fragment
-                    # that doesn't itself start with the tag, so most of
-                    # a multi-fragment thinking block leaked through as
-                    # plain MESSAGE text, tag literals and all).
+                    # multiple deltas, and a single delta can itself
+                    # straddle the boundary (e.g. "...done thinking</think>
+                    # Hello!" all in one fragment) — classifying that whole
+                    # fragment as one type either leaks real response text
+                    # into a THINKING bubble or vice versa. Split at every
+                    # tag boundary found in this fragment instead, carrying
+                    # in_think across calls for boundaries split across
+                    # separate deltas.
                     in_think = _state.get('in_think', False)
-                    if '<think>' in new_text:
-                        in_think = True
-                    is_thinking_chunk = in_think
-                    if '</think>' in new_text:
-                        in_think = False
-                    _state['in_think'] = in_think
+                    segments: list[tuple[bool, str]] = []
+                    remaining = new_text
+                    cur = in_think
+                    while remaining:
+                        tag = '</think>' if cur else '<think>'
+                        idx = remaining.find(tag)
+                        if idx == -1:
+                            segments.append((cur, remaining))
+                            remaining = ''
+                        else:
+                            before = remaining[:idx]
+                            if before:
+                                segments.append((cur, before))
+                            cur = not cur
+                            remaining = remaining[idx + len(tag):]
+                    _state['in_think'] = cur
 
-                    clean_text = new_text.replace('<think>', '').replace('</think>', '')
-                    if not clean_text:
+                    events = [
+                        Event(
+                            type=EventType.THINKING if is_think else EventType.MESSAGE,
+                            session_id=session_id,
+                            message=text,
+                            timestamp=now,
+                        )
+                        for is_think, text in segments if text
+                    ]
+                    if events:
+                        _state['streamed_any'] = True
+                    if not events:
                         return None
-
-                    return Event(
-                        type=EventType.THINKING if is_thinking_chunk else EventType.MESSAGE,
-                        session_id=session_id,
-                        message=clean_text,
-                        timestamp=now,
-                    )
+                    return events if len(events) > 1 else events[0]
             return None
 
         # Final message — check for tool results.
@@ -608,6 +628,17 @@ class SessionManager:
                 text = ''.join(c.get('text', '') for c in content if isinstance(c, dict))
             else:
                 text = str(content)
+
+            # This chunk's text is the fully-assembled turn — the same
+            # text the 'data'+'delta' branch above already streamed
+            # piece by piece. Re-emitting it here duplicated every
+            # response ("Hello!... " appearing once streamed in and then
+            # again in full). Only emit it if nothing was actually
+            # streamed this turn (a non-streaming provider that only
+            # ever sends this one final chunk).
+            if _state.get('streamed_any'):
+                return None
+
             # Check if it's a thinking block.
             if '<think>' in text:
                 # Extract thinking and response separately.

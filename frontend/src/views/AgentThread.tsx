@@ -92,6 +92,21 @@ function AgentThread() {
               }
             }
           }
+          // message/thinking stream in as many small text deltas, each
+          // its own event — appending each as a separate bubble produced
+          // a dozen tiny fragments per turn instead of one bubble that
+          // grows, which also broke markdown that spans a fragment
+          // boundary (a "**bold**" split across two deltas renders as
+          // literal asterisks in each half instead of one bold run).
+          // Accumulate consecutive same-type text into the prior bubble.
+          if ((evt.type === 'message' || evt.type === 'thinking') && prev.length > 0) {
+            const last = prev[prev.length - 1]
+            if (last.type === evt.type) {
+              const next = [...prev]
+              next[next.length - 1] = { ...last, message: (last.message || '') + (evt.message || ''), timestamp: evt.timestamp }
+              return next
+            }
+          }
           return [...prev.slice(-300), { ...evt, id: counterRef.current }]
         })
 

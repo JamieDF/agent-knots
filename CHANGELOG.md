@@ -25,6 +25,30 @@ All notable changes to agent-knots are documented here.
   `STATE_CHANGE` event even though `_run_agent` already broadcasts its
   own "Agent finished." right after the stream loop ends normally; the
   chunk case now emits nothing.
+
+  **Follow-up in the same area, found from a real transcript**: none of
+  the above was enough on its own, because the backend was still
+  emitting one `Event` per raw text delta (often a handful of words
+  each) and the frontend rendered every single one as its own bubble.
+  Concretely that: (1) split markdown across bubble boundaries, so a
+  `**bold**` run or a `- ` list starting in one delta and finishing in
+  the next rendered as literal asterisks/dashes; (2) left real reply
+  text stranded inside a collapsed "thinking" bubble whenever a single
+  delta happened to contain both the `</think>` close tag and the
+  start of the actual answer in the same fragment — the old code
+  classified the *whole* fragment as one type based on state from
+  before that delta, so text after the tag got mislabeled as thinking;
+  (3) re-emitted the turn's full text a second time as one final
+  duplicate chunk once streaming finished. Fixed on both ends:
+  `_chunk_to_event` (`session/manager.py`) now splits a single delta at
+  every `<think>`/`</think>` boundary it contains instead of picking
+  one type for the whole fragment, tracks whether anything was
+  actually streamed this turn, and skips the final full-text chunk
+  when it would just duplicate what was already streamed (only sent
+  when a provider doesn't stream at all). The frontend now accumulates
+  consecutive same-type message/thinking events into one growing
+  bubble instead of appending a new bubble per delta, so markdown
+  finally renders against the complete text.
 - **Agent Thread: full-width unattached sessions, framed panel.** A
   session with no task attached still rendered the 260px goal rail as
   an empty "No task attached to this session" column — now the rail is
