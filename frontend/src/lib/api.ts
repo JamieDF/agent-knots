@@ -166,7 +166,7 @@ export async function fetchWorkspaces(): Promise<{ workspaces: Workspace[] }> {
   const res = await fetch('/api/workspaces'); if (!res.ok) throw new Error(''); return res.json()
 }
 
-export async function createWorkspace(data: { id: string; name: string; description?: string; repository?: string; runtime?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number }) {
+export async function createWorkspace(data: { id?: string; name: string; description?: string; repository?: string; runtime?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number }) {
   const res = await fetch('/api/workspaces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
   if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }; return res.json()
 }
@@ -355,4 +355,22 @@ export async function deleteCredential(id: string): Promise<void> {
 
 export async function fetchAuditLog(limit = 50): Promise<{ entries: AuditEntryInfo[] }> {
   const res = await fetch(`/api/vault/audit?limit=${limit}`); if (!res.ok) throw new Error(''); return res.json()
+}
+
+// ── filesystem browse (workspace folder picker) ──────────────────────────────
+
+export interface FsEntry {
+  name: string; path: string; is_git: boolean
+}
+
+export async function fetchFsBrowse(path?: string): Promise<{ path: string; parent: string | null; entries: FsEntry[] }> {
+  const qs = path ? `?path=${encodeURIComponent(path)}` : ''
+  const res = await fetch(`/api/fs/browse${qs}`)
+  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }
+  return res.json()
+}
+
+export async function fetchGitInfo(path: string): Promise<{ is_git: boolean; github_url: string | null }> {
+  const res = await fetch(`/api/fs/git-info?path=${encodeURIComponent(path)}`)
+  if (!res.ok) throw new Error(''); return res.json()
 }

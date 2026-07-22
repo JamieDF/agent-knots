@@ -1564,9 +1564,9 @@ test.describe('settings screen', () => {
 
     await page.locator('button:has-text("+ Add workspace")').click()
     await page.waitForTimeout(200)
-    await page.getByLabel('Workspace ID').fill('e2e-ws')
+    // No id field any more — the backend slugifies one from the name.
     await page.getByLabel('Workspace name').fill('E2E Workspace')
-    await page.locator('button:text-is("Add")').click()
+    await page.locator('button:text-is("Create")').click()
     await page.waitForTimeout(500)
 
     await expect(page.locator('text=E2E Workspace')).toBeVisible()
@@ -1579,7 +1579,7 @@ test.describe('settings screen', () => {
     await page.waitForTimeout(500)
     await expect(page.locator('text=E2E Workspace Renamed')).toBeVisible()
 
-    await page.request.delete(`${BASE}/api/workspaces/e2e-ws`)
+    await page.request.delete(`${BASE}/api/workspaces/e2e-workspace`)
   })
 
 })
@@ -1673,6 +1673,80 @@ test.describe('notification bell', () => {
 
     // Cleanup — restore default.
     await page.request.put(`${BASE}/api/integrations`, { data: { phone_push: false } })
+  })
+
+})
+
+// ── workspace creation UI ────────────────────────────────────────────────────
+
+test.describe('workspace creation UI', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('Dashboard shows a create-workspace CTA when there are none, and the dialog has no id field', async ({ page }) => {
+    const existing = await (await page.request.get(`${BASE}/api/workspaces`)).json()
+    for (const w of existing.workspaces) await page.request.delete(`${BASE}/api/workspaces/${w.id}`)
+
+    await page.goto(`${BASE}/`)
+    await page.waitForTimeout(600)
+    const skip = page.locator('button:has-text("Skip")')
+    if (await skip.count() > 0) await skip.click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=No workspaces yet')).toBeVisible()
+
+    await page.click('button:has-text("+ Create workspace")')
+    await page.waitForTimeout(300)
+    await expect(page.getByLabel('Workspace name')).toBeVisible()
+    await expect(page.getByLabel('Workspace ID')).toHaveCount(0)
+
+    await page.getByLabel('Workspace name').fill('Dashboard E2E')
+    await page.click('button:text-is("Create")')
+    await page.waitForTimeout(600)
+
+    const listed = await (await page.request.get(`${BASE}/api/workspaces`)).json()
+    const created = listed.workspaces.find((w: any) => w.name === 'Dashboard E2E')
+    expect(created).toBeTruthy()
+    expect(created.id).toBe('dashboard-e2e')
+
+    await expect(page.locator('text=Dashboard E2E')).toBeVisible()
+
+    await page.request.delete(`${BASE}/api/workspaces/${created.id}`)
+  })
+
+  test('folder picker browses directories and detects a GitHub remote', async ({ page }) => {
+    const { mkdtempSync, mkdirSync } = await import('fs')
+    const { tmpdir } = await import('os')
+    const { join } = await import('path')
+    const { execSync } = await import('child_process')
+
+    const root = mkdtempSync(join(tmpdir(), 'folder-picker-'))
+    const repo = join(root, 'picked-repo')
+    mkdirSync(repo)
+    execSync('git init -q', { cwd: repo })
+    execSync('git remote add origin git@github.com:jamiedf/agent-knots.git', { cwd: repo })
+
+    await page.goto(`${BASE}/settings`)
+    await page.waitForTimeout(800)
+    await page.click('button:has-text("+ Add workspace")')
+    await page.waitForTimeout(300)
+
+    await page.click('button:has-text("Browse")')
+    await page.waitForTimeout(300)
+    await page.fill('input[aria-label="Folder path"]', root)
+    await page.click('button:has-text("Go")')
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=picked-repo')).toBeVisible()
+
+    await page.click('text=picked-repo')
+    await page.waitForTimeout(300)
+    await page.click('button:has-text("Use this folder")')
+    await page.waitForTimeout(800) // git-info round trip
+
+    await expect(page.locator('text=github.com/jamiedf/agent-knots')).toBeVisible()
+
+    await page.click('button:text-is("Cancel")')
   })
 
 })

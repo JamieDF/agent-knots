@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import SetupWizard from '../components/SetupWizard'
 import NewSessionDialog from '../components/NewSessionDialog'
+import WorkspaceDialog from '../components/WorkspaceDialog'
 import DeskLayout from '../components/DeskLayout'
 import { Card, Chip, Toggle } from '../components/primitives'
 import { priorityColor } from '../lib/priorityColors'
@@ -22,6 +23,7 @@ function Dashboard() {
   const [configured, setConfigured] = useState<boolean | null>(null)
   const [showWizard, setShowWizard] = useState(false)
   const [showNewSession, setShowNewSession] = useState(false)
+  const [showNewWorkspace, setShowNewWorkspace] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { workspace: scope } = useWorkspaceScope()
   const allStages = useStages()
@@ -82,11 +84,13 @@ function Dashboard() {
             </Card>
           )}
 
-          {clusterKeys.length === 0 && (
-            <Card>
+          {workspaces.length === 0 && (
+            <Card style={{ marginBottom: clusterKeys.length > 0 ? 16 : undefined }}>
               <div style={{ textAlign: 'center', padding: 20, color: 'var(--mut)' }}>
                 No workspaces yet.{' '}
-                <button onClick={() => setShowNewSession(true)} style={{ color: 'var(--acc)', fontWeight: 600 }}>+ New session</button> to get started.
+                <button onClick={() => setShowNewWorkspace(true)} style={{ color: 'var(--acc)', fontWeight: 600 }}>+ Create workspace</button>
+                {' '}to point a session at a real project, or{' '}
+                <button onClick={() => setShowNewSession(true)} style={{ color: 'var(--acc)', fontWeight: 600 }}>+ New session</button> without one.
               </div>
             </Card>
           )}
@@ -106,6 +110,13 @@ function Dashboard() {
       )}
 
       <NewSessionDialog open={showNewSession} onClose={() => setShowNewSession(false)} defaultWorkspace={scope} />
+      {showNewWorkspace && (
+        <WorkspaceDialog
+          workspace={null}
+          onClose={() => setShowNewWorkspace(false)}
+          onSaved={() => { setShowNewWorkspace(false); load() }}
+        />
+      )}
     </DeskLayout>
   )
 }

@@ -423,6 +423,107 @@ class TestWorkspaceAPI:
         assert ws["auto_assign"] is True
         assert ws["max_concurrent"] == 3
 
+    @pytest.mark.asyncio
+    async def test_create_without_id_slugifies_name(self, authed_client):
+        resp = await authed_client.post("/api/workspaces", json={"name": "My Cool Project!"})
+        assert resp.status_code == 200
+        assert resp.json()["id"] == "my-cool-project"
+
+        listed = await authed_client.get("/api/workspaces")
+        assert any(w["id"] == "my-cool-project" and w["name"] == "My Cool Project!" for w in listed.json()["workspaces"])
+
+    @pytest.mark.asyncio
+    async def test_create_without_id_dedupes_slug_collisions(self, authed_client):
+        await authed_client.post("/api/workspaces", json={"name": "Dupe"})
+        resp = await authed_client.post("/api/workspaces", json={"name": "Dupe"})
+        assert resp.status_code == 200
+        assert resp.json()["id"] == "dupe-2"
+
+
+class TestFilesystemBrowseAPI:
+    @pytest.mark.asyncio
+    async def test_browse_lists_subdirectories_only(self, authed_client, tmp_path):
+        # A nested dir, not tmp_path itself — tmp_path is also where the
+        # agent_knots_home fixture points AGENT_KNOTS_HOME, so it already
+        # has its own subdirectories (vault/, sessions/, etc.) by the
+        # time authed_client has made its first request.
+        root = tmp_path / "browse-root"
+        root.mkdir()
+        (root / "repo-a").mkdir()
+        (root / "repo-b").mkdir()
+        (root / "a-file.txt").write_text("x")
+        (root / ".hidden").mkdir()
+
+        resp = await authed_client.get("/api/fs/browse", params={"path": str(root)})
+        assert resp.status_code == 200
+        data = resp.json()
+        names = {e["name"] for e in data["entries"]}
+        assert names == {"repo-a", "repo-b"}
+        assert data["path"] == str(root)
+        assert data["parent"] == str(root.parent)
+
+    @pytest.mark.asyncio
+    async def test_browse_flags_git_repos(self, authed_client, tmp_path):
+        repo = tmp_path / "a-repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        (tmp_path / "not-a-repo").mkdir()
+
+        resp = await authed_client.get("/api/fs/browse", params={"path": str(tmp_path)})
+        entries = {e["name"]: e["is_git"] for e in resp.json()["entries"]}
+        assert entries["a-repo"] is True
+        assert entries["not-a-repo"] is False
+
+    @pytest.mark.asyncio
+    async def test_browse_nonexistent_path_400s(self, authed_client, tmp_path):
+        resp = await authed_client.get("/api/fs/browse", params={"path": str(tmp_path / "nope")})
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_browse_defaults_to_home(self, authed_client):
+        resp = await authed_client.get("/api/fs/browse")
+        assert resp.status_code == 200
+
+
+class TestFsGitInfoAPI:
+    @pytest.mark.asyncio
+    async def test_non_git_directory(self, authed_client, tmp_path):
+        resp = await authed_client.get("/api/fs/git-info", params={"path": str(tmp_path)})
+        assert resp.json() == {"is_git": False, "github_url": None}
+
+    @pytest.mark.asyncio
+    async def test_git_repo_no_remote(self, authed_client, tmp_path):
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path)
+        resp = await authed_client.get("/api/fs/git-info", params={"path": str(tmp_path)})
+        data = resp.json()
+        assert data["is_git"] is True
+        assert data["github_url"] is None
+
+    @pytest.mark.asyncio
+    async def test_git_repo_with_https_github_remote(self, authed_client, tmp_path):
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path)
+        subprocess.run(["git", "remote", "add", "origin", "https://github.com/jamiedf/agent-knots.git"], cwd=tmp_path)
+        resp = await authed_client.get("/api/fs/git-info", params={"path": str(tmp_path)})
+        data = resp.json()
+        assert data["is_git"] is True
+        assert data["github_url"] == "https://github.com/jamiedf/agent-knots"
+
+    @pytest.mark.asyncio
+    async def test_git_repo_with_ssh_github_remote(self, authed_client, tmp_path):
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path)
+        subprocess.run(["git", "remote", "add", "origin", "git@github.com:jamiedf/agent-knots.git"], cwd=tmp_path)
+        resp = await authed_client.get("/api/fs/git-info", params={"path": str(tmp_path)})
+        assert resp.json()["github_url"] == "https://github.com/jamiedf/agent-knots"
+
+    @pytest.mark.asyncio
+    async def test_git_repo_with_non_github_remote(self, authed_client, tmp_path):
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path)
+        subprocess.run(["git", "remote", "add", "origin", "https://gitlab.com/jamiedf/agent-knots.git"], cwd=tmp_path)
+        resp = await authed_client.get("/api/fs/git-info", params={"path": str(tmp_path)})
+        data = resp.json()
+        assert data["is_git"] is True
+        assert data["github_url"] is None
+
 
 class TestStagesAPI:
     @pytest.mark.asyncio

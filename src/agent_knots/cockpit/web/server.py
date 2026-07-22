@@ -9,6 +9,7 @@ Serves:
 
 import asyncio
 import json
+import re
 import secrets
 import subprocess
 from pathlib import Path
@@ -968,7 +969,7 @@ def create_app(
         }
 
     class CreateWorkspaceRequest(BaseModel):
-        id: str
+        id: Optional[str] = None  # omitted = slugify from name, deduped
         name: str
         description: str = ""
         repository: str = ""
@@ -982,7 +983,7 @@ def create_app(
         """Create a new workspace."""
         store = ProjectStore(_projects_dir())
         ws = Project(
-            id=body.id,
+            id=body.id or _unique_project_id(store, body.name),
             name=body.name,
             description=body.description,
             repository=body.repository,
@@ -1131,6 +1132,49 @@ def create_app(
             raise HTTPException(status_code=400, detail="Not a git repository")
         return repo
 
+    # ── filesystem browse API (workspace folder picker) ──────────────────
+    #
+    # This is a local-first, single-user app that already lets you point a
+    # workspace at any local path and run shell commands in it — browsing
+    # directory names isn't a new trust boundary on top of that, but it's
+    # still directories-only (no file contents) and confined to what the
+    # local user running the server can already see.
+
+    @app.get("/api/fs/browse")
+    async def browse_fs(path: str = Query("")):
+        base = Path(path).expanduser() if path else Path.home()
+        try:
+            base = base.resolve()
+        except OSError:
+            raise HTTPException(status_code=400, detail="Invalid path")
+        if not base.is_dir():
+            raise HTTPException(status_code=400, detail="Not a directory")
+
+        try:
+            children = sorted(
+                (c for c in base.iterdir() if c.is_dir() and not c.name.startswith(".")),
+                key=lambda c: c.name.lower(),
+            )
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="Permission denied")
+
+        entries = [
+            {"name": c.name, "path": str(c), "is_git": (c / ".git").exists()}
+            for c in children
+        ]
+        parent = str(base.parent) if base.parent != base else None
+        return {"path": str(base), "parent": parent, "entries": entries}
+
+    @app.get("/api/fs/git-info")
+    async def fs_git_info(path: str = Query(...)):
+        repo = Path(path).expanduser()
+        if not (repo / ".git").exists():
+            return {"is_git": False, "github_url": None}
+        result = _run_git(repo, ["remote", "get-url", "origin"])
+        if result.returncode != 0:
+            return {"is_git": True, "github_url": None}
+        return {"is_git": True, "github_url": _github_url_from_remote(result.stdout.strip())}
+
     @app.get("/api/health")
     async def health():
         return {"status": "ok", "agents": len(session_manager.active)}
@@ -1245,6 +1289,33 @@ def _git_diff_stat(repo: Path) -> list[dict]:
 
 def _git_diff_for_file(repo: Path, path: str) -> str:
     return _run_git(repo, ["diff", "--", path]).stdout
+
+
+def _unique_project_id(store: ProjectStore, name: str) -> str:
+    """Slugify a workspace name into an id, deduping against existing
+    workspaces — lets the create-workspace dialog drop the id field
+    entirely and just ask for a name."""
+    base = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-") or "workspace"
+    candidate = base
+    n = 2
+    while store.get(candidate) is not None:
+        candidate = f"{base}-{n}"
+        n += 1
+    return candidate
+
+
+def _github_url_from_remote(remote_url: str) -> str | None:
+    """Best-effort parse of a git remote URL into a browsable
+    https://github.com/owner/repo link, covering the SSH, ssh://, and
+    HTTPS forms `git remote get-url origin` can return."""
+    url = remote_url.strip()
+    if url.endswith(".git"):
+        url = url[:-4]
+    for pattern in (r"^git@github\.com:(.+)$", r"^ssh://git@github\.com/(.+)$", r"^https?://github\.com/(.+)$"):
+        m = re.match(pattern, url)
+        if m:
+            return f"https://github.com/{m.group(1)}"
+    return None
 
 
 def _task_to_response(task: Task) -> dict:

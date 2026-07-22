@@ -5,6 +5,20 @@ All notable changes to agent-knots are documented here.
 ## [Unreleased]
 
 ### Added
+- **Create-workspace flow from the Dashboard.** A "No workspaces yet"
+  prompt now offers "+ Create workspace" whenever there are none,
+  instead of only "+ New session" with no way to actually add a
+  workspace from the Dashboard at all. The create/edit dialog (now
+  shared between the Dashboard and Settings, `WorkspaceDialog.tsx`)
+  drops the id field entirely — the backend slugifies one from the
+  name and dedupes collisions (`POST /api/workspaces`'s `id` is now
+  optional) — and replaces the free-text repository path with a
+  server-assisted folder browser (`GET /api/fs/browse`, new
+  `FolderPicker.tsx`), since a native OS file dialog can't hand back an
+  absolute path a local backend process can use. Once a folder is
+  chosen, `GET /api/fs/git-info` detects whether it's a git repo with a
+  GitHub remote (SSH, `ssh://`, and HTTPS remote URL forms) and shows a
+  clickable `github.com/owner/repo` link right in the dialog.
 - **Atelier cockpit redesign — Phase 0 (foundations) + Phase 1 (Tasks/
   Board core).** Full frontend rebuild described in
   `design_handoff_atelier_cockpit/`.

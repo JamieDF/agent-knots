@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback } from 'react'
 import DeskLayout from '../components/DeskLayout'
 import { Card, Chip, Toggle, SectionLabel, Dialog } from '../components/primitives'
+import WorkspaceDialog from '../components/WorkspaceDialog'
 import {
   fetchSettings, addProvider, deleteProvider, setDefaultProvider, saveIntegrations,
   fetchUsage, fetchPolicies, updatePolicy,
   fetchMcpServers, addMcpServer, toggleMcpServer, deleteMcpServer,
   fetchTools, createTool, deleteTool, toggleTool,
-  fetchWorkspaces, createWorkspace, updateWorkspace, deleteWorkspace,
+  fetchWorkspaces, deleteWorkspace,
   type ProviderInfo, type IntegrationsInfo, type UsageSummary, type PolicyInfo,
   type McpServerInfo, type ToolInfo, type Workspace,
 } from '../lib/api'
@@ -424,47 +425,6 @@ function WorkspacesCard() {
         />
       )}
     </Card>
-  )
-}
-
-function WorkspaceDialog({ workspace, onClose, onSaved }: { workspace: Workspace | null; onClose: () => void; onSaved: () => void }) {
-  const [id, setId] = useState(workspace?.id || '')
-  const [name, setName] = useState(workspace?.name || '')
-  const [repository, setRepository] = useState(workspace?.repository || '')
-  const [runtime, setRuntime] = useState(workspace?.runtime || '')
-
-  const handleSave = async () => {
-    if (workspace) {
-      await updateWorkspace(workspace.id, { name, repository, runtime })
-    } else {
-      if (!id.trim() || !name.trim()) return
-      await createWorkspace({ id: id.trim(), name: name.trim(), repository, runtime })
-    }
-    onSaved()
-  }
-
-  return (
-    <Dialog open onClose={onClose} width={420}>
-      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>{workspace ? `Edit ${workspace.id}` : '+ Add workspace'}</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {!workspace && <Field label="ID"><input aria-label="Workspace ID" value={id} onChange={e => setId(e.target.value)} style={inputStyle} /></Field>}
-        <Field label="Name"><input aria-label="Workspace name" value={name} onChange={e => setName(e.target.value)} style={inputStyle} /></Field>
-        <Field label="Repository"><input aria-label="Repository" value={repository} onChange={e => setRepository(e.target.value)} placeholder="/path/to/repo" style={inputStyle} /></Field>
-        <Field label="Runtime">
-          <select aria-label="Runtime" value={runtime} onChange={e => setRuntime(e.target.value)} style={inputStyle}>
-            <option value="">(use global)</option>
-            <option value="inprocess">In-process</option>
-            <option value="subprocess">Subprocess</option>
-          </select>
-        </Field>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-          <button onClick={onClose} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Cancel</button>
-          <button onClick={handleSave} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}>
-            {workspace ? 'Save' : 'Add'}
-          </button>
-        </div>
-      </div>
-    </Dialog>
   )
 }
 
