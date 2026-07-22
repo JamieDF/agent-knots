@@ -5,6 +5,26 @@ All notable changes to agent-knots are documented here.
 ## [Unreleased]
 
 ### Added
+- **Agent Thread: real chat layout, markdown rendering, dedup fix.**
+  Agent and user turns now anchor like a real chat — agent left, user
+  right — instead of both sitting in the same left-aligned column with
+  a letter-avatar circle (removed the "A"/"Y" avatars entirely; just
+  alignment + a timestamp now). Message/thinking/blocker text is
+  rendered as markdown (`react-markdown` + `remark-gfm`) instead of raw
+  text, so bold, lists, links, tables, and code blocks actually render
+  instead of showing literal asterisks/backticks — this was the biggest
+  part of "formatting is kinda fucked up," since a multi-line response
+  wasn't even wrapping on `\n` before (no `white-space: pre-wrap`, and
+  no markdown parsing at all). Also fixed the code-block renderer
+  picking up `index.css`'s global `code { background; padding }` rule
+  meant for small inline snippets elsewhere in the app — without an
+  explicit override it left ugly per-line highlight boxes behind block
+  code, worst in dark theme. Separately fixed a real backend bug: every
+  turn's "Agent finished." line was appearing twice — `_chunk_to_event`
+  was turning the stream's own `result` chunk into a second
+  `STATE_CHANGE` event even though `_run_agent` already broadcasts its
+  own "Agent finished." right after the stream loop ends normally; the
+  chunk case now emits nothing.
 - **Agent Thread: full-width unattached sessions, framed panel.** A
   session with no task attached still rendered the 260px goal rail as
   an empty "No task attached to this session" column — now the rail is

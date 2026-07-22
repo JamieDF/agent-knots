@@ -6,6 +6,7 @@ import {
 } from '../lib/api'
 import { subscribeToAgent, type SSEEvent } from '../lib/sse'
 import { Chip } from '../components/primitives'
+import Markdown from '../components/Markdown'
 
 interface EventItem extends SSEEvent { id: number; result?: SSEEvent }
 type Tab = 'terminal' | 'files' | 'preview'
@@ -356,17 +357,18 @@ function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onToggleDele
 
   if (evt.type === 'message') {
     return (
-      <Row avatar="A" avatarBg="var(--acc-soft)" avatarColor="var(--acc)" ts={tsStr}>
-        <span style={{ fontSize: 13, color: 'var(--ink)' }}>{evt.message}</span>
-      </Row>
+      <Bubble align="left" bg="var(--card2)" ts={tsStr}>
+        <Markdown>{evt.message}</Markdown>
+      </Bubble>
     )
   }
 
   if (evt.type === 'thinking') {
     return (
-      <div onClick={onToggleCollapse} style={{ display: 'flex', gap: 10, padding: '6px 0', cursor: 'pointer' }}>
-        <div style={{ width: 26, height: 26, borderRadius: '50%', background: 'var(--card2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--mut)', flexShrink: 0 }}>…</div>
-        <span style={{ fontSize: 12.5, fontStyle: 'italic', color: 'var(--mut)' }}>{collapsed ? 'thinking — click to expand' : evt.message}</span>
+      <div onClick={onToggleCollapse} style={{ padding: '4px 0', cursor: 'pointer' }}>
+        <span style={{ fontSize: 12.5, fontStyle: 'italic', color: 'var(--mut)' }}>
+          {collapsed ? '⋯ thinking — click to expand' : `⋯ ${evt.message}`}
+        </span>
       </div>
     )
   }
@@ -424,25 +426,25 @@ function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onToggleDele
 
   if (evt.type === 'blocker' || evt.type === 'ask') {
     return (
-      <Row avatar="A" avatarBg="var(--warn-soft)" avatarColor="var(--warn-ink)" ts={tsStr}>
-        <span style={{ fontSize: 13, color: 'var(--ink)', background: 'var(--warn-soft)', padding: '6px 10px', borderRadius: 8, display: 'inline-block' }}>{evt.message}</span>
-      </Row>
+      <Bubble align="left" bg="var(--warn-soft)" ts={tsStr}>
+        <Markdown>{evt.message}</Markdown>
+      </Bubble>
     )
   }
 
   if (evt.type === 'user') {
     return (
-      <Row avatar="Y" avatarBg="var(--acc-soft)" avatarColor="var(--acc)" ts={tsStr}>
-        <span style={{ fontSize: 13, color: 'var(--ink)', background: 'var(--acc-soft)', padding: '6px 10px', borderRadius: 8, display: 'inline-block' }}>{evt.message}</span>
-      </Row>
+      <Bubble align="right" bg="var(--acc-soft)" ts={tsStr}>
+        <Markdown>{evt.message}</Markdown>
+      </Bubble>
     )
   }
 
   if (evt.type === 'error') {
     return (
-      <Row avatar="!" avatarBg="var(--warn-soft)" avatarColor="var(--err)" ts={tsStr}>
+      <Bubble align="left" ts={tsStr}>
         <span style={{ fontSize: 13, color: 'var(--err)' }}>{evt.error || evt.message}</span>
-      </Row>
+      </Bubble>
     )
   }
 
@@ -454,12 +456,16 @@ function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onToggleDele
   return <div style={{ fontSize: 11.5, color: 'var(--mut)', padding: '4px 0 4px 36px' }}>{evt.message}</div>
 }
 
-function Row({ avatar, avatarBg, avatarColor, ts, children }: { avatar: string; avatarBg: string; avatarColor: string; ts: string; children: React.ReactNode }) {
+/** Chat-turn layout: agent on the left, human ("user" events) on the
+ * right, like any real chat — no avatar, just alignment + a small
+ * timestamp under the bubble. */
+function Bubble({ align, bg, ts, children }: { align: 'left' | 'right'; bg?: string; ts: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '6px 0' }}>
-      <div style={{ width: 26, height: 26, borderRadius: '50%', background: avatarBg, color: avatarColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, flexShrink: 0 }}>{avatar}</div>
-      <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
-      <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--mut2)', paddingTop: 4 }}>{ts}</div>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: align === 'right' ? 'flex-end' : 'flex-start', padding: '4px 0' }}>
+      <div style={{ maxWidth: '78%', padding: bg ? '8px 12px' : 0, borderRadius: 12, background: bg }}>
+        {children}
+      </div>
+      <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--mut2)', marginTop: 3, padding: bg ? '0 3px' : 0 }}>{ts}</div>
     </div>
   )
 }

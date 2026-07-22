@@ -179,13 +179,15 @@ class TestChunkToEvent:
         assert "actual answer" in evt.message
         assert "reasoning" not in evt.message  # thinking stripped
 
-    def test_result_chunk(self):
-        """Real Strands chunk: result."""
+    def test_result_chunk_skipped(self):
+        """Real Strands chunk: result. _run_agent already broadcasts its
+        own "Agent finished." once the stream loop ends — this chunk
+        always precedes that, so it must produce no event of its own or
+        the message doubles up ("Agent finished. Agent finished.")."""
         evt = SessionManager._chunk_to_event("sid", {
             "result": "AgentResult(...)",
         })
-        assert evt is not None
-        assert evt.type == EventType.STATE_CHANGE
+        assert evt is None
 
     def test_lifecycle_skipped(self):
         """Lifecycle bookmarks should be skipped."""

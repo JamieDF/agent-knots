@@ -626,14 +626,12 @@ class SessionManager:
                 timestamp=now,
             )
 
-        # Result — final completion.
+        # Result — final completion. No event here: _run_agent already
+        # broadcasts its own "Agent finished." once the stream loop ends
+        # without cancellation, and this chunk always precedes that —
+        # emitting one here too was producing the message twice per turn.
         if 'result' in chunk:
-            return Event(
-                type=EventType.STATE_CHANGE,
-                session_id=session_id,
-                message='Agent finished.',
-                timestamp=now,
-            )
+            return None
 
         # Fallback — any dict with text-like content.
         for key in ('text', 'content', 'output'):
