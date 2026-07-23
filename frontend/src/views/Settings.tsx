@@ -16,6 +16,7 @@ import {
   type McpServerInfo, type ToolInfo, type Workspace, type CredentialInfo, type AuditEntryInfo,
 } from '../lib/api'
 import { PROVIDER_PRESETS } from '../lib/providerPresets'
+import { timeAgo } from '../lib/format'
 import { useAccessibility, FONT_FAMILIES, FONT_SCALES, type FontFamilyKey, type FontScale } from '../theme/AccessibilityContext'
 
 const SECTIONS = [
@@ -577,15 +578,6 @@ function templateChips(c: CredentialInfo): string[] {
   return chips
 }
 
-function timeAgo(ts: number): string {
-  if (!ts) return 'never'
-  const s = Date.now() / 1000 - ts
-  if (s < 60) return 'just now'
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  return `${Math.floor(s / 86400)}d ago`
-}
-
 /** Vault card — locked/unlocked states, credentials list, audit log.
  * Values never reach this component; the API only ever returns
  * metadata. Folded into Settings (was its own top-nav screen) since
@@ -715,7 +707,7 @@ function VaultCard() {
             <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               {templateChips(c).map((t, i) => <Chip key={i} mono>{t}</Chip>)}
             </div>
-            <span style={{ fontSize: 10.5, color: 'var(--mut)', minWidth: 70, textAlign: 'right' }}>{timeAgo(c.last_used)}</span>
+            <span style={{ fontSize: 10.5, color: 'var(--mut)', minWidth: 70, textAlign: 'right' }}>{timeAgo(c.last_used, 'never')}</span>
             <button onClick={() => handleDelete(c.id)} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
           </div>
         ))}
