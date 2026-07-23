@@ -32,7 +32,7 @@ function NewSessionDialog({ open, onClose, defaultWorkspace }: Props) {
     setTaskId(''); setPrompt(''); setMode('agent'); setWorkspace(defaultWorkspace || ''); setError('')
   }, [open, defaultWorkspace])
 
-  const handleStart = async () => {
+  const handleStart = async (headless: boolean) => {
     setStarting(true); setError('')
     try {
       const session = await createSession({
@@ -41,7 +41,7 @@ function NewSessionDialog({ open, onClose, defaultWorkspace }: Props) {
         task_id: taskId || undefined,
       })
       onClose()
-      navigate(`/agent/${session.id}`)
+      if (!headless) navigate(`/agent/${session.id}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start')
     } finally {
@@ -85,11 +85,20 @@ function NewSessionDialog({ open, onClose, defaultWorkspace }: Props) {
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
           <button onClick={onClose} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Cancel</button>
           <button
-            onClick={handleStart}
+            onClick={() => handleStart(true)}
             disabled={starting}
+            title="Start in the background — open the thread later"
+            style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)', opacity: starting ? 0.6 : 1 }}
+          >
+            ⏵ Start headless
+          </button>
+          <button
+            onClick={() => handleStart(false)}
+            disabled={starting}
+            title="Start and open the thread now"
             style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: starting ? 0.6 : 1 }}
           >
-            {starting ? 'Starting…' : 'Start session'}
+            {starting ? 'Starting…' : '▶ Start (watch)'}
           </button>
         </div>
       </div>

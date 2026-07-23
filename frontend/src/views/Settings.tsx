@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom'
 import DeskLayout from '../components/DeskLayout'
 import { Card, Chip, Toggle, SectionLabel, Dialog } from '../components/primitives'
 import WorkspaceDialog from '../components/WorkspaceDialog'
+import ConfirmDialog from '../components/ConfirmDialog'
 import {
   fetchSettings, addProvider, deleteProvider, setDefaultProvider, saveIntegrations,
   fetchUsage, fetchPolicies, updatePolicy,
@@ -15,9 +16,11 @@ import {
   type McpServerInfo, type ToolInfo, type Workspace, type CredentialInfo, type AuditEntryInfo,
 } from '../lib/api'
 import { PROVIDER_PRESETS } from '../lib/providerPresets'
+import { useAccessibility, FONT_FAMILIES, FONT_SCALES, type FontFamilyKey, type FontScale } from '../theme/AccessibilityContext'
 
 const SECTIONS = [
   { id: 'usage', label: 'Usage' },
+  { id: 'accessibility', label: 'Accessibility' },
   { id: 'providers', label: 'Model providers' },
   { id: 'tools', label: 'Tools' },
   { id: 'policies', label: 'Policies' },
@@ -108,6 +111,7 @@ function SettingsPage() {
 
         <div style={{ flex: 1, minWidth: 0, maxWidth: 800 }}>
           <Section id="usage"><UsageCard /></Section>
+          <Section id="accessibility"><AccessibilityCard /></Section>
           <Section id="providers"><ProvidersCard /></Section>
           <Section id="tools"><ToolsCard /></Section>
           <Section id="policies"><PoliciesCard /></Section>
@@ -202,7 +206,63 @@ function BarRow({ label, value, max, suffix }: { label: string; value: number; m
   )
 }
 
-// ── 2. Model providers ───────────────────────────────────────────────────────
+// ── 2. Accessibility ─────────────────────────────────────────────────────────
+
+const FONT_SCALE_LABELS: Record<FontScale, string> = {
+  0.875: 'Small',
+  1: 'Default',
+  1.125: 'Large',
+  1.25: 'Larger',
+  1.375: 'Largest',
+}
+
+function AccessibilityCard() {
+  const { fontScale, setFontScale, fontFamily, setFontFamily } = useAccessibility()
+
+  return (
+    <Card>
+      <SectionLabel>Accessibility</SectionLabel>
+      <div style={{ fontSize: 11.5, color: 'var(--mut)', margin: '4px 0 14px' }}>
+        Applies everywhere in the app, saved to this browser.
+      </div>
+
+      <Field label="Text size">
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {FONT_SCALES.map(scale => (
+            <button
+              key={scale}
+              onClick={() => setFontScale(scale)}
+              style={{
+                padding: '6px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600,
+                background: fontScale === scale ? 'var(--acc)' : 'var(--card2)',
+                color: fontScale === scale ? 'var(--acc-ink)' : 'var(--ink2)',
+              }}
+            >
+              {FONT_SCALE_LABELS[scale]}
+            </button>
+          ))}
+        </div>
+      </Field>
+
+      <div style={{ height: 14 }} />
+
+      <Field label="Font">
+        <select
+          aria-label="Font family"
+          value={fontFamily}
+          onChange={e => setFontFamily(e.target.value as FontFamilyKey)}
+          style={inputStyle}
+        >
+          {(Object.keys(FONT_FAMILIES) as FontFamilyKey[]).map(key => (
+            <option key={key} value={key}>{FONT_FAMILIES[key].label}</option>
+          ))}
+        </select>
+      </Field>
+    </Card>
+  )
+}
+
+// ── 3. Model providers ───────────────────────────────────────────────────────
 
 function ProvidersCard() {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
@@ -300,7 +360,7 @@ function AddProviderDialog({ open, onClose, onSaved }: { open: boolean; onClose:
   )
 }
 
-// ── 3. Tools ─────────────────────────────────────────────────────────────────
+// ── 4. Tools ─────────────────────────────────────────────────────────────────
 
 function ToolsCard() {
   const [tools, setTools] = useState<ToolInfo[]>([])
@@ -378,7 +438,7 @@ function CustomToolDialog({ open, onClose, onSaved }: { open: boolean; onClose: 
   )
 }
 
-// ── 4. Policies ──────────────────────────────────────────────────────────────
+// ── 5. Policies ──────────────────────────────────────────────────────────────
 
 function PoliciesCard() {
   const [policies, setPolicies] = useState<PolicyInfo[]>([])
@@ -414,7 +474,7 @@ function PoliciesCard() {
   )
 }
 
-// ── 5. MCP servers ───────────────────────────────────────────────────────────
+// ── 6. MCP servers ───────────────────────────────────────────────────────────
 
 function McpServersCard() {
   const [servers, setServers] = useState<McpServerInfo[]>([])
@@ -461,7 +521,7 @@ function McpServersCard() {
   )
 }
 
-// ── 6. Integrations ──────────────────────────────────────────────────────────
+// ── 7. Integrations ──────────────────────────────────────────────────────────
 
 function IntegrationsCard() {
   const [integrations, setIntegrations] = useState<IntegrationsInfo | null>(null)
@@ -495,7 +555,7 @@ function IntegrationsCard() {
   )
 }
 
-// ── 7. Vault ─────────────────────────────────────────────────────────────────
+// ── 8. Vault ─────────────────────────────────────────────────────────────────
 
 /** VaultStore's AuditEntry has no explicit action field — every
  * successful call (add, use) logs the same shape, distinguished only
@@ -736,20 +796,23 @@ function AddCredentialDialog({ open, onClose, onSaved }: { open: boolean; onClos
   )
 }
 
-// ── 8. Workspaces ────────────────────────────────────────────────────────────
+// ── 9. Workspaces ────────────────────────────────────────────────────────────
 
 function WorkspacesCard() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [editing, setEditing] = useState<Workspace | null>(null)
   const [showAdd, setShowAdd] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Workspace | null>(null)
 
   const load = useCallback(() => { fetchWorkspaces(true).then(d => setWorkspaces(d.workspaces)).catch(() => {}) }, [])
   useEffect(() => { load() }, [load])
 
   const setArchived = async (id: string, archived: boolean) => { await updateWorkspace(id, { archived }); load() }
-  const handleDelete = async (w: Workspace) => {
-    if (!window.confirm(`Delete workspace "${w.name}"? This cannot be undone. Tasks already assigned to it are not deleted.`)) return
-    await deleteWorkspace(w.id); load()
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    await deleteWorkspace(deleteTarget.id)
+    setDeleteTarget(null)
+    load()
   }
 
   const active = workspaces.filter(w => !w.archived)
@@ -772,7 +835,7 @@ function WorkspacesCard() {
           <Chip mono soft>{w.runtime || 'global'}</Chip>
           <button onClick={() => setEditing(w)} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>Edit</button>
           <button onClick={() => setArchived(w.id, true)} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--mut)' }}>Archive</button>
-          <button onClick={() => handleDelete(w)} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
+          <button onClick={() => setDeleteTarget(w)} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
         </div>
       ))}
 
@@ -785,7 +848,7 @@ function WorkspacesCard() {
               <span style={{ fontSize: 13, color: 'var(--ink)', flex: 1 }}>{w.name}</span>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--mut)' }}>{w.repository || '—'}</span>
               <button onClick={() => setArchived(w.id, false)} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>Unarchive</button>
-              <button onClick={() => handleDelete(w)} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
+              <button onClick={() => setDeleteTarget(w)} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
             </div>
           ))}
         </>
@@ -798,6 +861,16 @@ function WorkspacesCard() {
           onSaved={() => { setShowAdd(false); setEditing(null); load() }}
         />
       )}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete this workspace?"
+        message={deleteTarget ? `Delete workspace "${deleteTarget.name}"? This cannot be undone. Tasks already assigned to it are not deleted.` : ''}
+        confirmLabel="Delete"
+        danger
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </Card>
   )
 }

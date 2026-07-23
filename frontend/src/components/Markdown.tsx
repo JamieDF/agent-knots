@@ -6,13 +6,20 @@ interface Props {
   children: string
   fontSize?: number
   color?: string
+  /** If given, links render as clickable buttons that call this instead
+   * of opening a new tab — used in chat bubbles so an agent-mentioned
+   * URL (e.g. a dev server it just started) opens straight into the
+   * Preview tab instead of leaving the app. remark-gfm autolinks bare
+   * URLs in plain text too, so this covers "http://localhost:5173"
+   * typed as-is, not just markdown [link](url) syntax. */
+  onLinkClick?: (href: string) => void
 }
 
 /** Renders agent/user chat text as markdown (bold, lists, code blocks,
  * links, tables) with the Atelier design tokens instead of raw
  * asterisks/backticks — plain text still renders exactly as plain
  * text, this only kicks in when the content actually has markdown. */
-function Markdown({ children, fontSize = 13, color = 'var(--ink)' }: Props) {
+function Markdown({ children, fontSize = 13, color = 'var(--ink)', onLinkClick }: Props) {
   return (
     <div style={{ fontSize, color, lineHeight: 1.55 }} className="md-content">
       <ReactMarkdown
@@ -22,7 +29,17 @@ function Markdown({ children, fontSize = 13, color = 'var(--ink)' }: Props) {
           ul: ({ children }) => <ul style={{ margin: '0 0 8px', paddingLeft: 20 }}>{children}</ul>,
           ol: ({ children }) => <ol style={{ margin: '0 0 8px', paddingLeft: 20 }}>{children}</ol>,
           li: ({ children }) => <li style={{ margin: '2px 0' }}>{children}</li>,
-          a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer" style={{ color: 'var(--acc)' }}>{children}</a>,
+          a: ({ children, href }) => (
+            <a
+              href={href}
+              target={onLinkClick ? undefined : '_blank'}
+              rel="noreferrer"
+              onClick={onLinkClick && href ? (e) => { e.preventDefault(); onLinkClick(href) } : undefined}
+              style={{ color: 'var(--acc)', cursor: 'pointer' }}
+            >
+              {children}
+            </a>
+          ),
           strong: ({ children }) => <strong style={{ fontWeight: 700 }}>{children}</strong>,
           em: ({ children }) => <em>{children}</em>,
           blockquote: ({ children }) => (

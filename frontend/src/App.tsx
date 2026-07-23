@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import Topbar from './components/Topbar'
 import { ThemeProvider } from './theme/ThemeContext'
+import { AccessibilityProvider } from './theme/AccessibilityContext'
 import { WorkspaceProvider } from './lib/workspaceContext'
 import { fetchAgents, type AgentInfo } from './lib/api'
 import './App.css'
@@ -24,12 +25,14 @@ function App() {
 
   return (
     <ThemeProvider>
-      <WorkspaceProvider>
-        <Topbar agents={agents} />
-        <main className="canvas">
-          <Outlet />
-        </main>
-      </WorkspaceProvider>
+      <AccessibilityProvider>
+        <WorkspaceProvider>
+          <Topbar agents={agents} />
+          <main className="canvas">
+            <Outlet />
+          </main>
+        </WorkspaceProvider>
+      </AccessibilityProvider>
     </ThemeProvider>
   )
 }

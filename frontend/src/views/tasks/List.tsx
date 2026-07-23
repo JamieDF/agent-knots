@@ -73,7 +73,10 @@ function List({ reloadSignal }: { reloadSignal?: number } = {}) {
               <div style={{ fontSize: 10.5, color: 'var(--mut)', fontFamily: 'var(--font-mono)' }}>{t.id}</div>
             </div>
             <div style={{ color: 'var(--mut)', fontSize: 11.5 }}>{t.project || '—'}</div>
-            <div style={{ color: s.color, fontWeight: 600, fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 4 }}>{s.glyph} {s.label}</div>
+            <div style={{ color: s.color, fontWeight: 600, fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 4 }}>
+              {s.glyph} {s.label}
+              {t.blocked_by_deps && <span title="Waiting on an unfinished dependency">🔗</span>}
+            </div>
             <div style={{ color: priorityColor(t.priority), fontWeight: 700, fontSize: 10.5, textTransform: 'uppercase' }}>{t.priority}</div>
             <div style={{ fontSize: 11, color: 'var(--mut)', fontFamily: 'var(--font-mono)' }}>{t.progress_count}/{meta || '—'}</div>
           </div>

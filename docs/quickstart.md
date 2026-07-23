@@ -83,7 +83,8 @@ agent-knots vault init
 ```
 
 Lock it with `agent-knots vault lock`, unlock with `agent-knots vault
-unlock`.
+unlock`. Everything below also works from the web cockpit — Settings has
+a Vault section with the same unlock/credentials/audit-log flow.
 
 ## Add a credential
 

@@ -9,16 +9,28 @@ Serves:
 
 import asyncio
 import json
+import os
 import re
 import secrets
+import signal
 import subprocess
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlencode
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+try:
+    import pty
+    import fcntl
+    import struct
+    import termios
+    HAS_PTY = True
+except ImportError:  # Windows has no pty module
+    HAS_PTY = False
 
 from agent_knots.cockpit.web.auth import Auth, COOKIE_NAME, load_or_create_token, verify_token
 from agent_knots.config import (
@@ -74,6 +86,7 @@ class CreateTaskRequest(BaseModel):
     tags: list = []
     acceptance_criteria: list = []
     review_gate: str = "manual"
+    dependencies: list = []
 
 
 class UpdateTaskRequest(BaseModel):
@@ -86,6 +99,7 @@ class UpdateTaskRequest(BaseModel):
     acceptance_criteria: Optional[list] = None
     steps: Optional[list] = None  # list of step title strings
     review_gate: Optional[str] = None
+    dependencies: Optional[list] = None
 
 
 class ToggleCriterionRequest(BaseModel):
@@ -189,20 +203,32 @@ def create_app(
     async def auth_middleware(request: Request, call_next):
         """Authenticate all requests except /login, /api/health, and static files.
 
-        Checks (in order): ?token= query param (for EventSource, which
-        can't set headers), the session cookie, then an Authorization:
-        Bearer header (for programmatic/API clients). All three compare
-        against the token with verify_token()'s constant-time comparison
-        rather than a plain == — timing attacks on a token compare are a
-        real (if narrow) risk worth not reintroducing.
+        Checks (in order): ?token= query param, the session cookie, then an
+        Authorization: Bearer header (for programmatic/API clients). All
+        three compare against the token with verify_token()'s constant-time
+        comparison rather than a plain == — timing attacks on a token
+        compare are a real (if narrow) risk worth not reintroducing.
         """
         path = request.url.path
         # Allow login, health, and static assets without auth.
         if path in ("/login", "/api/health") or path.startswith("/assets/"):
             return await call_next(request)
-        # Allow SSE with ?token= query param for EventSource (can't set headers).
-        if path.startswith("/api/") and verify_token(request.query_params.get("token", ""), auth.token):
-            return await call_next(request)
+        token_qs = request.query_params.get("token", "")
+        if verify_token(token_qs, auth.token):
+            if path.startswith("/api/"):
+                # SSE (EventSource can't set headers) and other API calls —
+                # let the request straight through, no redirect.
+                return await call_next(request)
+            # Any other path — the SPA shell or a deep link (e.g. the
+            # printed "one-click" cockpit URL, `/?token=...`). Previously
+            # this branch only fired for /api/* paths, so opening that URL
+            # in a browser fell through to the login page instead of
+            # actually logging in. Set the cookie and redirect to the same
+            # URL with the token stripped, so it doesn't linger in the
+            # address bar/history any longer than it takes to log in.
+            remaining = [(k, v) for k, v in request.query_params.multi_items() if k != "token"]
+            clean_url = path + ("?" + urlencode(remaining) if remaining else "")
+            return auth.set_cookie_redirect(clean_url)
         # Cookie.
         if verify_token(request.cookies.get(COOKIE_NAME, ""), auth.token):
             return await call_next(request)
@@ -340,6 +366,135 @@ def create_app(
             "started_at": session.started_at,
         }
 
+    @app.get("/api/agent/{agent_id}/file")
+    async def get_agent_file(agent_id: str, path: str = Query(...)):
+        """Read a file's current content for the Files tab's preview.
+
+        Confined to the session's own working directory via the same
+        path-resolution helper the sandboxed editor tool uses, when there
+        is one. A session with no workspace never had a sandbox applied
+        to its shell/editor tools either (see SessionManager.start()) —
+        they already read/write anywhere on disk unconfined in that case,
+        so there's no extra risk in previewing wherever the agent
+        actually touched; just resolve the path as given (relative to
+        this server process's own cwd, same as the unsandboxed tools).
+        """
+        session = session_manager.get(agent_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if session.working_dir:
+            from agent_knots.sandbox_tools import _resolve
+            try:
+                resolved = _resolve(session.working_dir, path)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+        else:
+            resolved = str(Path(path).expanduser().resolve())
+
+        file_path = Path(resolved)
+        if not file_path.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+
+        max_bytes = 500_000
+        raw = file_path.read_bytes()
+        truncated = len(raw) > max_bytes
+        raw = raw[:max_bytes]
+        try:
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=415, detail="Binary file — can't preview as text")
+
+        return {"path": path, "content": content, "truncated": truncated}
+
+    @app.websocket("/api/agent/{agent_id}/terminal")
+    async def agent_terminal(websocket: WebSocket, agent_id: str):
+        """Real interactive terminal for the Files rail's Terminal tab —
+        a PTY-backed shell rooted in the session's working directory (or
+        this server process's own cwd if the session has none), streamed
+        over this websocket. Same trust boundary as everything else: the
+        agent's own shell tool already runs unconfined commands in this
+        same environment, so a human getting an equivalent real terminal
+        behind the same auth token isn't a new capability, just a UI for
+        one that already exists.
+
+        Websocket connections don't go through auth_middleware (Starlette
+        only applies "http"-scope middleware, not "websocket"-scope), so
+        auth is checked here directly — cookie or ?token=, same
+        constant-time verify_token() as everywhere else.
+        """
+        token = websocket.cookies.get(COOKIE_NAME) or websocket.query_params.get("token", "")
+        if not verify_token(token, auth.token):
+            await websocket.close(code=4401)
+            return
+        if not HAS_PTY:
+            await websocket.close(code=4501, reason="Terminal isn't supported on this platform")
+            return
+
+        session = session_manager.get(agent_id)
+        if session is None:
+            await websocket.close(code=4404)
+            return
+
+        await websocket.accept()
+
+        cwd = session.working_dir or os.getcwd()
+        shell_cmd = os.environ.get("SHELL", "/bin/bash")
+
+        pid, fd = pty.fork()
+        if pid == 0:
+            # Child: replace this process image with a shell rooted at cwd.
+            try:
+                os.chdir(cwd)
+            except OSError:
+                pass
+            os.execvp(shell_cmd, [shell_cmd])
+            os._exit(1)  # only reached if execvp itself failed
+
+        loop = asyncio.get_event_loop()
+        output_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+
+        def _on_readable() -> None:
+            try:
+                data = os.read(fd, 4096)
+            except OSError:
+                data = b""
+            output_queue.put_nowait(data or None)  # empty read == child exited
+
+        loop.add_reader(fd, _on_readable)
+
+        async def _pump_output() -> None:
+            while True:
+                chunk = await output_queue.get()
+                if chunk is None:
+                    break
+                await websocket.send_json({"type": "output", "data": chunk.decode(errors="replace")})
+
+        pump_task = asyncio.create_task(_pump_output())
+
+        try:
+            while True:
+                msg = await websocket.receive_json()
+                if msg.get("type") == "input":
+                    os.write(fd, str(msg.get("data", "")).encode())
+                elif msg.get("type") == "resize":
+                    cols, rows = int(msg.get("cols", 80)), int(msg.get("rows", 24))
+                    winsize = struct.pack("HHHH", rows, cols, 0, 0)
+                    fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            loop.remove_reader(fd)
+            pump_task.cancel()
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
     @app.post("/api/agent/{agent_id}/assume")
     async def agent_assume(agent_id: str):
         """Assume control of an agent (switch to assistant mode)."""
@@ -376,6 +531,17 @@ def create_app(
     async def agent_send(agent_id: str, message: str = Form(...)):
         """Send a message to an agent."""
         await session_manager.send(agent_id, message)
+        return {"status": "ok"}
+
+    @app.post("/api/agent/{agent_id}/interrupt")
+    async def agent_interrupt(agent_id: str):
+        """Cancel the agent's current turn only — the session stays open
+        so a follow-up message continues the same conversation (unlike
+        DELETE, which tears the session down)."""
+        try:
+            await session_manager.interrupt(agent_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Agent not found")
         return {"status": "ok"}
 
     @app.delete("/api/agent/{agent_id}")
@@ -613,6 +779,18 @@ def create_app(
         if not provider_module.resolve_provider().is_configured:
             raise HTTPException(status_code=400, detail="Settings not configured. Run setup first.")
 
+        if body.task_id:
+            task_store = TaskStore(tasks_dir())
+            task = task_store.get(body.task_id)
+            if task is not None:
+                unmet = task_store.unmet_dependencies(task)
+                if unmet:
+                    blockers = ", ".join(f"{t.id} ({t.title})" for t in unmet)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot start — task is blocked by unfinished dependencies: {blockers}",
+                    )
+
         spend_cap = PolicyStore(policies_file()).get("spend_cap")
         if spend_cap is not None and spend_cap.enabled:
             try:
@@ -636,6 +814,12 @@ def create_app(
             )
         except RuntimeError as e:
             raise HTTPException(status_code=500, detail=str(e))
+        except ValueError as e:
+            # SessionManager.start() auto-transitions an 'open' task to
+            # 'in_progress', which now goes through the same dependency
+            # gate as everything else — the check above catches the
+            # common case ahead of time, this is the fallback for it.
+            raise HTTPException(status_code=400, detail=str(e))
 
         return {
             "id": session.id,
@@ -669,6 +853,7 @@ def create_app(
                     "progress_count": len(t.progress),
                     "steps_count": len(t.steps),
                     "criteria_count": len(t.acceptance_criteria),
+                    "blocked_by_deps": len(store.unmet_dependencies(t)) > 0,
                 }
                 for t in tasks
             ]
@@ -681,7 +866,7 @@ def create_app(
         task = store.get(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        return _task_to_response(task)
+        return _task_to_response(task, store)
 
     @app.post("/api/tasks")
     async def create_task(body: CreateTaskRequest):
@@ -697,9 +882,10 @@ def create_app(
             tags=body.tags,
             acceptance_criteria=body.acceptance_criteria,
             review_gate=ReviewGate(body.review_gate),
+            dependencies=body.dependencies,
         )
         store.create(task)
-        return _task_to_response(task)
+        return _task_to_response(task, store)
 
     def _maybe_fire_role_triggers(old_status: str, new_status: str, task: Task) -> None:
         """Auto-start a session for any enabled default-agent role whose
@@ -756,7 +942,7 @@ def create_app(
         old_status = task.status.value
         if body.status:
             try:
-                task = store.set_status(task_id, TaskStatus(body.status))
+                task = store.set_status(task_id, TaskStatus(body.status), actor="human")
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
             _maybe_fire_role_triggers(old_status, task.status.value, task)
@@ -774,6 +960,9 @@ def create_app(
             task = store.update(task)
         if body.review_gate is not None:
             task.review_gate = ReviewGate(body.review_gate)
+            task = store.update(task)
+        if body.dependencies is not None:
+            task.dependencies = [d for d in body.dependencies if d != task_id]
             task = store.update(task)
         if body.acceptance_criteria is not None:
             # criteria_met is keyed by criterion text, so preserving it
@@ -795,7 +984,7 @@ def create_app(
         if body.assign is not None:
             task = store.assign(task_id, body.assign)
 
-        return _task_to_response(task)
+        return _task_to_response(task, store)
 
     @app.post("/api/tasks/{task_id}/criteria/toggle")
     async def toggle_criterion(task_id: str, body: ToggleCriterionRequest):
@@ -808,7 +997,7 @@ def create_app(
                 task = store.unmark_criterion_met(task_id, body.criterion)
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
-        return _task_to_response(task)
+        return _task_to_response(task, store)
 
     @app.post("/api/tasks/draft")
     async def draft_task(body: DraftTaskRequest):
@@ -1373,8 +1562,16 @@ def _github_url_from_remote(remote_url: str) -> str | None:
     return None
 
 
-def _task_to_response(task: Task) -> dict:
-    """Serialize a Task to a JSON-safe dict."""
+def _task_to_response(task: Task, store: TaskStore | None = None) -> dict:
+    """Serialize a Task to a JSON-safe dict.
+
+    store is optional only so call sites that truly have no TaskStore
+    handy (none currently) don't break — when given, unmet_dependencies
+    is computed for real; without it, dependencies are reported as if
+    none were unmet (better than raising, since this is just a display
+    field, not enforcement — enforcement lives in TaskStore itself).
+    """
+    unmet = store.unmet_dependencies(task) if store is not None else []
     return {
         "id": task.id,
         "title": task.title,
@@ -1392,6 +1589,7 @@ def _task_to_response(task: Task) -> dict:
         "criteria_met": task.criteria_met,
         "out_of_scope": task.out_of_scope,
         "dependencies": task.dependencies,
+        "unmet_dependencies": [{"id": t.id, "title": t.title} for t in unmet],
         "required_credentials": task.required_credentials,
         "steps": [
             {

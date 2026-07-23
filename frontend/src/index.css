@@ -1,7 +1,7 @@
 /* agent-knots cockpit design system — "Atelier" tokens, from
    design_handoff_atelier_cockpit/README.md. Light is the default theme;
    dark applies under body[data-theme="dark"] (see theme/ThemeContext). */
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Atkinson+Hyperlegible:wght@400;700&display=swap');
 
 :root {
   --bg: #eceef2;
@@ -77,6 +77,31 @@ body[data-theme="dark"] {
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Thin, theme-matching scrollbars everywhere instead of the raw browser
+ * default — every scrollable region (chat, goal rail, terminal panel,
+ * Settings) inherits this, so it's one consistent look rather than
+ * styling each container separately. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line2) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: var(--line2);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--mut2);
+}
 
 html, body {
   height: 100%;

@@ -53,10 +53,12 @@ serve at least one of these:
 
 ```
 agent-knots/
-├── frontend/                     # Vite + React SPA (web cockpit)
+├── frontend/                     # Vite + React SPA (web cockpit, "Atelier")
 │   └── src/
-│       ├── views/                 # Overview, Board, Tasks, TaskDetail, Settings, ...
-│       ├── components/            # Topbar, AgentCard, CreateTaskDialog, ...
+│       ├── views/                 # Dashboard, Tasks (Board+List tabs), TaskDetail,
+│       │                          # AgentThread, Review, Workflows, Settings (incl. Vault)
+│       ├── components/            # Topbar, TaskDialog, WorkspaceDialog/Switcher,
+│       │                          # NewSessionDialog, Markdown, primitives/, ...
 │       └── lib/                   # API client, SSE client, workspace context
 ├── src/agent_knots/
 │   ├── cli/                       # Typer CLI entry point + commands
@@ -101,20 +103,29 @@ Starting a session resolves the model provider, assembles the system prompt
 (mode + task context), and builds a Strands `Agent` with the tool set and a
 `ModeInterventionHandler`.
 
-`SessionRuntime` (`session/runtime.py`) has two implementations, but they
-are **not symmetric today**:
+`SessionRuntime` (`session/runtime.py`) has two implementations, both real:
 
-- **`InProcessRuntime`** exists but its `start()` is a no-op.
-  `SessionManager.start()` never constructs it — the in-process path runs
-  `_run_agent` directly, bypassing the `SessionRuntime` abstraction
-  entirely. Treat `InProcessRuntime` as dead code until this is fixed.
-- **`SubprocessRuntime`** is the one real implementation: it spawns a
-  child process (`session/worker.py`) that runs the agent loop and streams
-  JSONL events back over stdin/stdout. Selected per workspace/session when
-  isolation matters more than startup latency.
+- **`InProcessRuntime`** runs the agent in a background `asyncio` task on
+  the same process — fast, no isolation. `start()` kicks off the agent's
+  first turn (via `SessionManager._run_agent`) whenever a task description
+  or prompt is present; a session created with neither just sits idle
+  until `send()`.
+- **`SubprocessRuntime`** spawns a child process (`session/worker.py`)
+  that runs the agent loop and streams JSONL events back over
+  stdin/stdout. Selected per workspace/session when isolation matters
+  more than startup latency. **Currently broken** — its event-forwarding
+  path still references `session._events`, an attribute removed when the
+  SSE fan-out fix replaced the single queue with `_subscribers`/
+  `_history`/`_broadcast()` (see [`docs/RETRO.md`](RETRO.md)); would raise
+  `AttributeError` on the first event a subprocess-runtime session tries
+  to emit. Not caught by any test since the default runtime is
+  `inprocess`.
 
-See [`docs/RETRO.md`](RETRO.md) for the fuller audit this note is based
-on.
+`SessionManager.start()` resolves which one to use via `create_runtime()`
+for both paths — there's no special-casing of either runtime type. See
+[`docs/RETRO.md`](RETRO.md) for the audit that found (and fixed) the
+previous asymmetry, where `InProcessRuntime` was dead code and the
+in-process path bypassed the `SessionRuntime` abstraction entirely.
 
 **Why this matters:** the orchestrator — cockpit, task system, vault
 integration — talks to sessions through this interface regardless of
@@ -162,11 +173,20 @@ container boundary, each session gets a `WorkspaceSandbox` that:
 
 - confines the **editor** tool to the workspace root via real path
   resolution (traversal, including symlink escapes, is rejected);
-- gives the **shell** tool a default `cwd` and resource limits (CPU time,
-  memory, full process-group cleanup on timeout via
-  `sandbox_tools.run_confined`) — **not** command-level path confinement,
-  since that's not achievable for an arbitrary `shell=True` string without
-  real OS-level sandboxing;
+- gives the **shell** tool a default `cwd`, a CPU-time resource limit, and
+  full process-group cleanup on timeout via `sandbox_tools.run_confined`
+  — **not** command-level path confinement, since that's not achievable
+  for an arbitrary `shell=True` string without real OS-level sandboxing.
+  There used to also be an `RLIMIT_AS` (virtual address space) memory
+  cap, removed after it turned out to be the wrong lever entirely:
+  modern runtimes like Node/V8 reserve several GB of *virtual* address
+  space upfront regardless of actual memory used, so any cap small
+  enough to matter made every `npm`/`vite`/`node` command an agent tried
+  crash immediately with an OOM error, real memory pressure or not — see
+  `docs/RETRO.md`;
+- lets the shell tool start a command with `background=true` for
+  anything meant to outlive the tool call (dev servers, watchers) — see
+  "Background processes" above;
 - truncates shell output past `max_output` and rejects editor writes past
   `max_file_size`, both configurable on `WorkspaceSandbox`.
 
@@ -225,7 +245,9 @@ frontend rewrite; the frontend now owns all event rendering):
   - steer events (steering-hook nudges)
   - delegate events (sub-agent started — carries the sub-session/task id)
   - checkpoint events (marker only — no real revert, see roadmap)
+  - blocker events (agent flagged something needing human input)
   - user / state_change / ended events (session lifecycle)
+  - error events (agent-loop exceptions)
                 │
                 ▼
 Agent calls task tools (log_progress, update_task_status, ...) as it works.
@@ -239,6 +261,37 @@ Session ends on completion, error, or explicit stop.
 the current mode before every tool call: `agent` → proceed, `assistant` →
 deny. This is how "taking over" a session blocks the agent's tools without
 tearing down and restarting the session.
+
+### Interrupt vs stop
+
+Two different ways to end an agent's current activity, easy to conflate:
+
+- **`SessionManager.interrupt()`** (`POST /api/agent/{id}/interrupt`)
+  cancels only the currently-running turn — `Session.cancel(end_session=
+  False)` sets `_interrupt_only`, so `_run_agent`'s cancellation handler
+  broadcasts `STATE_CHANGE` instead of `ENDED`. The session stays in
+  `SessionManager._sessions`; a follow-up `send()` starts a new turn on
+  the same conversation. This is what the Agent Thread composer's "■
+  Stop" button calls, and it only appears while the agent is actually
+  running.
+- **`SessionManager.stop()`** (`DELETE /api/agent/{id}`) ends the session
+  for good — pops it out of `_sessions`, cancels with `end_session=True`
+  (broadcasts `ENDED`), and kills any background processes the session
+  tracked (see below). This is the header "✕ Delete" button.
+
+### Background processes
+
+`sandbox_tools.run_background()` (used by the sandboxed shell tool's
+`background=true` argument) starts a command detached — via `os.setsid()`
+and no `Popen.wait()`/timeout — for anything meant to outlive a single
+tool call (dev servers, watchers). Its pid is appended to a
+`background_pids` list that's handed to both the shell-tool closure and
+the owning `Session` (`_background_pids`) at construction time, so
+`SessionManager.stop()` can kill (`kill_background_process()`, which also
+reaps the pid to avoid a zombie) every background process a session
+started when the session itself ends. `interrupt()` does *not* touch
+these — they're explicitly meant to survive a single-turn cancellation,
+only the session's own teardown cleans them up.
 
 ## Security model
 

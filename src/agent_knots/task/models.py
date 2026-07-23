@@ -41,8 +41,15 @@ class Priority(StrEnum):
 class ReviewGate(StrEnum):
     """Controls whether a task requires a review step before DONE.
 
-    Enforcement (auto-firing a reviewer agent on entering REVIEW) is not
-    implemented yet — this field is currently just persisted + displayed.
+    Enforced in TaskStore._validate_transition(): unless "none", a task
+    must pass through REVIEW status before DONE, and only a human actor
+    (the web PATCH route) — never the agent tool path — can complete that
+    final REVIEW -> DONE hop, so the same agent that did the work can't
+    grant itself review approval. "auto" vs "manual" doesn't currently
+    change this enforcement; the distinction is UI-only today (e.g. the
+    web cockpit's "Run review now" button only shows for "auto"). Auto-
+    firing a dedicated reviewer agent on entering REVIEW is not
+    implemented yet.
     """
     AUTO = "auto"
     MANUAL = "manual"

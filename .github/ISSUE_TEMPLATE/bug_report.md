@@ -1,9 +1,9 @@
+---
 name: Bug report
 about: Report a bug in agent-knots
 title: "[Bug] "
 labels: bug
 assignees: ''
-
 ---
 
 **Describe the bug**
@@ -23,10 +23,10 @@ What actually happened.
 
 **Environment**
 - OS: [e.g. macOS 14, Ubuntu 24.04]
-- Go version: [e.g. 1.23.4]
+- Python version: [e.g. 3.14.0]
 - agent-knots version: [output of `agent-knots version`]
-- OpenCode version: [if relevant]
-- Podman version: [if relevant]
+- Model provider: [e.g. MiniMax, OpenAI, Anthropic, Ollama]
+- Surface: [web cockpit / TUI / CLI]
 
 **Logs**
 If applicable, include relevant log output (with secrets redacted!).

@@ -235,8 +235,12 @@ class TaskStore:
 
         A progress entry can carry a status change (entry.status), which
         goes through the same validation as set_status() — most notably
-        the DONE acceptance-criteria gate — since this is otherwise a
-        second path to change status that would bypass it.
+        the DONE acceptance-criteria/review-gate gates — since this is
+        otherwise a second path to change status that would bypass them.
+        Only ever called from the agent tool (task/tools.py), never from a
+        human-facing route, so this intentionally relies on
+        _validate_transition's "agent" default rather than taking its own
+        actor parameter.
         """
         task = self._must_get(task_id)
         if entry.status and entry.status != task.status:
@@ -252,16 +256,23 @@ class TaskStore:
         self._save(task)
         return task
 
-    def set_status(self, task_id: str, status: TaskStatus) -> Task:
-        """Transition task to a new status."""
+    def set_status(self, task_id: str, status: TaskStatus, actor: str = "agent") -> Task:
+        """Transition task to a new status.
+
+        actor distinguishes a human (the web PATCH route) from an agent
+        (task tools) — see _validate_transition for why this matters for
+        the done transition. Defaults to the more restrictive "agent" so
+        any new call site has to opt in to "human" deliberately rather
+        than silently getting agent self-review for free.
+        """
         task = self._must_get(task_id)
-        self._validate_transition(task, status)
+        self._validate_transition(task, status, actor)
         task.status = status
         task.updated_at = time.time()
         self._save(task)
         return task
 
-    def _validate_transition(self, task: Task, new_status: TaskStatus) -> None:
+    def _validate_transition(self, task: Task, new_status: TaskStatus, actor: str = "agent") -> None:
         """Raise ValueError if transitioning to new_status isn't allowed."""
         if task.status.is_terminal():
             raise ValueError(f"cannot change status of terminal task {task.id!r}")
@@ -275,12 +286,50 @@ class TaskStore:
             # task's own review_gate opts out of it — a task with zero
             # acceptance criteria would otherwise sail straight from
             # in_progress to done with no check at all.
-            if task.review_gate != ReviewGate.NONE and task.status != TaskStatus.REVIEW:
+            if task.review_gate != ReviewGate.NONE:
+                if task.status != TaskStatus.REVIEW:
+                    raise ValueError(
+                        f"cannot mark task {task.id!r} done directly from {task.status.value!r} — "
+                        f"move it to 'review' first (review_gate={task.review_gate.value!r}; "
+                        f"set review_gate to 'none' to skip review for this task)"
+                    )
+                # Being in 'review' status isn't itself proof anything was
+                # reviewed — an agent can call update_task_status('review')
+                # immediately followed by update_task_status('done') in the
+                # same turn, satisfying this check without anyone but
+                # itself ever looking at the work. review_gate != "none"
+                # means a human has to be the one to actually close it out;
+                # the same agent that did the work can move a task INTO
+                # review, but never grant itself the done transition.
+                if actor != "human":
+                    raise ValueError(
+                        f"cannot mark task {task.id!r} done — review_gate="
+                        f"{task.review_gate.value!r} requires a human to complete "
+                        f"the review, not the same agent that did the work "
+                        f"(set review_gate to 'none' if this task doesn't need review)"
+                    )
+        if new_status == TaskStatus.IN_PROGRESS:
+            unmet = self.unmet_dependencies(task)
+            if unmet:
+                blockers = ", ".join(f"{t.id} ({t.title!r})" for t in unmet)
                 raise ValueError(
-                    f"cannot mark task {task.id!r} done directly from {task.status.value!r} — "
-                    f"move it to 'review' first (review_gate={task.review_gate.value!r}; "
-                    f"set review_gate to 'none' to skip review for this task)"
+                    f"cannot start task {task.id!r} — blocked by unfinished "
+                    f"dependencies: {blockers}"
                 )
+
+    def unmet_dependencies(self, task: Task) -> list[Task]:
+        """Return task.dependencies entries that aren't done yet.
+
+        A dependency id that no longer resolves to a real task (deleted)
+        is treated as not blocking, rather than locking the task forever
+        on a dangling reference.
+        """
+        unmet = []
+        for dep_id in task.dependencies:
+            dep = self.get(dep_id)
+            if dep is not None and dep.status != TaskStatus.DONE:
+                unmet.append(dep)
+        return unmet
 
     def mark_criterion_met(self, task_id: str, criterion: str) -> Task:
         """Mark a single acceptance criterion as satisfied."""

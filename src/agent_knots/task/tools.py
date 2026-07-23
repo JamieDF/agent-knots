@@ -160,7 +160,7 @@ def list_tasks(status: str = "") -> dict:
     }
 
 
-@tool(description="Update a task's status. Use this to move tasks through the workflow. Moving to 'done' requires every acceptance criterion to already be marked met via mark_criterion_met, AND (unless the task's review_gate is 'none') the task must already be in 'review' status — go in_progress -> review -> done, not straight to done. Both are refused otherwise.")
+@tool(description="Update a task's status. Use this to move tasks through the workflow. Moving to 'done' requires every acceptance criterion to already be marked met via mark_criterion_met, AND (unless the task's review_gate is 'none') the task must already be in 'review' status — go in_progress -> review -> done, not straight to done. Even from 'review', you (the agent) cannot complete the done transition yourself when review_gate isn't 'none' — that requires a human to actually review and close it out. Move the task to 'review' and stop there; a human (or a separate reviewer session) finishes it.")
 def update_task_status(task_id: str, status: str) -> dict:
     """Update a task's status.
 
@@ -242,7 +242,7 @@ def update_task(
     }
 
 
-@tool(description="Log progress on a task. Call this after every meaningful action so progress survives context loss. The status field can also move the task forward, subject to the same rules as update_task_status (e.g. 'done' needs all acceptance criteria met and, unless review_gate is 'none', the task already in 'review').")
+@tool(description="Log progress on a task. Call this after every meaningful action so progress survives context loss. The status field can also move the task forward, subject to the same rules as update_task_status (e.g. 'done' needs all acceptance criteria met, the task already in 'review' unless review_gate is 'none', and even then a human — not you — has to be the one to actually complete the done transition when review_gate isn't 'none').")
 def log_progress(
     task_id: str,
     entry: str,

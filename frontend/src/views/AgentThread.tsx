@@ -1,17 +1,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
-  assumeAgent, relinquishAgent, sendMessage, checkpointAgent, revertAgent,
-  fetchTask, fetchAgent, deleteAgent, type AgentInfo, type TaskDetail,
+  assumeAgent, relinquishAgent, sendMessage, checkpointAgent, revertAgent, interruptAgent,
+  fetchTask, fetchAgent, deleteAgent, fetchAgentFile, type AgentInfo, type TaskDetail,
 } from '../lib/api'
 import { subscribeToAgent, type SSEEvent } from '../lib/sse'
+import { useTheme } from '../theme/ThemeContext'
 import { Chip } from '../components/primitives'
 import Markdown from '../components/Markdown'
+import ConfirmDialog from '../components/ConfirmDialog'
+import '@xterm/xterm/css/xterm.css'
 
 interface EventItem extends SSEEvent { id: number; result?: SSEEvent }
-type Tab = 'terminal' | 'files' | 'preview'
+type Tab = 'terminal' | 'files' | 'commands' | 'browser'
+
+interface BrowserTab { id: string; url: string }
+
+function newBrowserTabId(): string {
+  return `tab-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+}
 
 interface FileChange { path: string; action: string; timestamp: number }
+interface CommandEntry { command: string; timestamp: number }
+
+const RAIL_WIDTH_KEY = 'agent-knots-thread-rail-width'
+// Bounds are a percentage of the space actually being split between
+// chat and rail (the goal rail, if shown, is a separate fixed-width
+// panel and isn't part of what this divider divides) — not a fixed
+// pixel min/max, so it stays proportionally sane at any window size.
+const RAIL_MIN_FRACTION = 0.05
+const RAIL_MAX_FRACTION = 0.95
+const GOAL_RAIL_WIDTH = 260
 
 /** Agent Thread — the full 3-zone Atelier layout (Phase 3). Header, left
  * goal rail (collapsible via Cmd/Ctrl+B), center event stream with a
@@ -23,6 +42,7 @@ function AgentThread() {
   const navigate = useNavigate()
   const eventsEndRef = useRef<HTMLDivElement>(null)
   const counterRef = useRef(0)
+  const rowRef = useRef<HTMLDivElement>(null)
 
   const [agent, setAgent] = useState<AgentInfo | null>(null)
   const [task, setTask] = useState<TaskDetail | null>(null)
@@ -32,9 +52,17 @@ function AgentThread() {
   const [openDelegates, setOpenDelegates] = useState<Set<number>>(new Set())
   const [draft, setDraft] = useState('')
   const [tab, setTab] = useState<Tab>('terminal')
-  const [termLines, setTermLines] = useState<string[]>([])
   const [files, setFiles] = useState<FileChange[]>([])
+  const [commands, setCommands] = useState<CommandEntry[]>([])
   const [replayPos, setReplayPos] = useState<number | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [browserTabs, setBrowserTabs] = useState<BrowserTab[]>(() => [{ id: newBrowserTabId(), url: '' }])
+  const [activeBrowserTabId, setActiveBrowserTabId] = useState(() => browserTabs[0].id)
+  const [railWidth, setRailWidth] = useState(() => {
+    const stored = Number(localStorage.getItem(RAIL_WIDTH_KEY))
+    return stored > 0 && stored < window.innerWidth ? stored : 290
+  })
+  const [resizing, setResizing] = useState(false)
 
   const ended = useMemo(() => events.some(e => e.type === 'ended'), [events])
 
@@ -111,13 +139,8 @@ function AgentThread() {
         })
 
         if (evt.type === 'tool_call' && evt.tool_call) {
-          const path = findFilePath(evt.tool_call.args)
-          if (path) {
-            const name = evt.tool_call.name.toLowerCase()
-            const action = name.includes('edit') || name.includes('write') ? 'edit'
-              : name.includes('shell') || name.includes('bash') ? 'shell' : 'read'
-            setFiles(prev => prev.find(f => f.path === path) ? prev : [...prev.slice(-50), { path, action, timestamp: Date.now() }])
-          }
+          recordFileTouch(evt.tool_call, setFiles)
+          recordCommand(evt.tool_call, setCommands)
         }
       },
       () => {
@@ -130,15 +153,6 @@ function AgentThread() {
     )
     return () => es.close()
   }, [id])
-
-  // Terminal lines derived from tool_result messages (kept separate from
-  // the merged event stream since Terminal shows raw output history).
-  useEffect(() => {
-    const last = events[events.length - 1]
-    if (last?.type === 'tool_call' && last.result?.message) {
-      setTermLines(prev => [...prev.slice(-500), last.result!.message])
-    }
-  }, [events])
 
   useEffect(() => {
     if (replayPos === null) eventsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -166,23 +180,106 @@ function AgentThread() {
     setAgent(prev => prev ? { ...prev, mode: 'agent' } : prev)
     await relinquishAgent(id)
   }, [id])
-  const handleStop = useCallback(async () => { if (id) await deleteAgent(id) }, [id])
   const handleDelete = useCallback(async () => {
     if (!id) return
-    if (!window.confirm('Delete this session? This ends the agent and removes its thread — this cannot be undone.')) return
     await deleteAgent(id)
     navigate('/')
   }, [id, navigate])
+  // Cancels the current turn only — the session stays open (unlike
+  // Delete). Only shown while the agent is actually running, since
+  // there's nothing to interrupt otherwise.
+  const handleInterrupt = useCallback(async () => { if (id) await interruptAgent(id) }, [id])
   const handleSend = useCallback(async () => {
     if (!id || !draft.trim()) return
-    await sendMessage(id, draft.trim())
+    const text = draft.trim()
     setDraft('')
-  }, [id, draft])
+    // Typing and sending a message while watching is how you "assume
+    // control" now — no need to click Assume first.
+    if (agent?.mode !== 'assistant') {
+      setAgent(prev => prev ? { ...prev, mode: 'assistant' } : prev)
+      await assumeAgent(id)
+    }
+    await sendMessage(id, text)
+  }, [id, draft, agent])
   const handleCheckpoint = useCallback(async () => {
     if (!id) return
     const label = window.prompt('Checkpoint label', 'checkpoint') || 'checkpoint'
     await checkpointAgent(id, label)
   }, [id])
+  // A URL the agent mentions in chat (e.g. a dev server it just started)
+  // opens in a brand-new Browser tab — like clicking a link in a real
+  // browser, it doesn't clobber whatever the user already has open there.
+  const openInNewBrowserTab = useCallback((url: string) => {
+    const id = newBrowserTabId()
+    setBrowserTabs(prev => [...prev, { id, url }])
+    setActiveBrowserTabId(id)
+    setTab('browser')
+  }, [])
+  const newBrowserTab = useCallback(() => {
+    const id = newBrowserTabId()
+    setBrowserTabs(prev => [...prev, { id, url: '' }])
+    setActiveBrowserTabId(id)
+  }, [])
+  const closeBrowserTab = useCallback((id: string) => {
+    const idx = browserTabs.findIndex(t => t.id === id)
+    const next = browserTabs.filter(t => t.id !== id)
+    if (next.length === 0) {
+      const freshId = newBrowserTabId()
+      setBrowserTabs([{ id: freshId, url: '' }])
+      setActiveBrowserTabId(freshId)
+      return
+    }
+    setBrowserTabs(next)
+    if (activeBrowserTabId === id) {
+      const neighbor = next[Math.max(0, idx - 1)] ?? next[0]
+      setActiveBrowserTabId(neighbor.id)
+    }
+  }, [browserTabs, activeBrowserTabId])
+  const updateBrowserTabUrl = useCallback((tabId: string, url: string) => {
+    setBrowserTabs(prev => prev.map(t => (t.id === tabId ? { ...t, url } : t)))
+  }, [])
+
+  // Drag-to-resize the right rail. Tracks the drag with window-level
+  // listeners (not React state per mouse-move — that would re-render on
+  // every pixel) and only commits to state/localStorage on mouseup, via
+  // a ref holding the live width during the drag. Min/max are computed
+  // fresh at drag-start from the row's actual current width, so they
+  // stay correct across window resizes rather than baking in stale
+  // pixel bounds from whenever the component first mounted.
+  const dragRef = useRef<{ startX: number; startWidth: number; minWidth: number; maxWidth: number } | null>(null)
+  const railWidthRef = useRef(railWidth)
+  railWidthRef.current = railWidth
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const rowWidth = rowRef.current?.getBoundingClientRect().width ?? window.innerWidth
+    const goalRailWidth = task && !railCollapsed ? GOAL_RAIL_WIDTH : 0
+    const splittableWidth = Math.max(0, rowWidth - goalRailWidth)
+    dragRef.current = {
+      startX: e.clientX,
+      startWidth: railWidthRef.current,
+      minWidth: splittableWidth * RAIL_MIN_FRACTION,
+      maxWidth: splittableWidth * RAIL_MAX_FRACTION,
+    }
+    setResizing(true)
+
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return
+      const { startX, startWidth, minWidth, maxWidth } = dragRef.current
+      const delta = startX - ev.clientX // drag left = wider rail
+      const next = Math.min(maxWidth, Math.max(minWidth, startWidth + delta))
+      setRailWidth(next)
+    }
+    const onUp = () => {
+      dragRef.current = null
+      setResizing(false)
+      localStorage.setItem(RAIL_WIDTH_KEY, String(railWidthRef.current))
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [task, railCollapsed])
 
   if (!id) return null
   const isDriving = agent?.mode === 'assistant'
@@ -211,12 +308,21 @@ function AgentThread() {
           {isDriving
             ? <button onClick={handleRelinquish} style={pillBtn('var(--acc-soft)', 'var(--acc)')}>Relinquish</button>
             : <button onClick={handleAssume} style={pillBtn('var(--warn-soft)', 'var(--warn-ink)')}>Assume</button>}
-          <button onClick={handleStop} title="Stop the agent" style={pillBtn('var(--card2)', 'var(--ink2)')}>■ Stop</button>
-          <button onClick={handleDelete} title="Delete this session" style={pillBtn('var(--card2)', 'var(--err)')}>✕</button>
+          <button onClick={() => setConfirmDelete(true)} title="Delete this session" style={pillBtn('var(--card2)', 'var(--err)')}>✕ Delete</button>
         </div>
       </div>
 
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete this session?"
+        message="This ends the agent and removes its thread — this cannot be undone."
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => { setConfirmDelete(false); handleDelete() }}
+        onCancel={() => setConfirmDelete(false)}
+      />
+
+      <div ref={rowRef} style={{ flex: 1, display: 'flex', overflow: 'hidden', userSelect: resizing ? 'none' : undefined }}>
         {/* Left goal rail — only for sessions with a task attached. An
             unattached session has nothing to show here, so skip the rail
             entirely rather than rendering an empty "no task" column; the
@@ -274,6 +380,7 @@ function AgentThread() {
                 delegateOpen={openDelegates.has(evt.id)}
                 onToggleDelegate={() => setOpenDelegates(s => toggle(s, evt.id))}
                 onRevert={label => id && revertAgent(id, label)}
+                onOpenPreview={openInNewBrowserTab}
               />
             ))}
             <div ref={eventsEndRef} />
@@ -289,29 +396,57 @@ function AgentThread() {
               />
               <div style={{ fontSize: 11.5, color: 'var(--mut)', textAlign: 'center' }}>session ended{replayPos !== null && replayPos < events.length ? ` — replaying ${replayPos}/${events.length}` : ''}</div>
             </div>
-          ) : isDriving ? (
-            <div style={{ display: 'flex', gap: 8, padding: 12, borderTop: '1px solid var(--line)', background: 'var(--card)' }}>
-              <input
-                value={draft} onChange={e => setDraft(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handleSend() }}
-                placeholder="Message the agent…"
-                style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--line2)', background: 'var(--card2)', color: 'var(--ink)', fontSize: 13, outline: 'none' }}
-              />
-              <button onClick={handleSend} style={{ padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}>Send</button>
-              <button onClick={handleCheckpoint} title="Checkpoint" style={{ padding: '8px 12px', borderRadius: 8, fontSize: 13, color: 'var(--mut)', background: 'var(--card2)' }}>⚑</button>
-            </div>
           ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12, borderTop: '1px solid var(--line)', background: 'var(--card2)' }}>
-              <span style={{ fontSize: 12.5, color: 'var(--mut)', flex: 1 }}>👁 Watching — the agent is driving. Assume control to send messages.</span>
-              <button onClick={handleAssume} style={pillBtn('var(--warn-soft)', 'var(--warn-ink)')}>Assume</button>
+            <div style={{ borderTop: '1px solid var(--line)', background: 'var(--card)' }}>
+              {/* Watching is now just a banner, not a locked composer —
+                  typing below and hitting Send is itself how you assume
+                  control, so there's no separate step required. */}
+              {!isDriving && (
+                <div style={{ padding: '6px 20px', fontSize: 12, color: 'var(--mut)', background: 'var(--card2)', borderBottom: '1px solid var(--line)' }}>
+                  👁 Watching — the agent is driving. Type a message below to take over.
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8, padding: 12 }}>
+                <input
+                  value={draft} onChange={e => setDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSend() }}
+                  placeholder={isDriving ? 'Message the agent…' : 'Type to take over…'}
+                  style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--line2)', background: 'var(--card2)', color: 'var(--ink)', fontSize: 13, outline: 'none' }}
+                />
+                <button onClick={handleSend} style={{ padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}>Send</button>
+                <button onClick={handleCheckpoint} title="Checkpoint" style={{ padding: '8px 12px', borderRadius: 8, fontSize: 13, color: 'var(--mut)', background: 'var(--card2)' }}>⚑</button>
+                {/* Only shown while the agent is actually running — cancels
+                    the current turn only, session stays open (type + Send
+                    to continue), unlike Delete in the header. */}
+                {agent?.running && (
+                  <button onClick={handleInterrupt} title="Cancel the agent's current action — the session stays open, send another message to continue" style={pillBtn('var(--card2)', 'var(--ink2)')}>■ Stop</button>
+                )}
+              </div>
             </div>
           )}
         </div>
 
+        {/* Drag handle — resizes the right rail. A few px of invisible
+            hit-area around a thinner visible line, so it's easy to grab
+            without needing pixel-perfect precision. */}
+        <div
+          onMouseDown={handleResizeStart}
+          title="Drag to resize"
+          style={{
+            width: 9, marginLeft: -4, marginRight: -5, flexShrink: 0, cursor: 'col-resize',
+            position: 'relative', zIndex: 1,
+          }}
+        >
+          <div style={{
+            position: 'absolute', left: 4, top: 0, bottom: 0, width: 1,
+            background: resizing ? 'var(--acc)' : 'transparent',
+          }} />
+        </div>
+
         {/* Right rail */}
-        <div style={{ width: 290, flexShrink: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--line)', background: 'var(--card)' }}>
+        <div style={{ width: railWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--line)', background: 'var(--card)' }}>
           <div style={{ display: 'flex', borderBottom: '1px solid var(--line)' }}>
-            {(['terminal', 'files', 'preview'] as Tab[]).map(t => (
+            {(['terminal', 'files', 'commands', 'browser'] as Tab[]).map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
                 flex: 1, padding: '8px 4px', fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em',
                 color: tab === t ? 'var(--ink)' : 'var(--mut)',
@@ -319,10 +454,31 @@ function AgentThread() {
               }}>{t}</button>
             ))}
           </div>
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            {tab === 'terminal' && <TerminalPanel lines={termLines} running={!!agent?.running} />}
-            {tab === 'files' && <FilesPanel files={files} />}
-            {tab === 'preview' && <PreviewPanel />}
+          <div style={{ flex: 1, position: 'relative' }}>
+            {/* Terminal stays mounted continuously (just hidden) rather
+                than mounting/unmounting with the other tabs — its
+                websocket carries real shell state (cwd, exported vars,
+                a still-running command) that switching to Files and
+                back shouldn't blow away. */}
+            <div style={{ position: 'absolute', inset: 0, display: tab === 'terminal' ? 'block' : 'none' }}>
+              <TerminalPanel agentId={id} active={tab === 'terminal'} />
+            </div>
+            {tab !== 'terminal' && (
+              <div style={{ position: 'absolute', inset: 0, overflowY: 'auto' }}>
+                {tab === 'files' && <FilesPanel files={files} agentId={id} />}
+                {tab === 'commands' && <CommandLogPanel commands={commands} />}
+                {tab === 'browser' && (
+                  <BrowserPanel
+                    tabs={browserTabs}
+                    activeTabId={activeBrowserTabId}
+                    onSelectTab={setActiveBrowserTabId}
+                    onCloseTab={closeBrowserTab}
+                    onNewTab={newBrowserTab}
+                    onUrlChange={updateBrowserTabUrl}
+                  />
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -351,26 +507,53 @@ function formatUptime(seconds: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`
 }
 
-function findFilePath(args: Record<string, unknown>): string | null {
-  for (const key of ['path', 'file_path', 'file', 'filepath']) {
-    const v = args[key]
-    if (typeof v === 'string' && v.length > 0) return v
-  }
-  for (const v of Object.values(args)) {
-    if (typeof v === 'string' && /\.\w{1,8}$/.test(v)) return v
-  }
-  return null
+// editor's `command` arg tells us read vs. write — 'view'/'find_line'
+// don't touch the file, everything else does (create is a genuinely new
+// file, the rest modify an existing one).
+const EDITOR_WRITE_COMMANDS = new Set(['create', 'str_replace', 'pattern_replace', 'insert', 'undo_edit'])
+
+/** Only the editor tool belongs on the Files tab — shell commands often
+ * reference something that looks like a filename in their args ("cat
+ * notes.txt") without it being a real file touch the way an edit/read
+ * is, and mixing the two made the tab list commands, not files. */
+function recordFileTouch(toolCall: NonNullable<SSEEvent['tool_call']>, setFiles: (fn: (prev: FileChange[]) => FileChange[]) => void) {
+  if (toolCall.name !== 'editor') return
+  const path = toolCall.args.path
+  if (typeof path !== 'string' || !path) return
+  const command = typeof toolCall.args.command === 'string' ? toolCall.args.command : ''
+  const action = command === 'create' ? 'write' : EDITOR_WRITE_COMMANDS.has(command) ? 'edit' : 'read'
+  setFiles(prev => {
+    const next = prev.filter(f => f.path !== path)
+    return [...next.slice(-49), { path, action, timestamp: Date.now() }]
+  })
+}
+
+/** Command Log — every shell invocation with its own timestamp, kept
+ * separate from Terminal (a real interactive shell) and from Files
+ * (editor-only touches). shell's `command` arg can be a single string
+ * or a list (parallel commands), so this can log more than one entry
+ * per tool call. */
+function recordCommand(toolCall: NonNullable<SSEEvent['tool_call']>, setCommands: (fn: (prev: CommandEntry[]) => CommandEntry[]) => void) {
+  if (toolCall.name !== 'shell') return
+  const raw = toolCall.args.command
+  const cmds: string[] = Array.isArray(raw)
+    ? raw.map(c => (typeof c === 'string' ? c : (c as Record<string, unknown>)?.command)).filter((c): c is string => typeof c === 'string')
+    : typeof raw === 'string' ? [raw] : []
+  if (cmds.length === 0) return
+  const timestamp = Date.now()
+  setCommands(prev => [...prev.slice(-199), ...cmds.map(command => ({ command, timestamp }))])
 }
 
 // ── Event row ────────────────────────────────────────────────────────────────
 
-function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onToggleDelegate, onRevert }: {
+function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onToggleDelegate, onRevert, onOpenPreview }: {
   evt: EventItem
   collapsed: boolean
   onToggleCollapse: () => void
   delegateOpen: boolean
   onToggleDelegate: () => void
   onRevert: (label: string) => void
+  onOpenPreview: (url: string) => void
 }) {
   const ts = new Date(evt.timestamp * 1000)
   const tsStr = `${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}`
@@ -378,7 +561,7 @@ function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onToggleDele
   if (evt.type === 'message') {
     return (
       <Bubble align="left" bg="var(--card2)" ts={tsStr}>
-        <Markdown>{evt.message}</Markdown>
+        <Markdown onLinkClick={onOpenPreview}>{evt.message}</Markdown>
       </Bubble>
     )
   }
@@ -447,7 +630,7 @@ function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onToggleDele
   if (evt.type === 'blocker' || evt.type === 'ask') {
     return (
       <Bubble align="left" bg="var(--warn-soft)" ts={tsStr}>
-        <Markdown>{evt.message}</Markdown>
+        <Markdown onLinkClick={onOpenPreview}>{evt.message}</Markdown>
       </Bubble>
     )
   }
@@ -455,7 +638,7 @@ function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onToggleDele
   if (evt.type === 'user') {
     return (
       <Bubble align="right" bg="var(--acc-soft)" ts={tsStr}>
-        <Markdown>{evt.message}</Markdown>
+        <Markdown onLinkClick={onOpenPreview}>{evt.message}</Markdown>
       </Bubble>
     )
   }
@@ -525,48 +708,335 @@ function DelegateSubThread({ sessionId }: { sessionId: string }) {
 
 // ── Right rail panels ────────────────────────────────────────────────────────
 
-function TerminalPanel({ lines, running }: { lines: string[]; running: boolean }) {
-  const endRef = useRef<HTMLDivElement>(null)
-  useEffect(() => { endRef.current?.scrollIntoView() }, [lines])
+// xterm.js needs literal colors, not CSS var() references, so these
+// mirror index.css's --card/--ink/--acc/--acc-soft tokens directly for
+// each theme rather than reading computed style — reading from the DOM
+// raced with ThemeProvider's own effect (which sets
+// document.body.dataset.theme): React runs child effects before parent
+// effects in a commit, and ThemeProvider is an ancestor, so this
+// component's effect could fire before the attribute (and the CSS
+// cascade depending on it) actually updated.
+const TERMINAL_THEMES: Record<'light' | 'dark', { background: string; foreground: string; cursor: string; selectionBackground: string }> = {
+  light: { background: '#ffffff', foreground: '#23262b', cursor: '#6c5ce7', selectionBackground: '#f7f5ff' },
+  dark: { background: '#23262d', foreground: '#dfe2e8', cursor: '#8f7ff2', selectionBackground: '#2a2740' },
+}
+
+/** Real interactive terminal — a PTY-backed shell (agent's own working
+ * directory) streamed over a websocket, rendered with xterm.js. Stays
+ * mounted for the lifetime of the Agent Thread (see the parent's
+ * always-mounted-but-hidden wrapper) so switching tabs doesn't kill the
+ * shell's state (cwd, exported vars, a still-running command). */
+function TerminalPanel({ agentId, active }: { agentId?: string; active: boolean }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const termRef = useRef<InstanceType<typeof import('@xterm/xterm').Terminal> | null>(null)
+  const fitRef = useRef<InstanceType<typeof import('@xterm/addon-fit').FitAddon> | null>(null)
+  const wsRef = useRef<WebSocket | null>(null)
+  const [status, setStatus] = useState<'connecting' | 'open' | 'closed'>('connecting')
+  const { theme } = useTheme()
+
+  useEffect(() => {
+    if (!agentId || !containerRef.current) return
+    let disposed = false
+
+    Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')]).then(([{ Terminal }, { FitAddon }]) => {
+      if (disposed || !containerRef.current) return
+
+      const term = new Terminal({
+        fontFamily: '"DM Mono", var(--font-mono), monospace',
+        fontSize: 12,
+        cursorBlink: true,
+        theme: TERMINAL_THEMES[theme],
+      })
+      const fit = new FitAddon()
+      term.loadAddon(fit)
+      term.open(containerRef.current)
+      try { fit.fit() } catch { /* container may still be 0x0 on first paint */ }
+      termRef.current = term
+      fitRef.current = fit
+
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+      const ws = new WebSocket(`${proto}://${window.location.host}/api/agent/${agentId}/terminal`)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        setStatus('open')
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
+      }
+      ws.onclose = () => setStatus('closed')
+      ws.onerror = () => setStatus('closed')
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data)
+          if (msg.type === 'output') term.write(msg.data)
+        } catch { /* ignore malformed frames */ }
+      }
+
+      const dataDisposable = term.onData(data => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }))
+      })
+
+      const resizeObserver = new ResizeObserver(() => {
+        if (!active) return // avoid fitting a 0x0 hidden container
+        try { fit.fit() } catch { return }
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
+      })
+      resizeObserver.observe(containerRef.current)
+
+      return () => {
+        dataDisposable.dispose()
+        resizeObserver.disconnect()
+        ws.close()
+        term.dispose()
+      }
+    })
+
+    return () => { disposed = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId])
+
+  // The container is 0x0 while display:none (hidden tab) — re-fit once
+  // it actually becomes visible, or xterm renders at a stale/wrong size.
+  useEffect(() => {
+    if (active && fitRef.current && wsRef.current) {
+      try { fitRef.current.fit() } catch { return }
+      const term = termRef.current
+      if (term && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
+      }
+    }
+  }, [active])
+
+  // xterm's theme is a snapshot taken once at creation — toggling
+  // light/dark afterward otherwise leaves the terminal visually stuck
+  // on whichever theme was active when it first connected.
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = TERMINAL_THEMES[theme]
+  }, [theme])
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: '6px 10px', fontSize: 10, color: 'var(--mut)', borderBottom: '1px solid var(--line)', fontFamily: 'var(--font-mono)' }}>
-        {running ? '● active' : '○ idle'} · {lines.length} lines
+      <div style={{ padding: '4px 10px', fontSize: 10, color: 'var(--mut)', borderBottom: '1px solid var(--line)', fontFamily: 'var(--font-mono)' }}>
+        {status === 'open' ? '● connected' : status === 'connecting' ? '○ connecting…' : '○ disconnected'}
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: 10, fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.6, color: 'var(--ink2)' }}>
-        {lines.length === 0 && <span style={{ color: 'var(--mut)' }}>Waiting for shell output...</span>}
-        {lines.map((l, i) => <div key={i} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{l}</div>)}
-        <div ref={endRef} />
-      </div>
+      <div ref={containerRef} style={{ flex: 1, minHeight: 0, padding: 4 }} />
     </div>
   )
 }
 
-function FilesPanel({ files }: { files: FileChange[] }) {
-  const colors: Record<string, string> = { edit: 'var(--warn-ink)', write: 'var(--warn-ink)', read: 'var(--acc)', shell: 'var(--mut)' }
-  const letters: Record<string, string> = { edit: 'M', write: 'A', read: 'R', shell: '$' }
+interface FileFetch {
+  status: 'loading' | 'ready' | 'error'
+  content?: string
+  truncated?: boolean
+  error?: string
+}
+
+const MARKDOWN_EXT = /\.(md|markdown)$/i
+
+function FilesPanel({ files, agentId }: { files: FileChange[]; agentId?: string }) {
+  const colors: Record<string, string> = { edit: 'var(--warn-ink)', write: 'var(--ok)', read: 'var(--acc)' }
+  const letters: Record<string, string> = { edit: 'M', write: 'A', read: 'R' }
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [cache, setCache] = useState<Record<string, FileFetch>>({})
+
+  const toggle = (path: string) => {
+    if (expanded === path) { setExpanded(null); return }
+    setExpanded(path)
+    if (!agentId || cache[path]) return
+    setCache(prev => ({ ...prev, [path]: { status: 'loading' } }))
+    fetchAgentFile(agentId, path)
+      .then(res => setCache(prev => ({ ...prev, [path]: { status: 'ready', content: res.content, truncated: res.truncated } })))
+      .catch(e => setCache(prev => ({ ...prev, [path]: { status: 'error', error: e instanceof Error ? e.message : 'Failed to load' } })))
+  }
+
   return (
     <div>
       <div style={{ padding: '6px 10px', fontSize: 10, color: 'var(--mut)', borderBottom: '1px solid var(--line)', fontFamily: 'var(--font-mono)' }}>{files.length} file{files.length !== 1 ? 's' : ''} touched</div>
       {files.length === 0 && <div style={{ padding: 12, fontSize: 12, color: 'var(--mut)' }}>Files the agent reads or edits will appear here.</div>}
-      {files.map((f, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderBottom: '1px solid var(--line)', fontSize: 11 }}>
-          <span style={{ width: 16, height: 16, borderRadius: 3, display: 'grid', placeItems: 'center', fontSize: 9, fontWeight: 700, fontFamily: 'var(--font-mono)', color: colors[f.action] || 'var(--mut)', background: 'var(--card2)' }}>{letters[f.action] || '·'}</span>
-          <span style={{ flex: 1, fontFamily: 'var(--font-mono)', color: 'var(--ink2)', wordBreak: 'break-all' }}>{f.path}</span>
-        </div>
-      ))}
+      {files.map((f, i) => {
+        const isOpen = expanded === f.path
+        const entry = cache[f.path]
+        return (
+          <div key={i} style={{ borderBottom: '1px solid var(--line)' }}>
+            <div
+              onClick={() => toggle(f.path)}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', fontSize: 11, cursor: 'pointer' }}
+            >
+              <span style={{ width: 16, height: 16, borderRadius: 3, display: 'grid', placeItems: 'center', fontSize: 9, fontWeight: 700, fontFamily: 'var(--font-mono)', color: colors[f.action] || 'var(--mut)', background: 'var(--card2)' }}>{letters[f.action] || '·'}</span>
+              <span style={{ flex: 1, fontFamily: 'var(--font-mono)', color: 'var(--ink2)', wordBreak: 'break-all' }}>{f.path}</span>
+              <span style={{ fontSize: 9, color: 'var(--mut)' }}>{isOpen ? '▾' : '▸'}</span>
+            </div>
+            {isOpen && (
+              <div style={{ padding: '0 10px 10px', background: 'var(--card2)' }}>
+                {(!entry || entry.status === 'loading') && <div style={{ fontSize: 11, color: 'var(--mut)', padding: '8px 0' }}>Loading…</div>}
+                {entry?.status === 'error' && <div style={{ fontSize: 11, color: 'var(--err)', padding: '8px 0' }}>{entry.error}</div>}
+                {entry?.status === 'ready' && (
+                  <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, background: 'var(--card)', padding: MARKDOWN_EXT.test(f.path) ? '8px 10px' : 0 }}>
+                    {entry.truncated && <div style={{ fontSize: 10, color: 'var(--warn-ink)', padding: '4px 8px', borderBottom: '1px solid var(--line)' }}>Truncated — showing the first part of a large file.</div>}
+                    {MARKDOWN_EXT.test(f.path) ? (
+                      <Markdown fontSize={11.5}>{entry.content || ''}</Markdown>
+                    ) : (
+                      <pre style={{ margin: 0, padding: '8px 10px', fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--ink2)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{entry.content}</pre>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
 
-function PreviewPanel() {
+function CommandLogPanel({ commands }: { commands: CommandEntry[] }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8, padding: 20, textAlign: 'center' }}>
-      <div style={{ fontSize: 28, opacity: 0.3 }}>🌐</div>
-      <div style={{ fontSize: 13, color: 'var(--ink2)' }}>Preview</div>
-      <div style={{ fontSize: 11.5, color: 'var(--mut)' }}>If the agent starts a dev server, a proxied preview will appear here.</div>
+    <div>
+      <div style={{ padding: '6px 10px', fontSize: 10, color: 'var(--mut)', borderBottom: '1px solid var(--line)', fontFamily: 'var(--font-mono)' }}>{commands.length} command{commands.length !== 1 ? 's' : ''} run</div>
+      {commands.length === 0 && <div style={{ padding: 12, fontSize: 12, color: 'var(--mut)' }}>Shell commands the agent runs will appear here, with the time each one ran.</div>}
+      {commands.map((c, i) => {
+        const ts = new Date(c.timestamp)
+        const tsStr = `${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}:${String(ts.getSeconds()).padStart(2, '0')}`
+        return (
+          <div key={i} style={{ display: 'flex', gap: 8, padding: '6px 10px', borderBottom: '1px solid var(--line)', fontSize: 11 }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--mut2)', flexShrink: 0 }}>{tsStr}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--ink2)', wordBreak: 'break-all' }}>{c.command}</span>
+          </div>
+        )
+      })}
     </div>
   )
+}
+
+/** A small in-panel browser — real tabs, like the one on your desktop.
+ * Type/paste a URL like any address bar, or click a link the agent
+ * posts in chat (see Markdown's onLinkClick) and it opens in a new tab
+ * here instead of leaving the app. Each tab is just an <iframe>; a site
+ * that sends X-Frame-Options/CSP frame-ancestors can still refuse to
+ * render inside one, which is why "open in new tab" (the real browser's)
+ * is always available as an escape hatch rather than something to try
+ * to detect and work around.
+ *
+ * Only the active tab's iframe is ever mounted — switching tabs remounts
+ * it fresh at that tab's URL rather than keeping every tab's iframe
+ * alive in the background. For dev-server previews (the actual use
+ * case) there's no meaningful client state worth preserving across a
+ * switch, so this is a deliberate simplification over a real browser's
+ * per-tab process model.
+ */
+function BrowserPanel({
+  tabs, activeTabId, onSelectTab, onCloseTab, onNewTab, onUrlChange,
+}: {
+  tabs: BrowserTab[]
+  activeTabId: string
+  onSelectTab: (id: string) => void
+  onCloseTab: (id: string) => void
+  onNewTab: () => void
+  onUrlChange: (tabId: string, url: string) => void
+}) {
+  const activeTab = tabs.find(t => t.id === activeTabId) ?? tabs[0]
+  const [draft, setDraft] = useState(activeTab?.url ?? '')
+  const [reloadKey, setReloadKey] = useState(0)
+
+  useEffect(() => { setDraft(activeTab?.url ?? '') }, [activeTab?.id, activeTab?.url])
+
+  const commit = (raw: string) => {
+    const trimmed = raw.trim()
+    if (!trimmed || !activeTab) return
+    const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`
+    onUrlChange(activeTab.id, withScheme)
+  }
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ display: 'flex', alignItems: 'center', padding: '4px 4px 0', borderBottom: '1px solid var(--line)', overflowX: 'auto' }}>
+        {tabs.map(t => {
+          const active = t.id === activeTabId
+          return (
+            <div
+              key={t.id}
+              onClick={() => onSelectTab(t.id)}
+              title={t.url || 'New Tab'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: '6px 6px 0 0',
+                fontSize: 11, cursor: 'pointer', maxWidth: 140, flexShrink: 0,
+                background: active ? 'var(--card2)' : 'transparent',
+                color: active ? 'var(--ink)' : 'var(--mut)',
+                borderBottom: active ? '2px solid var(--acc)' : '2px solid transparent',
+              }}
+            >
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{browserTabLabel(t.url)}</span>
+              <span
+                onClick={e => { e.stopPropagation(); onCloseTab(t.id) }}
+                title="Close tab"
+                style={{ fontSize: 10, color: 'var(--mut)', flexShrink: 0, padding: '0 2px' }}
+              >
+                ✕
+              </span>
+            </div>
+          )
+        })}
+        <button onClick={onNewTab} title="New tab" style={{ padding: '5px 9px', fontSize: 13, color: 'var(--mut)', flexShrink: 0 }}>+</button>
+      </div>
+      <div style={{ display: 'flex', gap: 6, padding: 6, borderBottom: '1px solid var(--line)' }}>
+        <button
+          onClick={() => setReloadKey(k => k + 1)}
+          title="Reload"
+          disabled={!activeTab?.url}
+          style={{ padding: '4px 8px', borderRadius: 6, fontSize: 12, color: 'var(--ink2)', background: 'var(--card2)', opacity: activeTab?.url ? 1 : 0.4 }}
+        >
+          ⟳
+        </button>
+        <input
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') commit(draft) }}
+          placeholder="Enter a URL to preview…"
+          style={{ flex: 1, minWidth: 0, padding: '5px 8px', borderRadius: 6, border: '1px solid var(--line2)', background: 'var(--card2)', color: 'var(--ink)', fontSize: 11.5, fontFamily: 'var(--font-mono)', outline: 'none' }}
+        />
+        <button
+          onClick={() => commit(draft)}
+          style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}
+        >
+          Go
+        </button>
+        <a
+          href={activeTab?.url || undefined}
+          target="_blank"
+          rel="noreferrer"
+          title="Open in new browser tab"
+          style={{ padding: '4px 8px', borderRadius: 6, fontSize: 12, color: 'var(--ink2)', background: 'var(--card2)', opacity: activeTab?.url ? 1 : 0.4, pointerEvents: activeTab?.url ? 'auto' : 'none' }}
+        >
+          ↗
+        </a>
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        {activeTab?.url ? (
+          <iframe
+            key={`${activeTab.id}-${activeTab.url}-${reloadKey}`}
+            src={activeTab.url}
+            title="Browser"
+            style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }}
+          />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8, padding: 20, textAlign: 'center' }}>
+            <div style={{ fontSize: 28, opacity: 0.3 }}>🌐</div>
+            <div style={{ fontSize: 13, color: 'var(--ink2)' }}>Browser</div>
+            <div style={{ fontSize: 11.5, color: 'var(--mut)' }}>Enter a URL above, or click a link the agent posts in chat.</div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function browserTabLabel(url: string): string {
+  if (!url) return 'New Tab'
+  try {
+    const u = new URL(url)
+    return u.hostname + (u.pathname !== '/' ? u.pathname : '')
+  } catch {
+    return url
+  }
 }
 
 export default AgentThread

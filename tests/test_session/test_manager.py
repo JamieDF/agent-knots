@@ -1,5 +1,6 @@
 """Tests for SessionManager and Session."""
 
+import asyncio
 import tempfile
 from pathlib import Path
 
@@ -271,6 +272,34 @@ class TestSessionManager:
         await mgr.stop("nonexistent")  # should not raise
 
     @pytest.mark.asyncio
+    async def test_stop_kills_tracked_background_processes(self, sessions_dir):
+        """Regression guard: background=true shell commands (dev servers)
+        are tracked on the session precisely so stop() can clean them up
+        — otherwise they'd outlive the session they were started from
+        forever."""
+        import os
+
+        from agent_knots.sandbox_tools import run_background
+
+        s = Session()
+        result = run_background("sleep 30", cwd=None)
+        s._background_pids.append(result["pid"])
+
+        mgr = SessionManager(sessions_dir)
+        mgr._sessions[s.id] = s
+
+        def is_alive(pid: int) -> bool:
+            try:
+                os.kill(pid, 0)
+                return True
+            except ProcessLookupError:
+                return False
+
+        assert is_alive(result["pid"])
+        await mgr.stop(s.id)
+        assert not is_alive(result["pid"])
+
+    @pytest.mark.asyncio
     async def test_send_nonexistent(self, sessions_dir):
         mgr = SessionManager(sessions_dir)
         with pytest.raises(ValueError, match="not found"):
@@ -312,6 +341,51 @@ class TestSessionManager:
         evt = q.get_nowait()
         assert evt.type == EventType.STATE_CHANGE
         assert "not implemented" in evt.message
+
+    @pytest.mark.asyncio
+    async def test_interrupt_nonexistent(self, sessions_dir):
+        mgr = SessionManager(sessions_dir)
+        with pytest.raises(ValueError, match="not found"):
+            await mgr.interrupt("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_interrupt_noop_when_not_running(self, sessions_dir):
+        """No task to cancel — should be a no-op, session stays put."""
+        mgr = SessionManager(sessions_dir)
+        s = Session()
+        mgr._sessions[s.id] = s
+        await mgr.interrupt(s.id)
+        assert s.id in mgr._sessions
+
+    @pytest.mark.asyncio
+    async def test_interrupt_cancels_turn_but_keeps_session_alive(self, sessions_dir):
+        """Regression guard for the 'stop kills the whole agent' complaint:
+        interrupting a running turn must broadcast STATE_CHANGE (not
+        ENDED) and leave the session in the manager, so a follow-up
+        send() can continue the same conversation — unlike stop(), which
+        tears the session down entirely."""
+        mgr = SessionManager(sessions_dir)
+        s = Session()
+
+        class ForeverAgent:
+            async def stream_async(self, prompt):
+                while True:
+                    await asyncio.sleep(10)
+                    yield {}
+
+        s._agent = ForeverAgent()
+        mgr._sessions[s.id] = s
+        s._task = asyncio.create_task(mgr._run_agent(s, s._agent, "go"))
+        await asyncio.sleep(0.05)  # let the task actually start streaming
+        assert s.running
+
+        await mgr.interrupt(s.id)
+
+        assert s.id in mgr._sessions
+        assert not s.running
+        assert s._history[-1].type == EventType.STATE_CHANGE
+        assert "Cancelled" in s._history[-1].message
+        assert not any(e.type == EventType.ENDED for e in s._history)
 
 
 class TestSessionManagerStart:

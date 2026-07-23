@@ -61,10 +61,16 @@ function TaskDetail() {
     setTask(updated)
   }
 
-  const handleStart = async () => {
+  const handleStart = async (headless: boolean) => {
     if (!id) return
-    const session = await createSession({ prompt: '', mode: 'agent', task_id: id, project_id: workspace || undefined })
-    navigate(`/agent/${session.id}`)
+    setError('')
+    try {
+      const session = await createSession({ prompt: '', mode: 'agent', task_id: id, project_id: workspace || undefined })
+      if (headless) load() // refresh so the "Agent active" link appears
+      else navigate(`/agent/${session.id}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to start session')
+    }
   }
 
   const handleRunReview = async () => {
@@ -110,9 +116,24 @@ function TaskDetail() {
               ● Agent active — open thread →
             </button>
           ) : (
-            <button onClick={handleStart} style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}>
-              ▶ Start agent on this task
-            </button>
+            <>
+              <button
+                onClick={() => handleStart(false)}
+                disabled={task.unmet_dependencies.length > 0}
+                title={task.unmet_dependencies.length > 0 ? 'Blocked by unfinished dependencies — see below' : 'Start and open the thread now'}
+                style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: task.unmet_dependencies.length > 0 ? 0.5 : 1, cursor: task.unmet_dependencies.length > 0 ? 'not-allowed' : 'pointer' }}
+              >
+                ▶ Start (watch)
+              </button>
+              <button
+                onClick={() => handleStart(true)}
+                disabled={task.unmet_dependencies.length > 0}
+                title={task.unmet_dependencies.length > 0 ? 'Blocked by unfinished dependencies — see below' : 'Start in the background — open the thread later'}
+                style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)', opacity: task.unmet_dependencies.length > 0 ? 0.5 : 1, cursor: task.unmet_dependencies.length > 0 ? 'not-allowed' : 'pointer' }}
+              >
+                ⏵ Start headless
+              </button>
+            </>
           )}
           <button onClick={() => setShowEdit(true)} style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Edit</button>
           <button onClick={handleDelete} style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--err)', background: 'var(--card2)' }}>✕ Delete</button>
@@ -145,6 +166,21 @@ function TaskDetail() {
         <span style={{ fontSize: 11.5, color: 'var(--mut)' }}>{REVIEW_GATE_LABELS[task.review_gate] || task.review_gate}</span>
       </Card>
 
+      {task.unmet_dependencies.length > 0 && (
+        <Card style={{ marginBottom: 20, background: 'var(--warn-soft)', border: '1px solid var(--warn)' }}>
+          <span style={{ fontSize: 13, color: 'var(--ink)' }}>
+            🔗 Blocked by: {task.unmet_dependencies.map((d, i) => (
+              <span key={d.id}>
+                {i > 0 && ', '}
+                <a onClick={() => navigate(`/tasks/${d.id}`)} style={{ color: 'var(--warn-ink)', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}>{d.title}</a>
+              </span>
+            ))} — this task can't be started until {task.unmet_dependencies.length > 1 ? 'these are' : 'it is'} done.
+          </span>
+        </Card>
+      )}
+
+      {error && <div style={{ fontSize: 12.5, color: 'var(--err)', marginBottom: 14 }}>{error}</div>}
+
       {task.status === 'review' && task.review_gate === 'auto' && (
         <Card style={{ marginBottom: 20, background: 'var(--acc-soft)', border: '1px solid var(--acc)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -153,7 +189,6 @@ function TaskDetail() {
               Run review now
             </button>
           </div>
-          {error && <div style={{ fontSize: 12, color: 'var(--err)', marginTop: 6 }}>{error}</div>}
         </Card>
       )}
 
@@ -271,10 +306,10 @@ function TaskDetail() {
             ))}
           </SideBlock>
           {related.length > 0 && (
-            <SideBlock label="Related tasks">
+            <SideBlock label="Depends on">
               {related.map(r => (
                 <div key={r.id} onClick={() => navigate(`/tasks/${r.id}`)} style={{ fontSize: 12, color: statusStyle(r.status).color, cursor: 'pointer', marginBottom: 4 }}>
-                  {r.title}
+                  {r.status === 'done' ? '✓' : '○'} {r.title}
                 </div>
               ))}
             </SideBlock>

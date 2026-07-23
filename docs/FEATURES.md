@@ -1,10 +1,16 @@
 # Feature Inventory
 
-**Date:** 2026-07-20
+**Date:** 2026-07-23 (supersedes the 2026-07-20 audit this file originally was)
 **Purpose:** Complete catalog of what agent-knots can do — backend, CLI, web
-GUI, TUI — for the upcoming web GUI redesign. Everything here was verified
-by reading the actual route/command/screen definitions, not inferred from
-docs.
+GUI, TUI. Everything here was re-verified by reading the actual current
+route/command/screen definitions, not by trusting the previous version of
+this file or inferring from other docs.
+
+The original version of this file was written *for* the "Atelier" web
+cockpit redesign — a pre-redesign gap analysis. That redesign (plus several
+rounds of real-usage bug fixing) has since shipped; this rewrite reflects
+what's actually true now. See `roadmap.md` and `CHANGELOG.md`'s
+`[Unreleased]` section for the full history of what changed and why.
 
 Legend: **Web** = React SPA · **TUI** = Textual terminal UI · **CLI** =
 `agent-knots` command · **Backend** = implemented, reachable by at least
@@ -17,20 +23,21 @@ UI anywhere · 🚫 = not implemented at all
 
 | Capability | CLI | Web | TUI | Notes |
 |---|---|---|---|---|
-| Start a session (model, task, project, mode, prompt) | `session start` | `POST /api/sessions`, "New Session" dialog | 🚫 | TUI **cannot start sessions** — CLI or web only |
-| List sessions | `session list` | `GET /api/agents`, Overview agent cards | Overview `DataTable` | |
-| Stop / delete a session | 🚫 | `DELETE /api/agent/{id}` | `d` key | No CLI stop/delete command — once started via CLI, killing it requires web or TUI |
-| Send a follow-up message (multi-turn chat) | 🚫 (foreground session only, via stdin flow) | `POST /api/agent/{id}/send`, chat box | 🚫 | **TUI can't send messages at all** — view-only + assume/relinquish |
+| Start a session (model, task, project, mode, prompt) | `session start` | `POST /api/sessions`, "New Session" dialog | 🚫 | TUI still **cannot start sessions** — CLI or web only. Unchanged from the original audit. |
+| List sessions | `session list` | `GET /api/agents`, Dashboard agent cards | Agent list `DataTable` | |
+| Stop / delete a session | 🚫 | Two distinct actions now: composer "■ Stop" cancels only the current turn (`POST /api/agent/{id}/interrupt`) — the session stays open, send another message to continue; header "✕ Delete" ends the session for good (`DELETE /api/agent/{id}`, confirm prompt) | `d` key (delete only — no separate interrupt-only action in the TUI) | Still no CLI stop/delete command |
+| Start a long-running process (dev server, watcher) without it being killed | 🚫 | Shell tool's `background=true` — starts detached, returns immediately with a pid + log file, isn't subject to the tool's timeout-kill. Tracked per-session and killed when the session ends | 🚫 | **New this cycle** — previously the only way to keep something running past a single tool call was an agent hand-rolling `nohup cmd &`, which several real sessions got stuck fumbling with before this existed |
+| Send a follow-up message (multi-turn chat) | 🚫 (foreground session only, via stdin flow) | `POST /api/agent/{id}/send`, Agent Thread composer | 🚫 | **TUI still can't send messages** — view-only + assume/relinquish. Unchanged. |
 | Assume control (agent → assistant) | 🚫 | `POST /api/agent/{id}/assume`, button | `a` key | |
 | Relinquish control (assistant → agent) | 🚫 | `POST /api/agent/{id}/relinquish`, button | `r` key | |
-| Set mode to **reviewer** or **security** | `--mode reviewer\|security` at start only | 🚫 | 🚫 | These 2 modes exist in the backend (`_build_system_prompt`) but the web's New Session dialog only offers Agent/Assistant, and assume/relinquish only toggle agent↔assistant. Reviewer/security are CLI-only and only settable at session start, never mid-session anywhere. |
-| Live event stream (thinking, tool calls, results) | Foreground stdout | SSE (`GET /api/agent/{id}/events`) | Focus screen poll | Web SSE has no fan-out — two browser tabs on the same agent race for events, one silently misses them. No reconnect/replay (`Last-Event-ID`) support. |
-| Runtime selection (in-process vs subprocess) | Only via project's `runtime` field or global `settings.yaml` | Settings page ("Model Provider" tab has a runtime field) | 🚫 | No per-session CLI flag (`session start` has no `--runtime`) |
-| Token / cost tracking per session | `session list` output | Agent cards, topbar stats | Overview table columns | Token counts are real (from model response metadata); cost is a flat $0.30/1M estimate regardless of actual provider/model |
-| Detach mode (`--detach`) | 🚫 stub | n/a | n/a | Explicitly not implemented — CLI prints "not yet implemented" and exits |
-| Sub-agent delegation (`delegate_task`) | Agent-only | Agent-only | Agent-only | The agent calls this itself to spawn a sub-session on a new task; no human UI triggers it directly. Parent monitors via `read_task`. |
-| Memory injection (cross-session context) | Automatic | Automatic | Automatic | Invisible — happens automatically when starting a session with a `task_id` that has prior progress-log entries |
-| Steering nudges (criteria keyword-match) | Automatic | Automatic | Automatic | Advisory only — logs a suggestion to the task's progress log, never marks anything itself |
+| Set mode to **reviewer** or **security** | `--mode reviewer\|security` at start only | 🚫 | 🚫 | Unchanged — still CLI-only, still only settable at session start. Web's New Session dialog still only offers Agent/Assistant. |
+| Live event stream (thinking, tool calls, results) | Foreground stdout | SSE (`GET /api/agent/{id}/events`), structured JSON | Focus screen poll | **Fixed since the original audit**: real fan-out (`Session.subscribe()`/`_broadcast()`) — multiple browser tabs no longer race for events. Agent Thread also has a replay scrubber over a session's own event history once it's ended (not the same thing as SSE `Last-Event-ID` reconnect, which still doesn't exist). |
+| Runtime selection (in-process vs subprocess) | Only via project's `runtime` field or global `settings.yaml` | Settings → Workspaces edit form has a runtime field | 🚫 | Unchanged — no per-session CLI flag |
+| Token / cost tracking per session | `session list` output | Agent cards, topbar stats | Agent list columns | Token counts are real; cost is still a flat $0.30/1M estimate regardless of actual provider/model |
+| Detach mode (`--detach`) | 🚫 stub | n/a | n/a | Unchanged — CLI prints "not yet implemented" and exits |
+| Sub-agent delegation (`delegate_task`) | Agent-only | Agent-only | Agent-only | **Fixed since the original audit**: the tool is appended to the tool list *before* the `Agent` is constructed, so it actually reaches the agent now (previously appended after — likely never usable). Parent monitors via `read_task`. |
+| Memory injection (cross-session context) | Automatic | Automatic | Automatic | Unchanged — invisible, happens on session start when the task has prior progress-log entries |
+| Steering nudges (criteria keyword-match) | Automatic | Automatic | Automatic | Unchanged — advisory only, logs a suggestion, never marks anything itself |
 
 ---
 
@@ -38,41 +45,39 @@ UI anywhere · 🚫 = not implemented at all
 
 | Capability | CLI | Web | TUI | Notes |
 |---|---|---|---|---|
-| Create | `task create <title> --priority --criteria ...` | `POST /api/tasks`, Create Task dialog | 🚫 | **Web's Create Task dialog has no acceptance-criteria field** — title/description/priority only. CLI supports `--criteria` at creation; web can only add criteria after creation via edit. |
-| List / filter (status, project, tags, limit) | `task list` | `GET /api/tasks`, Board + Tasks views | 🚫 | TUI has **no task screen at all** |
+| Create | `task create <title> --priority --criteria ...` | `POST /api/tasks`, TaskDialog | 🚫 | **Fixed since the original audit**: TaskDialog now has full tags/criteria/steps/review-gate editors plus a "✨ Draft with agent" button, not just title/description/priority. New tasks default to `draft` status (previously `open`). |
+| List / filter (status, project, tags, limit) | `task list` | `GET /api/tasks`, Tasks screen (Board + List tabs) | 🚫 | TUI still has **no task screen at all** |
 | Show full detail | `task show` | TaskDetail view | 🚫 | |
-| Update title / status / assignment | `task update` | TaskDetail edit form (partial — see bugs) | 🚫 | |
-| Update description | `task update`? **no** — CLI `update` also lacks a `--description` flag | Edit form has a field but **silently no-ops** | 🚫 | Backend `UpdateTaskRequest` model has no `description` field at all — Pydantic drops it. Neither CLI nor web can currently edit a task's description after creation. |
-| Update acceptance criteria | 🚫 (CLI `update` has no `--criteria` flag either) | Edit form has a field but **silently no-ops** | 🚫 | Same root cause — `UpdateTaskRequest` has no `acceptance_criteria` field |
-| Update tags | 🚫 | Edit form has a field but **silently no-ops** | 🚫 | Same — no `tags` field on `UpdateTaskRequest` |
+| Update title / status / assignment | `task update` | TaskDetail edit form | 🚫 | |
+| Update description / tags / acceptance criteria | 🚫 (CLI `update` still has no `--description`/`--criteria`/`--tag` flags) | **Fixed since the original audit**: `UpdateTaskRequest` now has all these fields; editing a task's description/tags/criteria actually persists (previously silently dropped) | 🚫 | CLI is the one still behind here — web fixed, CLI wasn't touched |
 | Delete | `task delete` | `DELETE /api/tasks/{id}` | 🚫 | |
-| **Mark an acceptance criterion met** | 🚫 (agent tool only, no CLI command was added for it) | 🚫 | 🚫 | `mark_criterion_met` exists only as an agent-callable tool. **No human — CLI, web, or TUI — can mark a criterion met directly.** Since "done" is now hard-gated on all criteria being met, a human can currently only unstick a task by editing the YAML file by hand. |
-| Add a step to a task's plan | 🚫 (agent tool only) | 🚫 (steps shown read-only in TaskDetail) | 🚫 | Same pattern — `add_step` is agent-only |
+| **Mark an acceptance criterion met** | 🚫 (still no CLI command) | **Fixed since the original audit**: `POST /api/tasks/{id}/criteria/toggle`, clickable checkboxes in TaskDetail | 🚫 | Previously agent-tool-only; now a human can do this directly from the web UI. CLI still can't. |
+| Add a step to a task's plan | 🚫 (agent tool only) | 🚫 (steps shown read-only in TaskDetail, editable only at creation via TaskDialog) | 🚫 | Unchanged — `add_step` is still agent-only after creation |
 | View progress log | `task show` | TaskDetail | 🚫 | |
-| View steps (read-only) | `task show` | TaskDetail | 🚫 | |
-| Kanban board | n/a | Board view — **6 columns** | 🚫 | `TaskStatus` has 8 values (draft, open, planned, in_progress, blocked, review, done, abandoned). Board only renders 6 — tasks in `blocked` or `abandoned` have no column and **disappear from the board entirely**. The Tasks list view (sidebar filter) correctly covers all 8. |
-| Task lifecycle enforcement | Enforced in `TaskStore` regardless of surface | | | `done` requires all acceptance criteria marked met (new this session); terminal tasks (`done`/`abandoned`) can't be transitioned further from any surface |
+| View steps (read-only after creation) | `task show` | TaskDetail | 🚫 | |
+| Kanban board | n/a | **Fixed since the original audit**: configurable stages (Workflows screen) cover all 8 `TaskStatus` values — `blocked`/`planned` surface as badges on their parent column's cards instead of vanishing. Drag-and-drop between columns. | 🚫 | Tasks list view (List tab) still correctly covers all 8 too |
+| Task dependencies | 🚫 (no CLI flag) | **New this cycle**: `dependencies: list[str]` on `Task`, a chip picker in TaskDialog, `🔗 DEP` badge on blocked cards, `unmet_dependencies()` refuses the `in_progress` transition and the "Start" button/`POST /api/sessions` pre-flight until every dependency is `done` | 🚫 | Dangling dependency ids (e.g. a deleted task) are treated as non-blocking rather than a permanent lock |
+| Task lifecycle enforcement | Enforced in `TaskStore` regardless of surface | | | `done` requires all acceptance criteria met, **and** (new) a real review-gate: a task with `review_gate != "none"` must pass through `review` status first — previously the field was persisted and displayed but not enforced. **Security fix this cycle**: the transition into `done` is now actor-aware — an agent's own tool call is always `actor="agent"` and gets refused past `review`; only the web's human-driven `PATCH /api/tasks/{id}` passes `actor="human"`. Previously an agent could call `update_task_status('review')` then `update_task_status('done')` back-to-back in the same turn and self-approve with zero human oversight. Terminal tasks (`done`/`abandoned`) still can't be transitioned further from any surface. |
 
 ---
 
 ## 3. Vault (encrypted credential store)
 
-**This entire feature has zero web or TUI presence. It is 100% CLI-only.**
-No `/api/vault/*` route exists anywhere in `server.py`, and no vault
-screen exists in the TUI.
+**Fixed since the original audit — Vault now has a real web UI.** This was
+called out as "the single biggest backend-capability-with-no-GUI gap"; it
+no longer is.
 
 | Capability | CLI | Web | TUI |
 |---|---|---|---|
-| Init / unlock / lock / status | `vault init/unlock/lock/status` | 🚫 | 🚫 |
-| Add / list / show / remove a credential | `vault add/list/show/remove` | 🚫 | 🚫 |
-| Injection templates (env / file / stdin / command-wrapper) | `vault template add/list/show/remove` | 🚫 | 🚫 |
-| Audit log | `vault audit` | 🚫 | 🚫 |
-| Actually *using* a credential in an agent's tool call | 🚫 | 🚫 | 🚫 | No `vault_use` agent tool exists yet — templates are stored metadata only, nothing consumes them automatically during a session (tracked on the roadmap). |
+| Init / unlock / lock / status | `vault init/unlock/lock/status` | Settings → Vault section: passphrase form for locked/uninitialized, "Lock" button when unlocked | 🚫 |
+| Add / list / show / remove a credential | `vault add/list/show/remove` | Settings → Vault: credential list with template chips, "+ Add credential", delete | 🚫 |
+| Injection templates (env / file / stdin / command-wrapper) | `vault template add/list/show/remove` | Read-only chips on each credential row (`env:KEY`, `file:path`, `wrapper`) — no template *editor* in the web UI yet, CLI-only for creating/editing templates | 🚫 |
+| Audit log | `vault audit` | Settings → Vault: audit log table (timestamp, action, credential, caller) | 🚫 |
+| Actually *using* a credential in an agent's tool call | 🚫 | 🚫 | 🚫 | No `vault_use` agent tool exists yet — unchanged, still on the roadmap |
 
-Given "GUI primary" is the stated direction, **this is the single biggest
-backend-capability-with-no-GUI gap** — the vault is fully built (real
-AES-256-GCM + argon2id crypto, genuinely the most solid subsystem in the
-codebase) and completely invisible to anyone who never touches the CLI.
+Values never reach the web client — the API only ever returns metadata
+(ids, descriptions, template shapes, timestamps), never raw credential
+values, matching the CLI's existing security posture.
 
 ---
 
@@ -80,17 +85,18 @@ codebase) and completely invisible to anyone who never touches the CLI.
 
 | Capability | CLI | Web | TUI |
 |---|---|---|---|
-| Create | `project create` | `POST /api/workspaces`, Settings → Workspaces tab | 🚫 |
-| List | `project list` | `GET /api/workspaces` | 🚫 |
+| Create | `project create` | `POST /api/workspaces`, Settings → Workspaces "+ Add workspace" (with a folder-picker + GitHub-remote detection) | 🚫 |
+| List | `project list` | `GET /api/workspaces` (excludes archived by default) | 🚫 |
 | Show detail | `project show` | (list only, no detail view) | 🚫 |
-| Update name / description / repository / tags | `project update` | `PATCH /api/workspaces/{id}` route + `updateWorkspace()` API client function both exist, but **no UI ever calls it** — Settings → Workspaces only has create + delete, no edit form | 🚫 |
-| Update default branch | `project update --branch` | 🚫 — `UpdateWorkspaceRequest` has no `default_branch` field at all, so this is impossible via the web API regardless of UI | 🚫 |
-| Update runtime override | `project update --runtime` | Route supports it, no UI | 🚫 |
-| Delete | `project delete` | `DELETE /api/workspaces/{id}`, delete button in Settings | 🚫 |
-| Filter tasks/sessions by active workspace | n/a | Yes — `workspace.ts` persists active workspace to localStorage, Overview/Tasks/Board filter by it | 🚫 |
+| Update name / description / repository / tags / runtime | `project update` | **Fixed since the original audit**: `PATCH /api/workspaces/{id}` now has a real edit form (`WorkspaceDialog`) — previously the route and API client existed but no UI called it | 🚫 |
+| Update default branch | `project update --branch` | Still 🚫 — `UpdateWorkspaceRequest` has no `default_branch` field. Unchanged from the original audit; CLI-only. | 🚫 |
+| Archive / unarchive | 🚫 | **New since the original audit**: `archived` flag, hidden from the topbar scope switcher and Dashboard by default, dedicated Active/Archived sections in Settings | 🚫 |
+| Delete | `project delete` | `DELETE /api/workspaces/{id}`, now with a confirm prompt (previously deleted immediately with no confirmation) | 🚫 |
+| Filter tasks/sessions by active workspace | n/a | Yes — `workspaceContext.tsx` persists scope to both a `?ws=` URL param and `localStorage`, syncs across navigation | 🚫 |
 
-CLI and web are reasonably in sync here (both added/fixed this session).
-TUI has no project awareness at all.
+CLI and web are further apart here than the original audit found — the web
+side gained an edit form and archive/unarchive that the CLI doesn't have
+(no `project archive` command).
 
 ---
 
@@ -98,19 +104,17 @@ TUI has no project awareness at all.
 
 | Capability | CLI | Web | TUI |
 |---|---|---|---|
-| List built-in tools (12: editor, shell, calculator, think + 8 task tools) | 🚫 | Settings → Tools tab, **and** a separate orphaned `/tools` route (`ToolManager.tsx`) | Tools screen (`t`) |
-| Enable / disable a built-in tool | 🚫 | Settings → Tools tab | `t` key |
-| Add / edit / delete a custom shell-command tool | 🚫 | Settings → Tools tab | Add: placeholder ("...coming soon..."). Delete: `d` key works. |
-| View custom tool detail (`GET /api/tools/{name}`) | 🚫 | Route exists, unused by any frontend code | 🚫 |
+| List built-in tools (12: editor, shell, calculator, think + 8 task tools) | 🚫 | Settings → Tools section, **and** the still-orphaned `/tools` route (`ToolManager.tsx`) | Tools screen (`t`) |
+| Enable / disable a built-in tool | 🚫 | Settings → Tools | `t` key |
+| Add / edit / delete a custom shell-command tool | 🚫 | Settings → Tools | Add: still a placeholder ("...coming soon..."). Delete: `d` key works. |
+| View custom tool detail (`GET /api/tools/{name}`) | 🚫 | Route exists, still unused by any frontend code | 🚫 |
 
-**Two separate tool-management UIs exist in the web frontend** —
-`Settings.tsx`'s Tools tab (linked in nav) and `views/ToolManager.tsx` at
-`/tools` (routed, but **no nav link anywhere** — reachable only by typing
-the URL). Worth consolidating into one in the redesign rather than
-building a third.
+**`ToolManager.tsx` is still a genuine orphaned duplicate**, unchanged from
+the original audit — `Settings.tsx`'s Tools section (linked in the topbar
+nav) and `/tools` (routed, but not in `Topbar.tsx`'s `NAV_ITEMS` — reachable
+only by typing the URL) do the same thing. Worth consolidating.
 
-No CLI tool-management commands exist at all — `agent-knots tools ...` is
-not a command group. Managing tools is web/TUI only.
+No CLI tool-management commands exist — unchanged, web/TUI only.
 
 ---
 
@@ -118,13 +122,14 @@ not a command group. Managing tools is web/TUI only.
 
 | Capability | CLI | Web | TUI |
 |---|---|---|---|
-| View current settings | 🚫 (`settings show` is a stub: "Not yet implemented") | `GET /api/settings`, Settings page | 🚫 |
-| Edit model/API key/base URL/mode/runtime | Manual YAML edit or env vars only | `PUT /api/settings`, Settings page + first-run Setup Wizard | 🚫 |
-| First-run setup wizard | n/a | Yes — auto-triggers when unconfigured, presets for OpenAI/MiniMax/Anthropic/Ollama/custom | 🚫 |
-| `default_mode` field | Not documented, not settable via any UI I could find (only via raw YAML edit) | Not exposed in Settings page | 🚫 | Exists on `AgentSettings` but there's no visible field for it anywhere |
+| View current settings | 🚫 (`settings show` is still a stub: "Not yet implemented") | `GET /api/settings`, Settings page | 🚫 |
+| Edit model/API key/base URL/mode/runtime | Manual YAML edit or env vars only | `PUT /api/settings`, Settings + first-run Setup Wizard | 🚫 |
+| Multiple providers, pick a default | n/a | **New since the original audit**: add/remove providers, "Set default" per provider (Settings → Model providers) | 🚫 |
+| First-run setup wizard | n/a | Yes — auto-triggers when unconfigured | 🚫 |
+| `default_mode` field | Not documented, not settable via any UI | Still not exposed in Settings. Unchanged — open item. | 🚫 |
+| **Section navigation** | n/a | **New since the original audit**: Settings grew to 8 sections (Usage, Providers, Tools, Policies, MCP servers, Integrations, Vault, Workspaces) with a sticky side nav that jumps to and highlights the current section | 🚫 |
 
-The CLI `settings` command group is entirely a stub. All real settings
-management is web-only (or manual YAML/env-var editing).
+The CLI `settings` command group is still entirely a stub.
 
 ---
 
@@ -132,87 +137,69 @@ management is web-only (or manual YAML/env-var editing).
 
 | Capability | Web |
 |---|---|
-| Auth | Token-based: cookie, `?token=` query param (for SSE), `Authorization: Bearer` header. Login page + form. |
-| Nav (Topbar) | Overview, Board (dropdown), Tasks List (dropdown), Settings. **Tools (`/tools`) is not linked.** |
-| Views | Overview (agent cards + new-session), AgentFocus (4 tabs: Terminal/Review/Code/Browser), Board (Kanban), Tasks (list), TaskDetail, Settings (3 tabs: Model Provider/Tools/Workspaces), ToolManager (orphaned) |
-| AgentFocus tabs in detail | **Terminal**: real live event stream. **Review**: task detail alongside the agent. **Code**: reconstructs a "files touched" list by **regex-scraping rendered event HTML** rather than structured tool-call data — fragile. **Browser**: pure placeholder UI, no actual dev-server iframe/proxy. |
-| Mobile support | 🚫 not implemented (on roadmap) |
+| Auth | Token-based: cookie, `?token=` query param (for SSE), `Authorization: Bearer` header — all now going through the same `verify_token()` constant-time compare (previously `server.py` reimplemented its own inline check, timing-attack-unsafe). Login page + form. **Fixed this cycle**: the query-token login previously only worked for `/api/*` paths, so the printed one-click cockpit URL (`http://host:port/?token=...`, path `/`) bounced to the login page instead of logging in — now accepted on any path, with the token stripped from the URL after it sets the cookie. |
+| Nav (Topbar) | Dashboard, Tasks, Review, Workflows, Settings. Vault's separate top-nav entry was folded into a Settings section (`/vault` redirects to `/settings#vault`). Tools (`/tools`) is still not linked — see §5. |
+| Views | Dashboard, Tasks (Board/List tabs, drag-and-drop), TaskDetail, **Agent Thread** (chat-style: agent/user turns anchor left/right, no avatars, markdown-rendered responses that also open any URL the agent mentions into the Browser tab, drag-to-resize chat/rail split clamped to 5–95% of the row, replay scrubber once ended; 4 right-rail tabs — **Terminal** (a real PTY-backed shell via xterm.js and a websocket, in the agent's own working directory, stays connected across tab switches), **Files** (editor-only touches, click to preview content), **Commands** (every shell invocation with a timestamp), **Browser** (a real multi-tab mini-browser — address bar, open/close tabs, a chat link opens in a new tab); composer's watching state is a banner above the input rather than a locked-out state — typing and sending assumes control automatically), **Review** (git-derived diff queue, approve/reject), **Workflows** (stage config + agent role/trigger config), Settings (9 sections incl. Vault and Accessibility — app-wide font size/family), ToolManager (still orphaned) |
+| Live event rendering | Structured JSON events (`events.py::serialize_event()`), not pre-rendered HTML — the frontend owns all rendering. Consecutive same-type message/thinking deltas merge into one growing bubble rather than rendering each raw delta as its own fragment. |
+| Mobile support | 🚫 still not implemented (on roadmap) |
 
-TUI has no auth (local-process access only) and no equivalent of
-Board/Tasks/Settings/Vault — just Overview → Focus → Tools.
+TUI still has no auth (local-process access only) and no equivalent of
+Tasks/Review/Workflows/Settings/Vault — just agent list → focus → tools.
 
 ---
 
 ## 8. Everything with literally no human-facing UI anywhere
 
-These are real, implemented, working backend capabilities that only an
-*agent* can invoke — no CLI command, no web route, no TUI action exists
-for a human to trigger them directly:
+Unchanged from the original audit — these are still agent-only:
 
-- **`mark_criterion_met`** — marking acceptance criteria as satisfied.
-  Significant now that "done" is hard-gated on this.
-- **`add_step`** — adding a step to a task's plan.
-- **`delegate_task`** — spawning a sub-agent on a sub-task.
+- **`add_step`** — adding a step to a task's plan after creation.
+- **`delegate_task`** — spawning a sub-agent on a sub-task (now actually
+  reaches the agent — see §1 — but still no human-triggerable equivalent).
 - **`validate_task_output`** — internal validation, not meant to be
   human-triggered, fine as-is.
 
-If the redesign wants humans to be able to do these things too (e.g. a
-"mark criterion met" checkbox next to each criterion in TaskDetail), that
-needs new backend routes — none exist yet for any of these.
+`mark_criterion_met` is no longer in this list — humans can do it from
+Task Detail now (§2).
 
 ---
 
-## 9. Known GUI bugs worth fixing rather than reproducing in the redesign
+## 9. Known gaps still worth fixing
 
-- **Kanban board**: only 6 of 8 task statuses have columns; `blocked`/
-  `abandoned` tasks vanish from the board.
-- **TaskDetail edit form**: description, acceptance criteria, and tags
-  edits are all silently dropped by the backend (`UpdateTaskRequest`
-  only has title/status/priority/assign). Only title/status/priority
-  edits actually persist today.
-- **Two tool-management UIs**: `Settings > Tools` and orphaned `/tools`
-  (`ToolManager.tsx`), doing the same thing.
-- **SSE has no fan-out**: two browser tabs open on the same agent's
-  event stream race for events; the second tab silently misses some.
-- **Code tab** reconstructs file changes via regex on rendered HTML
-  instead of structured tool-call data.
-- **Browser tab** is a non-functional placeholder.
-- **New Session dialog** only offers Agent/Assistant mode, not
-  Reviewer/Security (both real, both CLI-accessible).
-- **Create Task dialog** has no acceptance-criteria field (only
-  available via post-creation edit, which is itself broken — see above).
-- **Workspace editing**: the backend route and frontend API client
-  function both exist (`PATCH /api/workspaces/{id}`, `updateWorkspace()`)
-  but no UI calls it — Settings → Workspaces only has create + delete.
-  Cheap win: the plumbing's already there, just needs a form.
+- **Two tool-management UIs**: `Settings → Tools` and orphaned `/tools`
+  (`ToolManager.tsx`). Unchanged from the original audit.
+- **Vault template editing**: templates can be viewed (as chips) in the
+  web UI but only created/edited via the CLI.
+- **CLI task editing** lags the web: no `--description`/`--criteria`/
+  `--tag` flags on `task update`, even though the web API supports all of
+  them now.
+- **No CLI workspace archive** command, even though the web UI has one.
+- **`default_mode` setting** has no UI anywhere.
+- **TUI**: can't start sessions, can't send messages, no task screen, "add
+  custom tool" is a placeholder. All explicitly deprioritized while the
+  web cockpit was the redesign focus, not accidental gaps.
+- **Mobile-responsive layout** doesn't exist yet.
+- **Reviewer/security session modes** are real (backend) but only
+  reachable via CLI at session start — no web UI exposes them.
 
 ---
 
-## 10. Summary: what a GUI-primary redesign needs to add, not just restyle
+## 10. Summary: what's left after the redesign
 
-If the goal is "GUI primary," these are the real functionality gaps to
-close, ranked by how much is currently unreachable without the CLI:
+Compared to the original audit's "what a GUI-primary redesign needs to
+add" list — 6 of 8 items are now done (Vault UI, task editing, criteria
+completion UI, Kanban's missing columns, workspace edit form). What's
+genuinely still open:
 
-1. **Vault UI** — the whole feature (credentials + templates + audit
-   log) has no web presence at all today. Biggest gap.
-2. **Fix task editing** — description/criteria/tags edits currently
-   silently no-op; needs a backend model fix (`UpdateTaskRequest`) plus
-   whatever UI change accompanies the redesign.
-3. **A way for humans to mark acceptance criteria met** — currently
-   agent-only, and it's now a hard gate on completing a task.
-4. **Kanban's missing 2 columns** (blocked, abandoned).
-5. **Session send / mode control from a place other than the web** — TUI
-   users currently can't chat with or fully control a session; whether
-   that's in scope for a *web* redesign depends on how much you still
-   care about the TUI going forward.
-6. **Reviewer/security mode** exposed somewhere in the session-start flow
-   if you want them usable outside the CLI.
-7. **Consolidate the duplicate tools UI** rather than carrying both
-   forward.
-8. **Decide what "Code" and "Browser" tabs should actually be** — both
-   are currently fake/fragile placeholders dressed up as features.
+1. **Container runtime** — full filesystem + network sandboxing, still
+   the biggest security-relevant gap (see `docs/RETRO.md`).
+2. **Consolidate the duplicate tools UI** — cheap, still not done.
+3. **Reviewer/security mode** exposed somewhere outside the CLI, if
+   that's still wanted.
+4. **TUI parity** (session start/send, task screen) — an explicit
+   non-goal for now, not forgotten.
+5. **Mobile support**.
+6. **Vault template editing in the web UI** (currently view-only there).
 
-Everything else (sessions, tasks CRUD minus the edit-field bug, projects,
-tool enable/disable, settings, auth) is real and working — safe to treat
-as a given during the redesign, just needs new visual design, not new
-backend work.
+Everything else audited in the original version of this file — sessions,
+tasks CRUD, projects, tool enable/disable, settings, auth — remains real
+and working.

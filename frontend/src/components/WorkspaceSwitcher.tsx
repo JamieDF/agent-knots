@@ -12,6 +12,13 @@ function WorkspaceSwitcher() {
 
   useEffect(() => { fetchWorkspaces().then(d => setWorkspaces(d.workspaces)).catch(() => {}) }, [])
 
+  // Refetch whenever the dropdown opens — this component's list is only
+  // ever loaded once on mount otherwise, so a workspace created elsewhere
+  // (e.g. Settings) wouldn't show up here until a full page reload.
+  useEffect(() => {
+    if (open) fetchWorkspaces().then(d => setWorkspaces(d.workspaces)).catch(() => {})
+  }, [open])
+
   useEffect(() => {
     if (!open) return
     const onClick = (e: MouseEvent) => {

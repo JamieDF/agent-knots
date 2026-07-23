@@ -134,9 +134,10 @@ function WorkspaceCluster({ workspace, agents, tasks, onChanged, onNewSession, a
   const blockedTask = tasks.find(t => t.status === 'blocked')
   const upNext = tasks.filter(t => (t.status === 'open' || t.status === 'planned') && !t.assigned_to).slice(0, 5)
 
-  const handleStart = async (taskId?: string) => {
+  const handleStart = async (taskId: string | undefined, headless: boolean) => {
     const session = await createSession({ prompt: '', mode: 'agent', project_id: workspace?.id, task_id: taskId })
-    navigate(`/agent/${session.id}`)
+    if (headless) onChanged() // refresh so the task picks up its "assigned" state
+    else navigate(`/agent/${session.id}`)
   }
 
   return (
@@ -188,7 +189,8 @@ function WorkspaceCluster({ workspace, agents, tasks, onChanged, onNewSession, a
             <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: priorityColor(t.priority), flexShrink: 0 }} />
               <span onClick={() => navigate(`/tasks/${t.id}`)} style={{ flex: 1, fontSize: 12.5, color: 'var(--ink2)', cursor: 'pointer' }}>{t.title}</span>
-              <button onClick={() => handleStart(t.id)} style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'var(--ok-soft)', color: 'var(--ok)' }}>▶ Start</button>
+              <button onClick={() => handleStart(t.id, false)} title="Start and open the thread now" style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'var(--ok-soft)', color: 'var(--ok)' }}>▶ Watch</button>
+              <button onClick={() => handleStart(t.id, true)} title="Start in the background — open the thread later" style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 6, background: 'var(--card2)', color: 'var(--ink2)' }}>⏵ Headless</button>
             </div>
           ))}
         </div>

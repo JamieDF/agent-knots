@@ -18,6 +18,8 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import tempfile
+import uuid
 from pathlib import Path
 
 from strands.tools import tool as _tool_dec
@@ -37,19 +39,28 @@ def _resolve(root: str, path: str) -> str:
     return str(resolved)
 
 
-def _resource_preexec(timeout: int, max_memory_mb: int):
+def _resource_preexec(timeout: int):
     """Build a preexec_fn that puts the child in its own process group and
-    applies best-effort CPU/memory caps. Runs in the child after fork."""
+    applies a best-effort CPU cap. Runs in the child after fork.
+
+    This used to also cap RLIMIT_AS (virtual address space) as a memory
+    guard, but that limits reserved address space, not actual physical
+    memory used — and modern runtimes reserve huge virtual ranges
+    upfront regardless of real usage (V8/Node reserves a multi-GB
+    "sandbox" region for its pointer-compression tables at startup).
+    Any RLIMIT_AS cap small enough to matter (e.g. 512MB) makes Node
+    crash immediately with "Fatal process out of memory:
+    SegmentedTable::InitializeTable" before running a single line of JS
+    — so every npm/vite/webpack command an agent tries fails outright.
+    RLIMIT_AS just isn't the right lever for this; real RSS containment
+    needs cgroups, which is a bigger, separate piece of work (see the
+    container-isolation decision doc referenced in the module docstring).
+    """
 
     def _preexec() -> None:
         if hasattr(os, "setsid"):
             os.setsid()
         if HAS_RESOURCE:
-            try:
-                mem_bytes = max_memory_mb * 1024 * 1024
-                resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
-            except (ValueError, OSError):
-                pass
             try:
                 resource.setrlimit(resource.RLIMIT_CPU, (timeout, timeout))
             except (ValueError, OSError):
@@ -59,7 +70,7 @@ def _resource_preexec(timeout: int, max_memory_mb: int):
 
 
 def run_confined(
-    command: str, cwd: str | None, timeout: int = 60, max_memory_mb: int = 512,
+    command: str, cwd: str | None, timeout: int = 60,
     max_output: int | None = None,
 ) -> dict:
     """Run a shell command with basic resource limits and full process-tree
@@ -77,7 +88,7 @@ def run_confined(
         proc = subprocess.Popen(
             command, shell=True, cwd=cwd or None, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            preexec_fn=_resource_preexec(timeout, max_memory_mb) if hasattr(os, "setsid") else None,
+            preexec_fn=_resource_preexec(timeout) if hasattr(os, "setsid") else None,
         )
     except Exception as e:
         return {"error": str(e)}
@@ -122,12 +133,108 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
         pass
 
 
-def make_sandboxed_shell(workspace: str, max_output: int = 1 << 20):
-    """Create a shell tool that defaults cwd to the workspace directory."""
+def run_background(command: str, cwd: str | None, session_id: str = "") -> dict:
+    """Start a command detached from the tool call, for anything meant to
+    outlive a single turn — dev servers, watchers, long builds.
 
-    @_tool_dec(description="Run a shell command with cwd defaulted to the workspace root. Not a security sandbox — see module docs.")
-    def shell_tool(command: str) -> dict:
-        """Run a shell command with cwd defaulted to the workspace root."""
+    Unlike run_confined(), this never waits for the process and is never
+    subject to the timeout-kill: it returns as soon as the process has
+    been spawned. Without this, an agent's only way to keep something
+    running past the tool call is to hand-roll `nohup cmd &` itself,
+    which is exactly the kind of thing agents got stuck fumbling with
+    (wrong redirect, forgot disown, still got reaped) before this
+    existed — so it's a first-class option instead of a shell trick the
+    agent has to reinvent every time.
+
+    stdout/stderr are redirected to a log file (path returned) rather
+    than captured in memory, since there's no point in the call where
+    we'd ever read them back — the process is still running when this
+    returns.
+    """
+    log_path = os.path.join(
+        tempfile.gettempdir(), f"agent-knots-bg-{session_id or 'session'}-{uuid.uuid4().hex[:8]}.log"
+    )
+    try:
+        with open(log_path, "wb") as log_file:
+            proc = subprocess.Popen(
+                command, shell=True, cwd=cwd or None,
+                stdout=log_file, stderr=subprocess.STDOUT,
+                preexec_fn=(lambda: os.setsid()) if hasattr(os, "setsid") else None,
+            )
+    except Exception as e:
+        return {"error": str(e)}
+
+    return {
+        "pid": proc.pid,
+        "log_file": log_path,
+        "status": (
+            f"Started in the background (pid {proc.pid}) — it keeps running after "
+            f"this tool call returns and is not killed by any timeout. Check its "
+            f"output with a normal command (e.g. `tail -n 50 {log_path}`), check "
+            f"whether it's still alive with `kill -0 {proc.pid}`, and stop it with "
+            f"`kill {proc.pid}` when you're done with it."
+        ),
+    }
+
+
+def kill_background_process(pid: int) -> None:
+    """Best-effort kill of a background process group by PID, for session
+    teardown — mirrors _kill_process_tree but works from a bare pid
+    instead of a live Popen handle, since background processes outlive
+    the tool call that started them.
+
+    Also reaps the pid afterward: run_background() never calls
+    Popen.wait() (the whole point is not waiting on it), so a killed
+    background process would otherwise sit around as a zombie until this
+    process exits.
+    """
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(pid, signal.SIGKILL)
+        else:
+            os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    try:
+        os.waitpid(pid, 0)
+    except (ChildProcessError, OSError):
+        pass
+
+
+def make_sandboxed_shell(
+    workspace: str, max_output: int = 1 << 20,
+    session_id: str = "", background_pids: list[int] | None = None,
+):
+    """Create a shell tool that defaults cwd to the workspace directory.
+
+    background_pids, if given, gets appended to whenever the agent starts
+    a background=true command — lets the caller (SessionManager) track
+    and clean these up when the session ends, since they'd otherwise
+    outlive it indefinitely.
+    """
+
+    @_tool_dec(description=(
+        "Run a shell command with cwd defaulted to the workspace root. Not a "
+        "security sandbox — see module docs. Commands are killed if they "
+        "haven't finished within the timeout — pass background=true for "
+        "anything meant to keep running past this tool call (dev servers, "
+        "watchers, long builds); it starts detached, is never killed by the "
+        "timeout, and returns immediately with its pid and a log file path."
+    ))
+    def shell_tool(command: str, background: bool = False) -> dict:
+        """Run a shell command with cwd defaulted to the workspace root.
+
+        Args:
+            command: The shell command to run.
+            background: If true, start it detached and return immediately
+                instead of waiting for it to finish — use this for dev
+                servers or anything else meant to outlive this tool call.
+        """
+        if background:
+            result = run_background(command, cwd=workspace, session_id=session_id)
+            if background_pids is not None and "pid" in result:
+                background_pids.append(result["pid"])
+            return result
         return run_confined(command, cwd=workspace, max_output=max_output)
 
     return shell_tool

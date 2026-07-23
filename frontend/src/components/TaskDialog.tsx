@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createTask, updateTask, draftTask, type TaskDetail } from '../lib/api'
+import { createTask, updateTask, draftTask, fetchTasks, type TaskDetail, type TaskSummary } from '../lib/api'
 import { useWorkspaceScope } from '../lib/workspaceContext'
 import { Dialog, Chip } from './primitives'
 
@@ -40,6 +40,9 @@ function TaskDialog({ open, onClose, onSaved, task, initialStatus }: Props) {
   const [criterionDraft, setCriterionDraft] = useState('')
   const [steps, setSteps] = useState<string[]>([])
   const [stepDraft, setStepDraft] = useState('')
+  const [dependencies, setDependencies] = useState<string[]>([])
+  const [depPicker, setDepPicker] = useState('')
+  const [candidates, setCandidates] = useState<TaskSummary[]>([])
   const [drafting, setDrafting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -55,13 +58,22 @@ function TaskDialog({ open, onClose, onSaved, task, initialStatus }: Props) {
       setTags(task.tags)
       setCriteria(task.acceptance_criteria)
       setSteps(task.steps.map(s => s.title))
+      setDependencies(task.dependencies)
     } else {
       setTitle(''); setDescription(''); setPriority('medium')
       setStatus(initialStatus || 'open'); setReviewGate('manual')
-      setTags([]); setCriteria([]); setSteps([])
+      setTags([]); setCriteria([]); setSteps([]); setDependencies([])
     }
     setError('')
+    fetchTasks({ limit: 200 }).then(d => setCandidates(d.tasks)).catch(() => {})
   }, [open, task, initialStatus])
+
+  const titleFor = (id: string) => candidates.find(c => c.id === id)?.title || id
+  const dependencyOptions = candidates.filter(c => c.id !== task?.id && !dependencies.includes(c.id))
+  const addDependency = (depId: string) => {
+    if (depId && !dependencies.includes(depId)) setDependencies([...dependencies, depId])
+    setDepPicker('')
+  }
 
   const addTag = () => {
     const t = tagDraft.trim().replace(/,$/, '')
@@ -108,11 +120,13 @@ function TaskDialog({ open, onClose, onSaved, task, initialStatus }: Props) {
         await updateTask(task.id, {
           title: title.trim(), description, priority, status,
           review_gate: reviewGate, tags, acceptance_criteria: criteria, steps,
+          dependencies,
         })
       } else {
         await createTask({
           title: title.trim(), description, priority, review_gate: reviewGate,
           tags, acceptance_criteria: criteria, project: workspace || undefined,
+          dependencies,
         })
       }
       onSaved()
@@ -207,6 +221,23 @@ function TaskDialog({ open, onClose, onSaved, task, initialStatus }: Props) {
             onRemove={i => setSteps(steps.filter((_, idx) => idx !== i))}
             placeholder="Add step…"
           />
+        </Field>
+
+        <Field label="Depends on" hint="This task can't be started until every task listed here is done.">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: dependencies.length ? 8 : 0 }}>
+            {dependencies.map(id => (
+              <Chip key={id} onClick={() => setDependencies(dependencies.filter(x => x !== id))}>{titleFor(id)} ×</Chip>
+            ))}
+          </div>
+          <select
+            aria-label="Add dependency"
+            value={depPicker}
+            onChange={e => addDependency(e.target.value)}
+            style={inputStyle}
+          >
+            <option value="">+ Add a dependency…</option>
+            {dependencyOptions.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+          </select>
         </Field>
 
         {error && <div style={{ color: 'var(--err)', fontSize: 13 }}>{error}</div>}

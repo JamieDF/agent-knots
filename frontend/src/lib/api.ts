@@ -29,6 +29,7 @@ export interface TaskSummary {
   tags: string[]; project: string; assigned_to: string
   created_at: number; updated_at: number
   progress_count: number; steps_count: number; criteria_count: number
+  blocked_by_deps: boolean
 }
 
 export interface TaskDetail {
@@ -37,6 +38,7 @@ export interface TaskDetail {
   review_gate: string
   assigned_to: string; created_at: number; updated_at: number; created_by: string
   acceptance_criteria: string[]; criteria_met: string[]; out_of_scope: string[]; dependencies: string[]
+  unmet_dependencies: { id: string; title: string }[]
   required_credentials: string[]
   steps: { id: string; title: string; status: string; notes: string; sub_steps: any[] }[]
   progress: {
@@ -61,6 +63,14 @@ export async function checkpointAgent(id: string, label: string): Promise<void> 
 }
 export async function revertAgent(id: string, label: string): Promise<void> {
   await fetch(`/api/agent/${id}/revert`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }) })
+}
+export async function interruptAgent(id: string): Promise<void> {
+  await fetch(`/api/agent/${id}/interrupt`, { method: 'POST' })
+}
+export async function fetchAgentFile(id: string, path: string): Promise<{ path: string; content: string; truncated: boolean }> {
+  const res = await fetch(`/api/agent/${id}/file?path=${encodeURIComponent(path)}`)
+  if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || `HTTP ${res.status}`) }
+  return res.json()
 }
 export async function sendMessage(id: string, message: string): Promise<void> {
   await fetch(`/api/agent/${id}/send`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ message }) })
@@ -96,6 +106,7 @@ export async function fetchTask(id: string): Promise<TaskDetail> {
 export async function createTask(data: {
   title: string; description?: string; priority?: string; tags?: string[]
   acceptance_criteria?: string[]; review_gate?: string; project?: string
+  dependencies?: string[]
 }): Promise<TaskDetail> {
   const res = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
   if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
@@ -104,6 +115,7 @@ export async function createTask(data: {
 export async function updateTask(id: string, data: {
   status?: string; priority?: string; title?: string; description?: string; assign?: string
   tags?: string[]; acceptance_criteria?: string[]; steps?: string[]; review_gate?: string
+  dependencies?: string[]
 }): Promise<TaskDetail> {
   const res = await fetch(`/api/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
   if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()

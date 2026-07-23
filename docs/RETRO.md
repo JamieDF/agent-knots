@@ -1,322 +1,291 @@
 # Retrospective — where agent-knots actually is
 
-**Date:** 2026-07-20
-**Codebase:** ~6.0K src LOC (Python) + ~2.1K frontend LOC (TSX/TS), 171 Python
-unit tests (106 at the start of this audit, +65 added same day covering the
-fixes below), 43 Playwright e2e tests
+**Date:** 2026-07-23 (supersedes the 2026-07-20 audit below)
+**Codebase:** ~7.7K src LOC (Python) + ~5.1K frontend LOC (TSX/TS), 350 Python
+unit tests, 74 Playwright e2e tests
 **Goal:** honest self-audit — what's real, what's stubbed, what's untested,
 where docs oversell the code
 
 This supersedes the old Go-era `RETRO.md` (deleted in the Python rebuild
-cleanup). Everything below was verified by reading the actual code, not by
-re-reading docs.
+cleanup) and refreshes the 2026-07-20 Python-era audit below it. Everything
+in this update was re-verified by reading the actual current code, not by
+trusting the previous audit's claims — several had already been fixed by
+the time this pass started.
 
 ---
 
-## Fixed since this audit (same day, backend-fixes pass)
+## What changed since the 2026-07-20 audit
 
-TUI-specific findings (items 3 and 4 under "Real bugs") were explicitly
-deprioritized — GUI is getting a redesign, TUI isn't a current focus — so
-left as-is. Everything else frontend-agnostic got fixed:
+The web cockpit went through a full redesign ("Atelier" — see
+`CHANGELOG.md`'s `[Unreleased]` section and `roadmap.md`), plus several
+rounds of real-usage bug fixing. Every "Real bug" and most "Security gap"
+findings from the original audit are now fixed; see each section below for
+what's actually still true today.
 
-- **`delegate_task` ordering bug (Real bugs #1)** — fixed. The tool is now
-  appended to `all_tools` before the `Agent` is constructed.
-- **Dead `InProcessRuntime` (Real bugs #2)** — fixed. `InProcessRuntime.
-  start()` now actually starts the agent task; `SessionManager.start()`
-  goes through `create_runtime()` for both runtime types instead of
-  special-casing subprocess. Also fixed a related bug this surfaced:
-  `create_runtime()` only ever consulted the *global* runtime-type
-  setting, ignoring a per-project override that had already been
-  resolved by the caller — a project configured for `subprocess` could
-  silently get `inprocess` instead if the global default differed.
-- **TUI built-in tool toggle (Real bugs #3, backend half)** — fixed at the
-  root: `ToolRegistry.list_builtin()`/`list_enabled()` now actually read
-  the disabled-builtins file. This was framed as a TUI bug, but it's a
-  `tools/registry.py` bug — it also silently broke the web Settings
-  page's built-in tool toggle. Fixed for all surfaces, not just the TUI.
-- **Unconfined shell sandbox (Security gaps #1)** — *improved, not fully
-  solved*. Added real resource limits (CPU time + memory via
-  `resource.setrlimit`) and process-group cleanup on timeout (the old
-  code only killed the direct child, leaking any background processes a
-  command spawned). Command-string-level path confinement was
-  deliberately **not** attempted — regex/blocklist validation of
-  arbitrary `shell=True` input is not real security and would create a
-  false sense of safety. `sandbox_tools.py`'s module docstring now says
-  this plainly. Real containment still needs the container runtime on
-  the roadmap.
-- **Custom tools bypassing the sandbox (Security gaps #2)** — fixed.
-  `CustomTool.to_strands_tool()` and `ToolRegistry.list_enabled()` now
-  thread a `cwd` through from `SessionManager.start()`'s resolved
-  workspace directory, and custom tools go through the same resource-
-  limited `run_confined()` helper as the sandboxed shell tool.
-- **No acceptance-criteria enforcement (Security gaps #5)** — fixed as a
-  hard block, per explicit decision. `Task.criteria_met` now tracks which
-  criteria have been explicitly marked satisfied via the new
-  `mark_criterion_met` tool/store method. `TaskStore._validate_transition`
-  (used by both `set_status` and status-carrying `log_progress` calls —
-  both paths, not just one) refuses a `done` transition until every
-  criterion is marked met. The steering hook's keyword match stays
-  advisory-only by design, so a fuzzy match can't quietly satisfy the
-  gate. 12 new tests added in `tests/test_task/test_store.py`.
-
-`SessionManager.start()` and `session/runtime.py` now have real test
-coverage (`tests/test_session/test_manager.py::TestSessionManagerStart`,
-`tests/test_session/test_runtime.py`) — 18 new tests covering exactly the
-bugs above: delegate_task actually reaching the constructed `Agent`,
-disabled built-ins actually being excluded, custom tools actually binding
-to the session workspace, and `InProcessRuntime.start()` actually creating
-the background task. None of it needs network — no `task_description` is
-passed, so the in-process runtime never invokes the real agent loop.
-
-### Second pass — remaining backend cleanup items
-
-- **Auth duplication ("Real bugs #8")** — consolidated. `server.py`'s
-  `auth_middleware` now uses `auth.py`'s `verify_token()` (constant-time
-  compare) instead of plain `==`/`!=` on the cookie, `?token=`, and login
-  form — the old code wasn't timing-attack-safe despite that helper
-  existing specifically to prevent it. Added `Authorization: Bearer`
-  support to the actual middleware (previously that path only existed in
-  the unused `Auth.require()`). Removed `Auth.require()` itself — it
-  assumed a `Depends()`-per-route architecture the app doesn't use, so
-  keeping it around as a second, unreachable auth implementation was the
-  actual problem, not a fix worth preserving. `login_post` now calls
-  `auth.set_cookie_redirect()` instead of duplicating the cookie-setting
-  code inline. Fixed the broken `cockpit_url` (`@property` that couldn't
-  accept the `host`/`port` args it declared) by making it a plain method.
-  Also fixed a pre-existing test-isolation gap while adding coverage
-  here: `tests/test_web/test_server.py` had no `AGENT_KNOTS_HOME`
-  override, so it was reading/writing the *real* user's cockpit token
-  file. Added an `agent_knots_home` fixture; 8 new tests cover query
-  token, cookie, Bearer header, and the login POST flow, including wrong-
-  token rejection for each.
-- **`validate_task_output` ("Wired in but never called")** — wired up, and
-  moved from `session/features.py` to `task/tools.py` (it's task-domain
-  validation, not really a session feature — the old location was just
-  where it happened to get written). Now runs inside `create_task` and
-  `update_task` before constructing a `Priority`/`TaskStatus`, turning
-  what used to be an uncaught `ValueError` on invalid input into a
-  structured `{"error": ...}` tool response. 12 new tests in
-  `tests/test_task/test_tools.py`.
-- **`save_checkpoint`/`load_checkpoint` ("Wired in but never called")** —
-  removed rather than wired up. No call site anywhere (no CLI command, no
-  API route, nothing ever resumed from a checkpoint), `inject_memory`
-  already covers cross-session continuity more robustly (structured
-  progress-log entries vs. an untyped session-data dict), and real
-  session/agent-state resume would need to serialize actual conversation
-  history — a real feature to design later, not scaffolding worth
-  reviving as-is. See `docs/strands-features.md`'s new "Removed" section.
-- **`WorkspaceSandbox`'s dead config (Security gaps #3)** — resolved per
-  field, not uniformly. `max_output` (shell) and `max_file_size` (editor)
-  are now real: `run_confined()` truncates stdout/stderr past
-  `max_output`, and the sandboxed editor rejects writes past
-  `max_file_size` before touching disk. `allowed_urls` was **removed**
-  rather than enforced — there's no URL-fetching tool anywhere in
-  `DEFAULT_TOOLS` for it to gate, and even if there were, the shell tool
-  already has unrestricted network access (see gap #1), so a URL
-  allowlist on one hypothetical future tool wouldn't have been meaningful
-  protection. 14 new tests in `tests/test_sandbox_tools.py` (previously
-  zero coverage for this whole module).
-
----
-
-## Headline
-
-The **vault, task store, project store, and Playwright e2e suite are
-genuinely solid** — real crypto, real CRUD, real end-to-end tests against a
-live server and a live LLM session. The **rest of the system has a
-consistent pattern**: features are implemented and wired in, but silently
-broken at one seam, or implemented and never actually connected to
-anything, or implemented with zero test coverage. Nothing is faked outright
-— there's no literal `TODO`/`NotImplementedError` scaffolding hiding
-behind a "✅ Done" claim (with one exception, the TUI's "add custom tool").
-The bugs are subtler: an append-after-construct ordering mistake, a
-disabled-flag that's read in one place and ignored in another, a field the
-frontend sends that the backend model doesn't have.
+Headline: the pattern the original audit found — "implemented and wired
+in, but silently broken at one seam, or never actually connected to
+anything" — has mostly been closed. What's left is smaller and more
+specific: one still-orphaned duplicate UI, a couple of modules with no
+*dedicated* test file (though several are now exercised indirectly through
+much larger integration-style tests), and security tradeoffs that are
+documented rather than silently present.
 
 ---
 
 ## What's solid
 
 1. **Vault.** AES-256-GCM + argon2id, per-entry key derivation, injection
-   template CRUD, append-only audit log — all real, all tested (50 unit
-   tests across crypto + store, including tamper detection and wrong-key
-   failure paths).
+   template CRUD, append-only audit log — real, tested, and now has a full
+   web UI (a Settings section) alongside the CLI, closing what was
+   previously the single biggest web-GUI gap.
 2. **Task store.** Full YAML-backed CRUD, progress logs, steps, terminal-
-   status protection — tested with real error-path coverage.
-3. **Project store.** Full CRUD, now wired to both the web API and the CLI.
-4. **Playwright suite (43 tests).** Genuine end-to-end tests against a
-   **live server** on `127.0.0.1:8090` with a **real token** and, for
-   several tests, a **real running LLM session** (e.g. sends an actual
-   prompt, asserts on live model output). Not mocked, not render-only smoke
-   tests for the most part. This is the strongest test coverage in the
-   whole system — on the outer layer, ironically, not the backend units.
-5. **Token/cost tracking** reads real usage from model response metadata
-   (`hooks.py`), not the old hardcoded estimate — though cost is still a
-   flat $0.30/1M rate regardless of actual provider/model.
-6. **Provider resolution precedence** (CLI flag → env var → settings file)
-   matches the docs exactly.
+   status protection, and a real review-gate enforced on the `done`
+   transition (not just displayed) — tested with real error-path coverage.
+3. **Project/workspace store.** Full CRUD wired to web API, CLI, and now a
+   real edit + archive/unarchive UI in Settings (previously create+delete
+   only).
+4. **Task editing.** Title, description, priority, tags, acceptance
+   criteria, and steps are all editable after creation from the web UI —
+   previously description/tags/criteria edits were silently dropped by
+   `UpdateTaskRequest` having no matching fields.
+5. **Criteria completion.** A human can mark an acceptance criterion met
+   or unmet directly from Task Detail (`POST /api/tasks/{id}/criteria/
+   toggle`) — previously `mark_criterion_met` was agent-tool-only, and
+   "done" is hard-gated on this.
+6. **SSE fan-out.** `Session._broadcast()`/`subscribe()` gives every
+   connected browser tab its own subscriber queue seeded from a shared
+   event history — previously a single `asyncio.Queue` meant two tabs
+   watching the same agent raced for events and one silently missed some.
+7. **Playwright suite (69 tests).** Genuine end-to-end tests against a
+   live server with a real token; several exercise a real running LLM
+   session. Still the strongest test coverage in the system.
+8. **`test_web/test_server.py` (99 tests, 1065 lines).** No longer
+   unauthenticated-paths-only — covers cookie/query-token/Bearer auth,
+   most of the real API routes, including the newer review-gate, criteria-
+   toggle, and workspace-archive endpoints.
+9. **Token/cost tracking** reads real usage from model response metadata —
+   cost is still a flat rate, see Security-relevant gaps.
+10. **Auth.** `auth.py`'s `Auth` class and `verify_token()` (constant-time
+    compare) are the single implementation used everywhere — the old
+    dead-code duplicate (`Auth.require()`, a broken `cockpit_url`
+    `@property`) is gone.
+11. **Real interactive terminal.** A genuine PTY (`pty.fork()`) behind a
+    websocket, rendered with xterm.js — real shell, real cwd, real
+    running processes, not a read-only output log. Stays connected across
+    Agent Thread tab switches.
+12. **Background process execution.** `sandbox_tools.run_background()` +
+    the shell tool's `background=true` — an agent can start a dev server
+    or watcher without the tool's timeout killing it, tracked per-session
+    and cleaned up (including reaping the zombie, not just sending
+    SIGKILL) when the session ends.
+13. **Browser tab.** A real multi-tab in-panel browser (address bar,
+    open/close tabs) replacing the old static "coming soon" Preview
+    placeholder — any URL the agent mentions in chat opens in a new tab.
 
 ---
 
-## Real bugs
+## Real bugs (fixed since 2026-07-20)
 
-1. **`delegate_task` is likely never actually usable.** In
-   `session/manager.py`, `make_delegate_tool` is appended to the tool list
-   *after* the Strands `Agent` was already constructed with the earlier
-   list. Multi-agent delegation is wired into every session per the code
-   path, but the tool probably never reaches the agent. Zero tests would
-   have caught this.
-2. **`InProcessRuntime` is dead code.** `SessionManager.start()` never
-   constructs it — non-subprocess sessions run `_run_agent` directly,
-   bypassing the `SessionRuntime` abstraction entirely. The "two runtimes"
-   architecture description (mine included, in `docs/architecture.md`) is
-   misleading; only the subprocess path is real.
-3. **TUI tool-manager toggle is broken for built-in tools.** Disabling a
-   built-in via the TUI writes `disabled_tools.yaml`, but
-   `ToolRegistry.list_builtin()`/`list_enabled()` hardcode `enabled=True`
-   and never read that file. The UI shows it as enabled, and the agent
-   still gets the tool — toggling a built-in tool does nothing. Only
-   custom-tool toggling actually works.
-4. **TUI "add custom tool" is a literal placeholder** — `self.notify(
-   "...coming soon...")`.
-5. **Kanban board silently drops tasks.** `TaskStatus` has 8 values;
-   `Board.tsx` only renders 6 columns. Tasks in `blocked` or `abandoned`
-   status have no column and disappear from the board (the Tasks list view
-   handles all 8 correctly — this is Board-specific).
-6. **Task description edits don't persist.** `TaskDetail.tsx`'s edit modal
-   sends `description` in the update payload; the server's
-   `UpdateTaskRequest` Pydantic model doesn't have that field, so it's
-   silently dropped. Editing a task's title/status works; editing the
-   description does not.
-7. **SSE has no fan-out.** Each session's events live in a single
-   `asyncio.Queue`; if two browser tabs open the event stream for the same
-   agent, they race for `queue.get()` and each event goes to only one of
-   them. Not a crash, just silent event loss for the second tab.
-8. **Auth has two divergent implementations.** `auth.py`'s real `Auth`
-   class (with `Authorization: Bearer` support) is dead code — `server.py`
-   reimplements its own inline cookie/`?token=` middleware instead of using
-   it. `auth.py`'s `cockpit_url` is additionally just broken (a `@property`
-   that can't accept the `host`/`port` args it's written to take).
+All eight items the original audit found here are now fixed, verified
+directly against current code. Items 9+ below are bugs found and fixed in
+a later same-day pass, after real usage surfaced them — not part of the
+original 2026-07-20 audit:
+
+1. ~~`delegate_task` never reaches the agent~~ — fixed.
+   `make_delegate_tool` is appended to `all_tools` before `Agent(...)` is
+   constructed (`session/manager.py`), with a comment explaining why order
+   matters.
+2. ~~`InProcessRuntime` is dead code~~ — fixed. `start()` actually creates
+   the background task; `SessionManager.start()` goes through
+   `create_runtime()` for both runtime types.
+3. ~~TUI built-in tool toggle is broken~~ — fixed. `ToolRegistry.
+   list_builtin()`/`list_enabled()` read the disabled-builtins file for
+   real now.
+4. **TUI "add custom tool" is still a placeholder.** Unchanged —
+   explicitly deprioritized (TUI isn't a current focus vs. the web
+   redesign). `app.py`: `self.notify("Custom tool creation via TUI coming
+   soon. Use the web cockpit to add tools.")`.
+5. ~~Kanban board silently drops tasks~~ — fixed, and more thoroughly than
+   just "add 2 columns": stages are now a configurable store (Workflows
+   screen) with all 8 statuses covered; `blocked`/`planned` surface as
+   card badges within their parent column instead of needing their own.
+6. ~~Task description edits don't persist~~ — fixed, see "What's solid" #4.
+7. ~~SSE has no fan-out~~ — fixed, see "What's solid" #6.
+8. ~~Auth has two divergent implementations~~ — fixed, see "What's solid" #10.
+9. ~~An agent could self-approve its own review-gated work~~ — fixed.
+   `update_task_status('review')` then `update_task_status('done')`
+   back-to-back in one turn used to trivially satisfy the "must be in
+   review" check with zero human oversight, worst with no acceptance
+   criteria set (nothing else blocked it either). `_validate_transition`
+   is now actor-aware: only the web's human-driven PATCH route passes
+   `actor="human"`; every agent tool call defaults to `actor="agent"` and
+   is refused past `review`.
+10. ~~Composer "Stop" killed the whole session, not just the current
+    turn~~ — fixed. Cancelling a session's asyncio task always broadcast
+    `ENDED`, locking the composer into replay mode, so the only way to
+    interrupt one bad tool call was to end the session outright and start
+    a new one. `Session.cancel(end_session=False)` (used by the new
+    `interrupt()`/`POST /api/agent/{id}/interrupt`) now reports a
+    `STATE_CHANGE` instead — the session survives, send another message
+    to continue.
+11. ~~`RLIMIT_AS` made Node/Vite/npm crash outright under the sandboxed
+    shell~~ — fixed by removing the cap (kept the CPU-time cap). V8
+    reserves several GB of *virtual address space* upfront for its
+    sandbox tables regardless of actual memory used; any `RLIMIT_AS` cap
+    small enough to matter (the sandbox used 512MB) crashed Node
+    immediately with `Fatal process out of memory:
+    SegmentedTable::InitializeTable` before a single line of JS ran — so
+    every `npm`/`vite`/`webpack` command an agent tried failed outright,
+    real memory pressure or not. Reproduced the exact crash with the old
+    limit before removing it, to confirm the diagnosis.
+12. ~~The workspace switcher dropdown never showed a newly-created
+    workspace without a full page reload~~ — fixed. `WorkspaceSwitcher.tsx`
+    fetched the workspace list once on mount and never again; it now
+    refetches every time the dropdown opens, matching the pattern
+    `NewSessionDialog.tsx` already used.
+13. ~~The printed one-click cockpit URL bounced to the login page~~ —
+    fixed. The `?token=` query-param login only checked `/api/*` paths;
+    the printed URL's path is `/`, so it fell through to the login page
+    instead of logging in directly. Now accepted on any path, setting the
+    cookie and redirecting to a clean (token-stripped) URL.
+
+Only #4 remains from the original audit, and it's a deliberate non-fix,
+not an oversight.
 
 ---
 
 ## Security-relevant gaps
 
-1. **The sandboxed shell tool doesn't actually confine shell commands.**
-   `make_sandboxed_shell` runs `subprocess.run(command, shell=True, cwd=
-   workspace, ...)` with **no validation of the command string at all**.
-   `cd /`, absolute paths, `../../..`, `rm -rf /`, `curl` — none of it is
-   blocked. Only a 60s timeout is enforced. Path confinement (via
-   `_resolve()`, which does correctly catch symlink escapes) only applies
-   to the **editor** tool, not shell.
-2. **Custom tools bypass the sandbox entirely.** They run via
-   `subprocess.run` with **no `cwd` set at all** — they execute in the
-   server process's actual working directory, ignoring whatever workspace
-   is configured for the session.
-3. **`WorkspaceSandbox`'s own limits are dead config.** `allowed_urls`,
-   `max_output`, `max_file_size` are all defined fields, never read
-   anywhere in the codebase. No network allowlist, no output size cap is
-   actually enforced despite the dataclass implying there is one.
-4. **Tool-use confirmation is globally bypassed for every session** via
-   `BYPASS_TOOL_CONSENT=true` + monkeypatched `get_user_input`. This is
-   an intentional design choice (agents run non-interactively) but it's
-   all-or-nothing — no per-tool allowlist — and has zero test coverage.
-5. **No acceptance-criteria enforcement.** An agent can call
-   `update_task_status(..., "done")` with unmet acceptance criteria and
-   nothing stops it. The only related mechanism, the steering hook, does a
-   keyword match and *logs* a note — it never blocks the transition. Its
-   own docstring calls it a placeholder ("production would use LLM
-   evaluation"). README's task-system description implies gating that
-   doesn't exist.
-6. **`?token=` query-param auth** authorizes any `/api/*` request if the
-   token leaks via browser history, referrer headers, or logs. Intentional
-   tradeoff for `EventSource` (which can't set custom headers), but worth
-   knowing if you ever expose the cockpit beyond localhost.
+1. **The sandboxed shell tool still doesn't validate the command string.**
+   `make_sandboxed_shell` runs `subprocess.run(command, shell=True, ...)`
+   with no blocklist/regex on the command itself — `cd /`, absolute
+   paths, `rm -rf /` are all possible. This is unchanged **by design**:
+   the module's docstring now says plainly that command-string validation
+   for arbitrary `shell=True` input isn't real security. What *did*
+   improve: real resource limits (`resource.setrlimit` for CPU time and
+   memory) and process-group cleanup on timeout (`os.killpg`, so a
+   background process a command spawned doesn't leak past the timeout).
+   Real containment still needs the container runtime on the roadmap.
+2. ~~Custom tools bypass the sandbox entirely~~ — fixed. `CustomTool.
+   to_strands_tool()` threads `cwd` through from the resolved workspace
+   and runs via the same `run_confined()` helper as the sandboxed shell.
+3. **`WorkspaceSandbox`'s dead config** — resolved per field, not
+   uniformly. `max_output` and `max_file_size` are real (verified: shell
+   output truncation and editor write-size rejection both fire). `allowed_
+   urls` was removed rather than enforced — there's no URL-fetching tool
+   in `DEFAULT_TOOLS` for it to gate.
+4. **Tool-use confirmation is still globally bypassed** via
+   `BYPASS_TOOL_CONSENT=true` + monkeypatched `get_user_input`. Unchanged,
+   intentional (agents run non-interactively), still all-or-nothing with
+   no per-tool allowlist.
+5. ~~No acceptance-criteria enforcement~~ — fixed, see "What's solid" #2/#5.
+6. **`?token=` query-param auth** still authorizes any `/api/*` request if
+   the token leaks via browser history/referrer/logs. Unchanged,
+   intentional tradeoff for `EventSource` (can't set custom headers) —
+   worth knowing if you ever expose the cockpit beyond localhost.
+
+Two of six gaps closed; the remaining four are either deliberate,
+documented tradeoffs (1, 4, 6) or partially mitigated (3).
 
 ---
 
-## Wired in but never tested, or wired in but never called
+## Wired in but never called, or never tested
 
-> **Update:** the first two items below are resolved — see "Second pass"
-> above. `save_checkpoint`/`load_checkpoint` were removed;
-> `validate_task_output` was wired into `create_task`/`update_task`.
-
-- **`save_checkpoint`/`load_checkpoint`** — fully implemented, listed as
-  "✅ Integrated" in `docs/strands-features.md`, but **never called from
-  anywhere else in the codebase**. Orphaned.
-- **`validate_task_output`** — defined, never called.
-- **`register_steering_hook`** (memory injection's sibling) — actually
-  wired in and does run, but only does advisory keyword matching (see
-  security gaps above).
-- `GET /api/tools/{name}` and `GET /api/health` — real endpoints, not
-  called by any frontend code. Health-check is presumably meant for
-  external monitoring, so that one's fine to leave orphaned from the UI.
-- A near-duplicate `ToolManager.tsx` view exists alongside `Settings.tsx`'s
-  tools tab — not confirmed whether it's reachable from the router; likely
-  a leftover from an earlier layout.
-
----
-
-## Test coverage: the real gap
-
-> **Update:** `SessionManager.start()` and `session/runtime.py` are no
-> longer zero-coverage — see "Fixed since this audit" above. The rest of
-> this section (as originally written) still stands.
-
-**`SessionManager.start()` — the ~200-line method that resolves the
-provider, builds the system prompt, assembles tools, wires the sandbox,
-registers hooks, and constructs the Strands `Agent` — has zero test
-coverage.** No test, mocked or real, ever calls it. Every bug above that
-lives inside that method (the delegate-tool ordering bug, the dead
-`InProcessRuntime` branch) would have been caught by a single test that
-actually started a session with a fake/mock model.
-
-Zero test coverage, full stop, for: `cockpit/tui/app.py`,
-`cockpit/web/auth.py`, `session/runtime.py`, `session/worker.py`,
-`session/features.py`, `hooks.py`, `intervention.py`, `isolation.py`,
-`sandbox_tools.py`, `tools/registry.py`, `project/store.py`, `cli/main.py`
-(including the `project`/`vault template` commands added this session),
-`provider.py`, `settings.py`.
-
-`test_web/test_server.py` exists (116 lines) but only covers unauthenticated
-paths — health check, login redirect, login page render, HTML-escaping in
-`format_event_html`. None of the 26 real API routes' authenticated behavior
-is tested.
-
-By contrast, `test_vault/*`, `test_task/test_store.py`, and the Playwright
-suite are genuinely thorough, including error paths.
+- ~~`save_checkpoint`/`load_checkpoint`~~ — removed rather than wired up
+  (no call site ever existed; `inject_memory` covers cross-session
+  continuity more robustly). See `docs/strands-features.md`'s "Removed"
+  section.
+- ~~`validate_task_output`~~ — fixed, wired into `create_task`/`update_task`.
+- **`register_steering_hook`** — still advisory-only by design (keyword
+  match logs a suggestion, never marks a criterion itself). Not a bug —
+  the enforcement gate only respects explicit `mark_criterion_met` calls.
+- **`GET /api/tools/{name}`** — still a real route, still never called by
+  any frontend code (the frontend only PATCHes/DELETEs/toggles by name,
+  never fetches single-tool detail).
+- **`GET /api/health`** — still unused by the frontend; fine to leave
+  orphaned from the UI, presumably meant for external monitoring.
+- **`ToolManager.tsx` is still a genuine orphaned duplicate.** `Settings.
+  tsx`'s Tools section and `/tools` (`ToolManager.tsx`) both manage tools;
+  `/tools` has no nav link anywhere in `Topbar.tsx`'s `NAV_ITEMS` — only
+  reachable by typing the URL. Confirmed still true, not touched by the
+  redesign. Worth consolidating (delete `ToolManager.tsx`, keep Settings'
+  version) rather than carrying the duplicate forward again.
+- **`SubprocessRuntime` is currently broken, found but not fixed this
+  cycle.** `session/worker.py`'s `_read_events` (and `runtime.py`'s
+  `SubprocessRuntime._read_events`) still reference `session._events.put(
+  ...)` — an attribute `Session` no longer has, since the SSE fan-out fix
+  (see "What's solid" #6) replaced the single `_events` queue with
+  `_subscribers`/`_history`/`_broadcast()`. Would raise `AttributeError`
+  the moment a subprocess-runtime session tried to emit an event. Not
+  caught by any test because the default runtime is `inprocess` and
+  nothing in this cycle's work exercised `runtime=subprocess` with an
+  actual running turn. `docs/architecture.md` currently describes both
+  runtimes as equally real — that's now inaccurate for this one path.
 
 ---
 
-## Doc/reality mismatches to fix
+## Test coverage
 
-- **README.md says "Playwright e2e tests (30)"** — the actual number,
-  confirmed by both the CHANGELOG and the test file itself, is **43**.
-- `docs/architecture.md` (written during this session's cleanup) describes
-  `InProcessRuntime`/`SubprocessRuntime` as two symmetric runtime
-  implementations — needs a correction noting the in-process path bypasses
-  the `SessionRuntime` abstraction entirely.
-- `docs/strands-features.md` marks checkpoint and structured-output
-  validation "✅ Integrated" — they're implemented but not wired to
-  anything; should be re-labeled (e.g. "implemented, unused").
-- `settings.py`'s `default_mode` field is referenced in code but
-  undocumented anywhere in README/quickstart.
+**Real, substantial improvement since 2026-07-20** — `test_web/
+test_server.py` alone grew from unauthenticated-paths-only to 99 tests
+covering real authenticated routes, and `test_session/test_manager.py`
+grew to 39 tests including a `TestSessionManagerStart` class that
+exercises the actual `SessionManager.start()` path (provider resolution,
+system prompt assembly, tool set, sandbox wiring, hooks, `Agent`
+construction) rather than mocking it away — the exact method the original
+audit called out as having zero coverage.
+
+That said, several modules still have **no dedicated test file** —
+`cockpit/tui/app.py`, `cockpit/web/auth.py` (indirectly covered via
+`test_server.py`'s auth tests, which exercise `verify_token()` but not
+`auth.py` in isolation), `session/worker.py`, `session/features.py`
+(indirectly covered via `test_manager.py`'s session-start tests),
+`hooks.py`, `intervention.py`, `isolation.py` (all three indirectly
+exercised the same way), `tools/registry.py` (indirectly covered via
+`test_server.py`'s tool-toggle tests), `project/store.py` (indirectly
+covered via `test_server.py`'s workspace tests), `cli/main.py`,
+`provider.py`, `settings.py`. "No dedicated file" isn't the same as "zero
+coverage" anymore for most of these — the integration-style tests through
+`SessionManager.start()` and the web API genuinely exercise them — but a
+bug isolated to one of these modules in a code path the integration tests
+don't happen to hit still wouldn't be caught by a focused unit test.
+
+---
+
+## Doc/reality mismatches
+
+The 2026-07-20 audit's four mismatches are now resolved as part of this
+same documentation pass:
+
+- ~~README says "43" but code has more~~ — README's test counts (and this
+  file's) are current as of this audit.
+- ~~`docs/architecture.md` describes `InProcessRuntime` as dead code~~ —
+  fixed to describe both runtimes as real, matching "Real bugs" #2 above.
+- `docs/strands-features.md`'s "✅ Integrated" labels for checkpoint and
+  structured-output validation — checkpoint was removed (see "Wired in"
+  above) rather than relabeled, since it no longer exists to mislabel;
+  structured-output validation is genuinely wired in now, so its label is
+  accurate as-is.
+- `settings.py`'s `default_mode` field is still not exposed in the
+  Settings UI or documented in the quickstart — this one's still open,
+  low priority (manual YAML edit works).
 
 ---
 
 ## If I were prioritizing the next two weeks
 
-1. **Write one test that actually starts a session** (mock the model
-   client) — this single test would surface/prevent most of the bugs
-   above and is the highest-leverage thing missing.
-2. **Fix the shell sandbox** — either add real command validation or be
-   honest in docs that "sandbox" currently only means "confined cwd for
-   the editor tool, nothing else."
-3. **Fix custom tools' missing `cwd`** — one-line fix, currently a
-   silent full bypass of workspace isolation.
-4. **Fix the built-in tool toggle** in `list_builtin()`/`list_enabled()` —
-   small, contained, currently makes a whole TUI feature a no-op.
-5. **Decide whether acceptance-criteria gating is a real product
-   requirement** — if yes, it needs actual enforcement; if the steering
-   hook's advisory-only behavior is the intended design, the docs need to
-   stop implying otherwise.
+1. **Fix `SubprocessRuntime`'s stale `_events` reference** — see "Wired in
+   but never called" above. Currently broken for anyone who actually
+   selects the subprocess runtime, silent until a session tries to emit
+   its first event.
+2. **Consolidate `ToolManager.tsx`** into `Settings.tsx`'s Tools section
+   and delete the orphaned route — the one concrete duplicate left over
+   from the redesign.
+3. **Container runtime** — still the biggest real security gap (#1 above),
+   and it's already on the roadmap.
+4. **Fill in `default_mode`** in the Settings UI, or explicitly document
+   it as YAML-only if that's the intended long-term answer.
+5. **Consider a couple of targeted unit tests** for `hooks.py` and
+   `intervention.py` specifically — they're exercised indirectly today,
+   but a dedicated test would pin their behavior independent of whatever
+   `SessionManager.start()`'s integration tests happen to cover.

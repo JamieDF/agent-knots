@@ -57,6 +57,16 @@ class Session:
     _agent: Any = field(default=None, repr=False)       # strands.Agent
     _task: asyncio.Task[Any] | None = field(default=None, repr=False)
     _cancelled: bool = field(default=False, repr=False)
+    # Set by cancel(end_session=False) — tells _run_agent's cancellation
+    # handler to report this as an interrupted turn (STATE_CHANGE) rather
+    # than the session ending (ENDED), so the composer stays usable and a
+    # follow-up send() can start a new turn on the same session.
+    _interrupt_only: bool = field(default=False, repr=False)
+    # PIDs of background=true shell commands (dev servers, watchers) this
+    # session's agent has started — these deliberately outlive any single
+    # turn/interrupt, but SessionManager.stop() kills them so they don't
+    # outlive the session itself forever.
+    _background_pids: list[int] = field(default_factory=list, repr=False)
 
     @property
     def running(self) -> bool:
@@ -83,9 +93,15 @@ class Session:
         for q in self._subscribers:
             q.put_nowait(event)
 
-    async def cancel(self) -> None:
-        """Cancel the running agent task."""
+    async def cancel(self, *, end_session: bool = True) -> None:
+        """Cancel the running agent task.
+
+        end_session=False is used by SessionManager.interrupt() — the
+        current turn is cancelled but the session itself stays alive
+        (see _interrupt_only).
+        """
         self._cancelled = True
+        self._interrupt_only = not end_session
         if self._agent is not None and hasattr(self._agent, "cancel"):
             try:
                 await self._agent.cancel()
@@ -242,7 +258,14 @@ class SessionManager:
         )
 
         # Swap in sandboxed shell/editor tools if we have a workspace.
+        # background_pids is created here (before the Session below exists)
+        # and handed to both the shell tool closure and the Session itself
+        # as the same list object, so a background=true shell command's pid
+        # lands somewhere SessionManager.stop() can find and clean up later
+        # — without this, a dev server an agent starts in the background
+        # would outlive the session indefinitely.
         ws_sandbox = None
+        background_pids: list[int] = []
         if resolved_working_dir:
             from agent_knots.isolation import create_sandbox
             ws_sandbox = create_sandbox(str(resolved_working_dir))
@@ -250,7 +273,10 @@ class SessionManager:
         if ws_sandbox and ws_sandbox.exists:
             from agent_knots.sandbox_tools import make_sandboxed_shell, make_sandboxed_editor
             ws = ws_sandbox.workspace_dir
-            sb_shell = make_sandboxed_shell(ws, max_output=ws_sandbox.max_output)
+            sb_shell = make_sandboxed_shell(
+                ws, max_output=ws_sandbox.max_output,
+                session_id=session_id, background_pids=background_pids,
+            )
             sb_editor = make_sandboxed_editor(ws, max_file_size=ws_sandbox.max_file_size)
             all_tools = [
                 sb_shell if getattr(t, '__name__', '') == 'shell'
@@ -283,6 +309,7 @@ class SessionManager:
             working_dir=resolved_working_dir,
             model=provider.model,
             _agent=agent,
+            _background_pids=background_pids,
         )
         self._sessions[session_id] = session
 
@@ -337,6 +364,15 @@ class SessionManager:
         if session is None:
             return
         await session.cancel()
+
+        # Background=true commands (dev servers, watchers) are meant to
+        # outlive any single turn, but not the session itself — clean
+        # them up now or they'd leak forever once the session is gone.
+        if session._background_pids:
+            from agent_knots.sandbox_tools import kill_background_process
+            for pid in session._background_pids:
+                kill_background_process(pid)
+
         session._broadcast(Event(
             type=EventType.ENDED,
             session_id=session_id,
@@ -385,6 +421,20 @@ class SessionManager:
         session._task = asyncio.create_task(
             self._run_agent(session, session._agent, message)
         )
+
+    async def interrupt(self, session_id: str) -> None:
+        """Cancel the agent's current turn only.
+
+        Unlike stop(), the session is not removed — it stays in
+        self._sessions so a follow-up send() can pick the conversation
+        back up. A no-op if the agent isn't currently running.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise ValueError(f"session {session_id!r} not found")
+        if not session.running:
+            return
+        await session.cancel(end_session=False)
 
     async def set_mode(self, session_id: str, mode: str) -> None:
         """Change the agent's mode (agent ↔ assistant).
@@ -477,11 +527,18 @@ class SessionManager:
 
         except asyncio.CancelledError:
             if not finished:
-                session._broadcast(Event(
-                    type=EventType.ENDED,
-                    session_id=session.id,
-                    message="Agent cancelled.",
-                ))
+                if session._interrupt_only:
+                    session._broadcast(Event(
+                        type=EventType.STATE_CHANGE,
+                        session_id=session.id,
+                        message="Cancelled — send another message to continue.",
+                    ))
+                else:
+                    session._broadcast(Event(
+                        type=EventType.ENDED,
+                        session_id=session.id,
+                        message="Agent cancelled.",
+                    ))
         except Exception as exc:
             session._broadcast(Event(
                 type=EventType.ERROR,
@@ -491,6 +548,7 @@ class SessionManager:
             ))
         finally:
             session._cancelled = False
+            session._interrupt_only = False
 
     @staticmethod
     def _chunk_to_event(
@@ -745,6 +803,20 @@ def _build_system_prompt(base_prompt: str, task_context: str, mode: str) -> str:
         parts.append("You are a code reviewer. Focus on finding issues, suggesting improvements, and verifying correctness. Do not make changes unless asked.")
     elif mode == "security":
         parts.append("You are a security auditor. Focus on finding vulnerabilities, unsafe patterns, and security anti-patterns. Do not make changes unless asked.")
+
+    if mode in ("agent", "assistant"):
+        parts.append(
+            "When starting a dev server or any other long-running process the user needs to keep using "
+            "(npm run dev, vite, next dev, etc.), call the shell tool with background=true — it starts "
+            "the process detached and returns immediately with its pid and a log file, instead of being "
+            "killed once the tool call's timeout is reached (which a plain foreground shell call always "
+            "is, even though the command looked like it started fine). Do not try to hand-roll this "
+            "yourself with `nohup ... &`; use background=true. "
+            "Also bind dev servers to all network interfaces (e.g. add `--host` / `--host 0.0.0.0`) "
+            "instead of leaving them on the tool's default host — on many systems 'localhost' resolves "
+            "to the IPv6 loopback only, so a server bound to the default can be running fine yet "
+            "unreachable from the user's browser at http://localhost:<port> or http://127.0.0.1:<port>."
+        )
 
     if task_context:
         parts.append(task_context)

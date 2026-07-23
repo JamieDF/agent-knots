@@ -118,6 +118,40 @@ class TestAuth:
         assert "Access token" in resp.text
 
     @pytest.mark.asyncio
+    async def test_root_with_query_token_logs_in_directly(self, raw_client, auth_token):
+        """The printed "one-click" cockpit URL is http://host:port/?token=...
+        — opening it in a browser must log in directly instead of bouncing
+        to the login page asking for the token to be pasted in (a real bug:
+        the query-token check used to be scoped to /api/* paths only, so
+        the root path fell through to requiring a cookie that didn't exist
+        yet)."""
+        resp = await raw_client.get(f"/?token={auth_token}")
+        assert resp.status_code == 303
+        assert resp.cookies["agent-knots-session"] == auth_token
+        # Redirects to a clean URL — token stripped, not left in the address bar.
+        assert resp.headers["location"] == "/"
+
+    @pytest.mark.asyncio
+    async def test_root_with_query_token_end_to_end(self, client, auth_token):
+        """Following the redirect (like a real browser) lands on the actual
+        SPA shell, not the login page."""
+        resp = await client.get(f"/?token={auth_token}")
+        assert resp.status_code == 200
+        assert "Access token" not in resp.text
+
+    @pytest.mark.asyncio
+    async def test_deep_link_with_query_token_preserves_path_and_strips_token(self, raw_client, auth_token):
+        resp = await raw_client.get(f"/agent/abc123?token={auth_token}&foo=bar")
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/agent/abc123?foo=bar"
+
+    @pytest.mark.asyncio
+    async def test_wrong_query_token_on_root_denied(self, raw_client):
+        resp = await raw_client.get("/?token=not-the-real-token")
+        assert resp.status_code == 303
+        assert resp.headers["location"].startswith("/login")
+
+    @pytest.mark.asyncio
     async def test_cookie_grants_access(self, raw_client, auth_token):
         raw_client.cookies.set("agent-knots-session", auth_token)
         resp = await raw_client.get("/api/agents")
@@ -267,6 +301,36 @@ class TestTaskAPI:
         assert resp2.status_code == 200
 
     @pytest.mark.asyncio
+    async def test_patch_updates_dependencies(self, authed_client):
+        blocker = await authed_client.post("/api/tasks", json={"title": "Blocker"})
+        blocker_id = blocker.json()["id"]
+        task = await authed_client.post("/api/tasks", json={"title": "Blocked"})
+        task_id = task.json()["id"]
+
+        resp = await authed_client.patch(f"/api/tasks/{task_id}", json={"dependencies": [blocker_id]})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["dependencies"] == [blocker_id]
+        assert body["unmet_dependencies"] == [{"id": blocker_id, "title": "Blocker"}]
+
+    @pytest.mark.asyncio
+    async def test_task_cannot_depend_on_itself(self, authed_client):
+        task = await authed_client.post("/api/tasks", json={"title": "T"})
+        task_id = task.json()["id"]
+        resp = await authed_client.patch(f"/api/tasks/{task_id}", json={"dependencies": [task_id]})
+        assert resp.json()["dependencies"] == []
+
+    @pytest.mark.asyncio
+    async def test_unmet_dependencies_clears_once_blocker_done(self, authed_client):
+        blocker = await authed_client.post("/api/tasks", json={"title": "Blocker", "review_gate": "none"})
+        blocker_id = blocker.json()["id"]
+        await authed_client.patch(f"/api/tasks/{blocker_id}", json={"status": "in_progress"})
+        await authed_client.patch(f"/api/tasks/{blocker_id}", json={"status": "done"})
+
+        task = await authed_client.post("/api/tasks", json={"title": "Blocked", "dependencies": [blocker_id]})
+        assert task.json()["unmet_dependencies"] == []
+
+    @pytest.mark.asyncio
     async def test_create_task_explicit_review_gate(self, authed_client):
         resp = await authed_client.post(
             "/api/tasks", json={"title": "Test task", "review_gate": "auto"}
@@ -389,6 +453,77 @@ class TestTaskAPI:
         assert resp.status_code == 404
 
 
+class TestTaskDependencyGate:
+    """Ticket dependencies: task A can declare it depends on task B, and
+    can't be started (moved to in_progress) until B is done."""
+
+    @pytest.mark.asyncio
+    async def test_create_session_refuses_when_task_blocked(self, authed_client, monkeypatch):
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-from-env")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake")
+
+        blocker = await authed_client.post("/api/tasks", json={"title": "Blocker"})
+        blocker_id = blocker.json()["id"]
+        blocked = await authed_client.post("/api/tasks", json={
+            "title": "Blocked", "status": "open", "dependencies": [blocker_id],
+        })
+        blocked_id = blocked.json()["id"]
+
+        resp = await authed_client.post("/api/sessions", json={"prompt": "", "task_id": blocked_id})
+        assert resp.status_code == 400
+        assert "blocked by unfinished dependencies" in resp.json()["detail"]
+        assert blocker_id in resp.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_create_session_succeeds_once_dependency_done(self, authed_client, monkeypatch):
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-from-env")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake")
+
+        blocker = await authed_client.post("/api/tasks", json={"title": "Blocker", "review_gate": "none"})
+        blocker_id = blocker.json()["id"]
+        await authed_client.patch(f"/api/tasks/{blocker_id}", json={"status": "in_progress"})
+        await authed_client.patch(f"/api/tasks/{blocker_id}", json={"status": "done"})
+
+        blocked = await authed_client.post("/api/tasks", json={
+            "title": "Blocked", "status": "open", "dependencies": [blocker_id],
+        })
+        blocked_id = blocked.json()["id"]
+
+        resp = await authed_client.post("/api/sessions", json={"prompt": "", "task_id": blocked_id})
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_patch_to_in_progress_refused_when_blocked(self, authed_client):
+        """Dragging a Kanban card straight into 'In progress' must respect
+        the same gate as starting a session — not just a session-creation
+        pre-flight check."""
+        blocker = await authed_client.post("/api/tasks", json={"title": "Blocker"})
+        blocker_id = blocker.json()["id"]
+        blocked = await authed_client.post("/api/tasks", json={
+            "title": "Blocked", "status": "open", "dependencies": [blocker_id],
+        })
+        blocked_id = blocked.json()["id"]
+
+        resp = await authed_client.patch(f"/api/tasks/{blocked_id}", json={"status": "in_progress"})
+        assert resp.status_code == 400
+        assert "blocked by unfinished dependencies" in resp.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_flags_blocked_by_deps(self, authed_client):
+        blocker = await authed_client.post("/api/tasks", json={"title": "Blocker"})
+        blocker_id = blocker.json()["id"]
+        await authed_client.post("/api/tasks", json={
+            "title": "Blocked", "status": "open", "dependencies": [blocker_id],
+        })
+
+        resp = await authed_client.get("/api/tasks")
+        by_title = {t["title"]: t for t in resp.json()["tasks"]}
+        assert by_title["Blocked"]["blocked_by_deps"] is True
+        assert by_title["Blocker"]["blocked_by_deps"] is False
+
+
 class TestAgentDetailAPI:
     @pytest.mark.asyncio
     async def test_get_unknown_agent_404s(self, authed_client):
@@ -404,6 +539,147 @@ class TestAgentDetailAPI:
     async def test_revert_unknown_agent_404s(self, authed_client):
         resp = await authed_client.post("/api/agent/nonexistent/revert", json={"label": "x"})
         assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_interrupt_unknown_agent_404s(self, authed_client):
+        resp = await authed_client.post("/api/agent/nonexistent/interrupt")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_interrupt_noop_when_not_running_keeps_session(self, authed_client, session_manager):
+        """Unlike DELETE, interrupt on an idle session is a no-op and the
+        session is never removed."""
+        from agent_knots.session.manager import Session
+        session_manager._sessions["idle"] = Session(id="idle")
+        resp = await authed_client.post("/api/agent/idle/interrupt")
+        assert resp.status_code == 200
+        assert "idle" in session_manager._sessions
+
+
+class TestAgentFileAPI:
+    """Files tab preview — reads a file's content confined to the
+    session's own working directory, no real agent/network involved."""
+
+    @pytest.fixture
+    def workspace_session(self, session_manager, tmp_path):
+        from agent_knots.session.manager import Session
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        (ws / "README.md").write_text("# Hello\n\nSome markdown content.")
+        (ws / "notes" / "sub").mkdir(parents=True)
+        (ws / "notes" / "sub" / "deep.txt").write_text("nested file")
+        (ws / "image.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00binary\xff\xfe")
+        session = Session(id="test-session", working_dir=str(ws))
+        session_manager._sessions[session.id] = session
+        return ws
+
+    @pytest.mark.asyncio
+    async def test_get_file_unknown_agent_404s(self, authed_client):
+        resp = await authed_client.get("/api/agent/nonexistent/file?path=README.md")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_file_with_no_working_dir_reads_absolute_path(self, authed_client, session_manager, tmp_path):
+        """A session with no workspace never had its shell/editor tools
+        sandboxed either — they already read/write anywhere on disk
+        unconfined, so the preview shouldn't refuse a file just because
+        there's no workspace concept for this session."""
+        from agent_knots.session.manager import Session
+        f = tmp_path / "myfile.txt"
+        f.write_text("no workspace, still readable")
+        session_manager._sessions["no-ws"] = Session(id="no-ws", working_dir=None)
+        resp = await authed_client.get(f"/api/agent/no-ws/file?path={f}")
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "no workspace, still readable"
+
+    @pytest.mark.asyncio
+    async def test_get_file_with_no_working_dir_and_missing_file_404s(self, authed_client, session_manager):
+        from agent_knots.session.manager import Session
+        session_manager._sessions["no-ws"] = Session(id="no-ws", working_dir=None)
+        resp = await authed_client.get("/api/agent/no-ws/file?path=/definitely/not/a/real/file.txt")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_file_reads_content(self, authed_client, workspace_session):
+        resp = await authed_client.get("/api/agent/test-session/file?path=README.md")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["content"] == "# Hello\n\nSome markdown content."
+        assert body["truncated"] is False
+
+    @pytest.mark.asyncio
+    async def test_get_file_reads_nested_path(self, authed_client, workspace_session):
+        resp = await authed_client.get("/api/agent/test-session/file?path=notes/sub/deep.txt")
+        assert resp.status_code == 200
+        assert resp.json()["content"] == "nested file"
+
+    @pytest.mark.asyncio
+    async def test_get_file_not_found_404s(self, authed_client, workspace_session):
+        resp = await authed_client.get("/api/agent/test-session/file?path=nope.txt")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_file_path_traversal_refused(self, authed_client, workspace_session):
+        resp = await authed_client.get("/api/agent/test-session/file?path=../../../../etc/passwd")
+        assert resp.status_code == 400
+        assert "outside the workspace" in resp.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_get_file_binary_refused(self, authed_client, workspace_session):
+        resp = await authed_client.get("/api/agent/test-session/file?path=image.png")
+        assert resp.status_code == 415
+
+    @pytest.mark.asyncio
+    async def test_get_file_truncates_large_files(self, authed_client, workspace_session):
+        (workspace_session / "big.txt").write_text("x" * 600_000)
+        resp = await authed_client.get("/api/agent/test-session/file?path=big.txt")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["truncated"] is True
+        assert len(body["content"]) == 500_000
+
+
+class TestTerminalWebSocket:
+    """Real interactive terminal — a PTY-backed shell over a websocket.
+    Uses starlette's synchronous TestClient (httpx.AsyncClient has no
+    websocket support), so these are plain (non-async) test methods."""
+
+    def test_invalid_token_rejected(self, session_manager, agent_knots_home):
+        from starlette.testclient import TestClient
+        client = TestClient(create_app(session_manager))
+        with pytest.raises(Exception):
+            with client.websocket_connect("/api/agent/whatever/terminal?token=wrong"):
+                pass
+
+    def test_unknown_agent_rejected(self, session_manager, agent_knots_home, auth_token):
+        from starlette.testclient import TestClient
+        client = TestClient(create_app(session_manager))
+        with pytest.raises(Exception):
+            with client.websocket_connect(f"/api/agent/nonexistent/terminal?token={auth_token}"):
+                pass
+
+    def test_real_shell_runs_command_in_working_dir(self, session_manager, agent_knots_home, auth_token, tmp_path):
+        """End-to-end: spawn a real PTY shell rooted at the session's
+        working_dir, send a command over the websocket, and read its
+        actual output back — not mocked."""
+        from starlette.testclient import TestClient
+        from agent_knots.session.manager import Session
+
+        (tmp_path / "marker.txt").write_text("")
+        session = Session(id="term-test", working_dir=str(tmp_path))
+        session_manager._sessions[session.id] = session
+
+        client = TestClient(create_app(session_manager))
+        with client.websocket_connect(f"/api/agent/term-test/terminal?token={auth_token}") as ws:
+            ws.send_json({"type": "input", "data": "echo hello_from_pty && pwd\n"})
+            output = ""
+            for _ in range(100):
+                msg = ws.receive_json()
+                output += msg.get("data", "")
+                if "hello_from_pty" in output and str(tmp_path) in output:
+                    break
+            assert "hello_from_pty" in output
+            assert str(tmp_path) in output
 
 
 class TestDraftTaskAPI:

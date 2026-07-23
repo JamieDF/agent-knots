@@ -203,7 +203,9 @@ class TestAcceptanceCriteria:
         for c in sample_task.acceptance_criteria:
             store.mark_criterion_met(sample_task.id, c)
         store.set_status(sample_task.id, TaskStatus.REVIEW)  # workflow requires review before done
-        task = store.set_status(sample_task.id, TaskStatus.DONE)
+        # actor="human": isolating the criteria gate from the separate
+        # human-must-close-review-out gate covered below.
+        task = store.set_status(sample_task.id, TaskStatus.DONE, actor="human")
         assert task.status == TaskStatus.DONE
 
     def test_criteria_met_persists_across_reload(self, store, sample_task):
@@ -237,8 +239,35 @@ class TestAcceptanceCriteria:
         task = Task(id=new_task_id(), title="No criteria task", status=TaskStatus.OPEN)
         store.create(task)
         store.set_status(task.id, TaskStatus.REVIEW)  # workflow requires review before done
-        updated = store.set_status(task.id, TaskStatus.DONE)
+        # actor="human" isolates "no criteria doesn't block done" from the
+        # actor gate covered by test_agent_cannot_self_approve_done below.
+        updated = store.set_status(task.id, TaskStatus.DONE, actor="human")
         assert updated.status == TaskStatus.DONE
+
+    def test_agent_cannot_self_approve_done_even_with_no_criteria(self, store):
+        """Regression: a task with zero acceptance criteria used to sail
+        straight through review to done with nothing but the same agent
+        calling set_status('review') then set_status('done') back to back
+        — no independent review ever actually happened. review_gate
+        (default "manual") now requires a human actor for the final hop,
+        regardless of how many criteria there are."""
+        task = Task(id=new_task_id(), title="No criteria task", status=TaskStatus.OPEN)
+        store.create(task)
+        store.set_status(task.id, TaskStatus.REVIEW)
+        with pytest.raises(ValueError, match="requires a human to complete"):
+            store.set_status(task.id, TaskStatus.DONE)  # actor defaults to "agent"
+
+    def test_agent_cannot_self_approve_done_with_auto_review_gate(self, store, sample_task):
+        """Same gate applies to review_gate="auto", not just "manual" —
+        auto-review still means a human clicks "Run review now", not that
+        the agent itself gets to decide the review passed."""
+        sample_task.review_gate = ReviewGate.AUTO
+        store.create(sample_task)
+        for c in sample_task.acceptance_criteria:
+            store.mark_criterion_met(sample_task.id, c)
+        store.set_status(sample_task.id, TaskStatus.REVIEW)
+        with pytest.raises(ValueError, match="requires a human to complete"):
+            store.set_status(sample_task.id, TaskStatus.DONE)
 
     def test_cannot_skip_review_straight_to_done(self, store):
         """The one guard that doesn't depend on acceptance criteria at
@@ -263,14 +292,74 @@ class TestAcceptanceCriteria:
         with pytest.raises(ValueError, match="unmet acceptance criteria"):
             store.log_progress(sample_task.id, entry)
 
-    def test_log_progress_to_done_succeeds_when_criteria_met(self, store, sample_task):
+    def test_log_progress_to_done_still_requires_a_human(self, store, sample_task):
+        """log_progress has no way to pass actor="human" — it's only ever
+        called from the agent tool (task/tools.py), never a human-facing
+        route — so a done transition through it always hits the same
+        agent-can't-self-approve gate as set_status, even with every
+        criterion met and the task already in review."""
         store.create(sample_task)
         for c in sample_task.acceptance_criteria:
             store.mark_criterion_met(sample_task.id, c)
         store.set_status(sample_task.id, TaskStatus.REVIEW)  # workflow requires review before done
         entry = ProgressEntry(entry="Finished.", status=TaskStatus.DONE, caller="agent:test")
-        task = store.log_progress(sample_task.id, entry)
+        with pytest.raises(ValueError, match="requires a human to complete"):
+            store.log_progress(sample_task.id, entry)
+
+    def test_log_progress_to_done_succeeds_with_review_gate_none(self, store):
+        """The one way log_progress *can* reach done directly: the task
+        opted out of review entirely."""
+        task = Task(id=new_task_id(), title="Trivial task", status=TaskStatus.IN_PROGRESS, review_gate=ReviewGate.NONE)
+        store.create(task)
+        entry = ProgressEntry(entry="Finished.", status=TaskStatus.DONE, caller="agent:test")
+        task = store.log_progress(task.id, entry)
         assert task.status == TaskStatus.DONE
+
+
+class TestDependencies:
+    def test_unmet_dependencies_empty_when_none_declared(self, store, sample_task):
+        store.create(sample_task)
+        assert store.unmet_dependencies(sample_task) == []
+
+    def test_unmet_dependencies_lists_unfinished_blockers(self, store):
+        blocker = Task(id=new_task_id(), title="Blocker task", status=TaskStatus.OPEN)
+        store.create(blocker)
+        task = Task(id=new_task_id(), title="Blocked task", status=TaskStatus.OPEN, dependencies=[blocker.id])
+        store.create(task)
+        unmet = store.unmet_dependencies(task)
+        assert [t.id for t in unmet] == [blocker.id]
+
+    def test_unmet_dependencies_empty_once_blocker_done(self, store):
+        blocker = Task(id=new_task_id(), title="Blocker task", status=TaskStatus.IN_PROGRESS, review_gate=ReviewGate.NONE)
+        store.create(blocker)
+        store.set_status(blocker.id, TaskStatus.DONE, actor="human")
+        task = Task(id=new_task_id(), title="Blocked task", status=TaskStatus.OPEN, dependencies=[blocker.id])
+        store.create(task)
+        assert store.unmet_dependencies(task) == []
+
+    def test_dangling_dependency_id_does_not_block(self, store):
+        """A dependency pointing at a deleted/never-existed task shouldn't
+        lock the dependent task forever."""
+        task = Task(id=new_task_id(), title="Blocked task", status=TaskStatus.OPEN, dependencies=["T-does-not-exist"])
+        store.create(task)
+        assert store.unmet_dependencies(task) == []
+
+    def test_cannot_start_task_blocked_by_unfinished_dependency(self, store):
+        blocker = Task(id=new_task_id(), title="Blocker task", status=TaskStatus.OPEN)
+        store.create(blocker)
+        task = Task(id=new_task_id(), title="Blocked task", status=TaskStatus.OPEN, dependencies=[blocker.id])
+        store.create(task)
+        with pytest.raises(ValueError, match="blocked by unfinished dependencies"):
+            store.set_status(task.id, TaskStatus.IN_PROGRESS)
+
+    def test_can_start_task_once_dependency_done(self, store):
+        blocker = Task(id=new_task_id(), title="Blocker task", status=TaskStatus.IN_PROGRESS, review_gate=ReviewGate.NONE)
+        store.create(blocker)
+        store.set_status(blocker.id, TaskStatus.DONE, actor="human")
+        task = Task(id=new_task_id(), title="Blocked task", status=TaskStatus.OPEN, dependencies=[blocker.id])
+        store.create(task)
+        updated = store.set_status(task.id, TaskStatus.IN_PROGRESS)
+        assert updated.status == TaskStatus.IN_PROGRESS
 
 
 class TestTaskModel:

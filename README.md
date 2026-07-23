@@ -48,21 +48,24 @@ way, `configured` is true before the wizard would even ask. See
 
 | Capability | Status |
 |---|---|
-| **Session lifecycle** | ✅ Start/stop agents from GUI, TUI, or CLI |
-| **Live event streaming** | ✅ SSE (web) + async event queue (TUI). Tool calls, messages, progress |
-| **Web cockpit** | ✅ Vite + React SPA. Agent cards, Kanban board, task detail, settings |
+| **Session lifecycle** | ✅ Start/stop agents from GUI, TUI, or CLI. Composer's Stop cancels only the current turn (session stays open, send another message to continue) — a separate header Delete ends the session for good |
+| **Live event streaming** | ✅ SSE (web) + async event queue (TUI). Fanned out to every subscriber — multiple browser tabs on the same agent don't race for events. Tool calls, messages, progress |
+| **Web cockpit** | ✅ Vite + React SPA ("Atelier"). Dashboard, Tasks (Board/List), Task Detail, Agent Thread (chat-style, markdown, resizable layout, replay scrubber), Review, Workflows, Settings |
+| **Agent Thread right rail** | ✅ Real interactive terminal (PTY + xterm.js) in the agent's working directory, a Files tab with previews, a Command Log (every shell invocation + timestamp), and a multi-tab Browser (address bar, open/close tabs, chat links open in a new tab) |
+| **Background processes** | ✅ Agents can start a dev server or other long-running process with `background=true` — it isn't killed by the tool's timeout, and is cleaned up automatically when the session ends |
 | **TUI cockpit** | ✅ Textual. Agent list, focus view, tools manager, keyboard shortcuts |
-| **Take-over flow** | ✅ Assume (agent → assistant) / Relinquish (assistant → agent). Mode pill updates live |
+| **Take-over flow** | ✅ Assume (agent → assistant) / Relinquish (assistant → agent). Mode pill updates live; typing a message while watching assumes control automatically |
 | **Multi-turn chat** | ✅ Sequential conversation with context retention |
-| **Task system** | ✅ YAML-backed. Draft → Open → In Progress → Review → Done. Progress logs, acceptance criteria, steps |
-| **Kanban board** | ✅ 6-column board. Expand cards, status changes, start session from card |
-| **Vault** | ✅ AES-256-GCM, argon2id KDF, injection templates, audit log. Ported from Go |
+| **Task system** | ✅ YAML-backed. Draft → Open → In Progress → Review → Done, with an enforced review gate (only a human can pass a task through review — an agent can't self-approve its own work) and task dependencies (blocked from starting until dependencies are done). Progress logs, acceptance criteria (human or agent can mark met), steps |
+| **Kanban board** | ✅ Configurable stages (Workflows screen), drag-and-drop between columns, all task statuses covered |
+| **Vault** | ✅ AES-256-GCM, argon2id KDF, injection templates, audit log. Full web UI (a Settings section) alongside the CLI |
 | **Agent tools** | ✅ 12 built-in: editor, shell, calculator, think + 8 task tools. Custom tools via settings |
 | **Task tools** | ✅ Agent can create, read, update, log progress, add steps on tasks |
-| **Workspaces** | ✅ Multi-project workspaces. Task filtering, session grouping, path isolation |
+| **Workspaces** | ✅ Multi-project workspaces. Task filtering, session grouping, path isolation, archive/unarchive |
 | **Runtime modes** | ✅ In-process (fast) + subprocess (isolated) per workspace/session |
 | **Model providers** | ✅ MiniMax, OpenAI, Anthropic, Ollama, custom. Configurable in settings |
 | **Custom tools** | ✅ User-defined shell command tools. Enable/disable per tool |
+| **Accessibility** | ✅ App-wide font size and font family, in Settings |
 
 ---
 
@@ -71,7 +74,7 @@ way, `configured` is true before the wizard would even ask. See
 ```
 agent-knots
 ├── session
-│   ├── start [--task <id>] [--project <id>] [--mode agent|assistant]
+│   ├── start [--task <id>] [--project <id>] [--mode agent|assistant] [--prompt <text>]
 │   └── list
 ├── cockpit
 │   └── launch [--web] [--port 8080]
@@ -128,10 +131,11 @@ agent-knots
 
 ```
 agent-knots/
-├── frontend/                  # Vite + React SPA
+├── frontend/                  # Vite + React SPA ("Atelier" web cockpit)
 │   └── src/
-│       ├── views/             # Overview, Board, Tasks, TaskDetail, Settings, ...
-│       ├── components/        # Topbar, AgentCard, CreateTaskDialog, ...
+│       ├── views/             # Dashboard, Tasks (Board/List), TaskDetail,
+│       │                      # AgentThread, Review, Workflows, Settings
+│       ├── components/        # Topbar, TaskDialog, WorkspaceDialog, Markdown, ...
 │       └── lib/               # API client, SSE client, workspace context
 ├── src/agent_knots/
 │   ├── cli/                   # Typer CLI entry point + commands
@@ -147,7 +151,7 @@ agent-knots/
 │   ├── provider.py            # Model provider resolution (CLI/env/settings)
 │   ├── isolation.py           # Workspace sandbox config
 │   └── sandbox_tools.py       # Sandboxed shell/editor tools
-├── tests/                     # Python unit tests (171)
+├── tests/                     # Python unit tests (300+)
 ├── mockups/                   # HTML design mockups
 ├── docs/                      # ADRs, architecture, plan
 └── pyproject.toml
@@ -158,14 +162,15 @@ agent-knots/
 ## Testing
 
 ```bash
-# Python unit tests (171)
+# Python unit tests (350+)
 uv run --with pytest pytest tests/ -q
 
-# Playwright e2e tests (43)
+# Playwright e2e tests (~74)
 cd frontend && npx playwright test
-
-# Total: 214 tests
 ```
+
+A handful of the Playwright tests need a real LLM provider configured
+and are expected to fail without one.
 
 ---
 

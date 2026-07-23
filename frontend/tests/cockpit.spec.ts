@@ -192,11 +192,21 @@ test.describe('cockpit — real agent flow', () => {
     // Mode chip should go back to WATCHING.
     await expect(page.locator('text=WATCHING')).toBeVisible()
 
-    // Should see Assume button(s) again — the header and the locked
-    // composer bar both render one in the watching state — and the
-    // composer locked (no input).
+    // Should see the Assume button again in the header, and a banner
+    // above the composer — but the composer itself stays unlocked (you
+    // can type + Send to take over instead of clicking Assume).
     await expect(page.locator('button:has-text("Assume")').first()).toBeVisible()
     await expect(page.locator('text=Watching — the agent is driving')).toBeVisible()
+    const watchingInput = page.locator('input[placeholder="Type to take over…"]')
+    await expect(watchingInput).toBeVisible()
+    await expect(watchingInput).toBeEnabled()
+
+    // 6b. Typing + sending while watching assumes control implicitly.
+    await watchingInput.fill('Taking over now.')
+    await watchingInput.press('Enter')
+    await page.waitForTimeout(1000)
+    await expect(page.locator('text=DRIVING')).toBeVisible()
+    await expect(page.locator('text=Taking over now.')).toBeVisible({ timeout: 5000 })
 
     // 7. Navigate back to the Dashboard.
     await page.locator('button:has-text("←")').click()
@@ -994,9 +1004,9 @@ test.describe('session-task assignment', () => {
     await card.click()
     await page.waitForTimeout(300)
 
-    // Should see the Start session button.
-    const startBtn = page.locator('text=Start session')
-    await expect(startBtn).toBeVisible({ timeout: 3000 })
+    // Should see the two start buttons (watch / headless).
+    await expect(page.locator('text=Start (watch)')).toBeVisible({ timeout: 3000 })
+    await expect(page.locator('text=Start headless')).toBeVisible({ timeout: 3000 })
 
     // Cleanup.
     await page.request.delete(`${BASE}/api/tasks/${task.id}`)
@@ -1205,12 +1215,18 @@ test.describe('agent panel tabs', () => {
     await authPage(page)
   })
 
-  test('terminal, files, preview tabs switch in agent thread', async ({ page }) => {
+  test('terminal, files, commands, browser tabs switch in agent thread', async ({ page }) => {
     // Phase 3 consolidated the old 4-tab set (Terminal/Review/Code/
-    // Browser) into 3 right-rail tabs (Terminal/Files/Preview) per
+    // Browser) into Terminal/Files/Preview per
     // design_handoff_atelier_cockpit/README.md §2 — task info (the old
     // "Review" tab's content) moved to the always-visible left goal
-    // rail instead of being a tab.
+    // rail instead of being a tab. A later round added a 4th tab,
+    // Commands (a structured log of shell invocations + timestamps),
+    // and made Terminal a real PTY-backed shell (xterm.js) instead of a
+    // read-only output log — Files also narrowed to editor-only touches
+    // (shell commands no longer masquerade as "files"). Preview was
+    // later rebuilt into a real multi-tab Browser panel (this test) —
+    // renamed from "preview" to "browser" to match.
     const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
       data: { prompt: 'Say hello', mode: 'agent' },
     })
@@ -1221,22 +1237,74 @@ test.describe('agent panel tabs', () => {
 
     await expect(page.locator('button:has-text("terminal")')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('button:has-text("files")')).toBeVisible()
-    await expect(page.locator('button:has-text("preview")')).toBeVisible()
+    await expect(page.locator('button:has-text("commands")')).toBeVisible()
+    await expect(page.locator('button:has-text("browser")')).toBeVisible()
 
-    // Terminal tab is active by default.
-    await expect(page.locator('text=Waiting for shell output')).toBeVisible()
+    // Terminal tab is active by default — a real PTY shell, so it shows
+    // a connection status line rather than a static placeholder.
+    await expect(page.locator('text=connected').or(page.locator('text=connecting'))).toBeVisible({ timeout: 5000 })
 
     await page.locator('button:has-text("files")').click()
     await page.waitForTimeout(300)
     await expect(page.locator('text=Files the agent reads or edits will appear here.')).toBeVisible()
 
-    await page.locator('button:has-text("preview")').click()
+    await page.locator('button:has-text("commands")').click()
     await page.waitForTimeout(300)
-    await expect(page.locator('text=proxied preview')).toBeVisible()
+    await expect(page.locator('text=Shell commands the agent runs will appear here')).toBeVisible()
+
+    await page.locator('button:has-text("browser")').click()
+    await page.waitForTimeout(300)
+    // Browser is now a real mini-browser (tab strip + address bar +
+    // iframe), not a static "coming soon" placeholder.
+    await expect(page.locator('input[placeholder="Enter a URL to preview…"]')).toBeVisible()
 
     await page.locator('button:has-text("terminal")').click()
     await page.waitForTimeout(300)
-    await expect(page.locator('text=Waiting for shell output')).toBeVisible()
+    await expect(page.locator('text=connected').or(page.locator('text=connecting'))).toBeVisible()
+
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
+  })
+
+  test('browser tab: manual URL entry, clicking a chat link opens a new tab, and tabs can be closed', async ({ page }) => {
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: { prompt: '', mode: 'agent' },
+    })
+    const session = await sessionRes.json()
+
+    await page.goto(`${BASE}/agent/${session.id}`)
+    await page.waitForTimeout(800)
+
+    // Manual entry: bare host gets an http:// scheme prefixed automatically.
+    await page.locator('button:has-text("browser")').click()
+    const urlInput = page.locator('input[placeholder="Enter a URL to preview…"]')
+    await urlInput.fill('example.com')
+    await urlInput.press('Enter')
+    await page.waitForTimeout(300)
+    await expect(page.locator('iframe[title="Browser"]')).toHaveAttribute('src', 'http://example.com')
+    // One tab so far — this same tab's URL just changed, no new tab yet.
+    await expect(page.locator('[title="Close tab"]')).toHaveCount(1)
+
+    // A URL the agent (or here, a plain send()) posts in chat is a real
+    // clickable link (remark-gfm autolinks bare URLs) that opens in a
+    // brand-new Browser tab — the example.com tab from above stays put.
+    await page.locator('button:has-text("terminal")').click()
+    await page.request.post(`${BASE}/api/agent/${session.id}/send`, {
+      form: { message: 'Dev server is up: http://localhost:5173/ check it out' },
+    })
+    await page.waitForTimeout(800)
+
+    const chatLink = page.locator('a', { hasText: 'http://localhost:5173/' })
+    await expect(chatLink).toBeVisible()
+    await chatLink.click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('iframe[title="Browser"]')).toHaveAttribute('src', 'http://localhost:5173/')
+    await expect(page.locator('[title="Close tab"]')).toHaveCount(2)
+
+    // Closing the active (2nd) tab falls back to the remaining one.
+    await page.locator('[title="Close tab"]').nth(1).click()
+    await page.waitForTimeout(200)
+    await expect(page.locator('[title="Close tab"]')).toHaveCount(1)
+    await expect(page.locator('iframe[title="Browser"]')).toHaveAttribute('src', 'http://example.com')
 
     await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
   })
@@ -1474,7 +1542,7 @@ test.describe('settings screen', () => {
     await page.goto(`${BASE}/settings`)
     await page.waitForTimeout(800)
 
-    for (const label of ['Usage', 'Model providers', 'Tools', 'Policies', 'MCP servers', 'Integrations']) {
+    for (const label of ['Usage', 'Accessibility', 'Model providers', 'Tools', 'Policies', 'MCP servers', 'Integrations']) {
       await expect(page.locator(`text=${label}`).first()).toBeVisible()
     }
     // "Workspaces" alone also case-insensitively matches the topbar's
@@ -1599,6 +1667,65 @@ test.describe('settings screen', () => {
     await expect(page.locator('text=E2E Workspace Renamed')).toBeVisible()
 
     await page.request.delete(`${BASE}/api/workspaces/e2e-workspace`)
+  })
+
+  test('deleting a workspace shows a themed confirm dialog, not the native browser one', async ({ page }) => {
+    await page.request.post(`${BASE}/api/workspaces`, { data: { name: 'Delete Me', id: 'delete-me-e2e' } })
+    await page.goto(`${BASE}/settings`)
+    await page.waitForTimeout(800)
+
+    const wsRow = page.locator('text=Delete Me').locator('..')
+    // If this were still window.confirm(), a native dialog would block
+    // the page and this click would hang waiting for a dialog handler.
+    await wsRow.locator('button:has-text("✕")').click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=Delete this workspace?')).toBeVisible()
+
+    // Cancel — workspace still there.
+    await page.locator('button:text-is("Cancel")').click()
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=Delete Me')).toBeVisible()
+
+    // Confirm — workspace actually gone.
+    await wsRow.locator('button:has-text("✕")').click()
+    await page.waitForTimeout(300)
+    await page.locator('button:text-is("Delete")').click()
+    await page.waitForTimeout(500)
+    await expect(page.locator('text=Delete Me')).toHaveCount(0)
+  })
+
+  test('accessibility: font size and font family apply and persist', async ({ page }) => {
+    await page.goto(`${BASE}/settings`)
+    await page.waitForTimeout(800)
+    await page.locator('nav button:has-text("Accessibility")').click()
+    await page.waitForTimeout(300)
+
+    await page.locator('button:text-is("Largest")').click()
+    await page.waitForTimeout(300)
+    const zoom = await page.evaluate(() => document.getElementById('root')?.style.getPropertyValue('zoom'))
+    expect(zoom).toBe('1.375')
+
+    await page.selectOption('select[aria-label="Font family"]', 'accessible')
+    await page.waitForTimeout(300)
+    const font = await page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--font'))
+    expect(font).toContain('Atkinson Hyperlegible')
+
+    // Both choices persist across reload (localStorage-backed, not just
+    // component state).
+    await page.reload()
+    await page.waitForTimeout(500)
+    const zoomAfterReload = await page.evaluate(() => document.getElementById('root')?.style.getPropertyValue('zoom'))
+    expect(zoomAfterReload).toBe('1.375')
+    const fontAfterReload = await page.evaluate(() => getComputedStyle(document.body).getPropertyValue('--font'))
+    expect(fontAfterReload).toContain('Atkinson Hyperlegible')
+
+    // Reset to defaults so this doesn't leak into other tests running
+    // against the same browser storage.
+    await page.locator('nav button:has-text("Accessibility")').click()
+    await page.waitForTimeout(300)
+    await page.locator('button:text-is("Default")').click()
+    await page.selectOption('select[aria-label="Font family"]', 'default')
+    await page.waitForTimeout(300)
   })
 
 })
@@ -1950,11 +2077,12 @@ test.describe('task to agent thread lifecycle', () => {
       await page.goto(`${BASE}/tasks/${task.id}`)
       await page.waitForTimeout(500)
 
-      // No session yet — header shows "Start agent on this task", not a thread link.
-      await expect(page.locator('button:has-text("Start agent on this task")')).toBeVisible()
+      // No session yet — header shows the two start buttons, not a thread link.
+      await expect(page.locator('button:has-text("Start (watch)")')).toBeVisible()
+      await expect(page.locator('button:has-text("Start headless")')).toBeVisible()
       await expect(page.locator('button:has-text("Agent active")')).toHaveCount(0)
 
-      await page.click('button:has-text("Start agent on this task")')
+      await page.click('button:has-text("Start (watch)")')
       await page.waitForTimeout(1000)
       const threadUrl = page.url()
       expect(threadUrl).toMatch(/\/agent\/[a-f0-9]+$/)
@@ -1979,6 +2107,34 @@ test.describe('task to agent thread lifecycle', () => {
     }
   })
 
+  test('starting headless stays on the page — thread is reachable later', async ({ page }) => {
+    const created = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Headless start E2E' } })
+    const task = await created.json()
+
+    try {
+      await page.goto(`${BASE}/tasks/${task.id}`)
+      await page.waitForTimeout(500)
+      const detailUrl = page.url()
+
+      await page.click('button:has-text("Start headless")')
+      await page.waitForTimeout(1000)
+
+      // Stayed on Task Detail — no redirect to the thread.
+      expect(page.url()).toBe(detailUrl)
+
+      // But the session really did start — task shows assigned, and a
+      // thread link now exists to open it whenever.
+      const current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+      expect(current.assigned_to).toBeTruthy()
+
+      await page.reload()
+      await page.waitForTimeout(500)
+      await expect(page.locator('button:has-text("Agent active")')).toBeVisible()
+    } finally {
+      await page.request.delete(`${BASE}/api/tasks/${task.id}`)
+    }
+  })
+
   test('full lifecycle: create in draft, start agent, blocked from skipping review, done after review', async ({ page }) => {
     const created = await page.request.post(`${BASE}/api/tasks`, { data: { title: 'Full lifecycle E2E' } })
     const task = await created.json()
@@ -1990,7 +2146,7 @@ test.describe('task to agent thread lifecycle', () => {
 
       await page.goto(`${BASE}/tasks/${task.id}`)
       await page.waitForTimeout(500)
-      await page.click('button:has-text("Start agent on this task")')
+      await page.click('button:has-text("Start (watch)")')
       await page.waitForTimeout(1000)
 
       let current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
@@ -2036,6 +2192,65 @@ test.describe('task to agent thread lifecycle', () => {
     } finally {
       await page.request.delete(`${BASE}/api/tasks/${task.id}`)
     }
+  })
+
+  test('deleting a session shows a themed confirm dialog, not the native browser one', async ({ page }) => {
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, { data: { prompt: '', mode: 'agent' } })
+    const session = await sessionRes.json()
+
+    await page.goto(`${BASE}/agent/${session.id}`)
+    await page.waitForTimeout(600)
+
+    // A native window.confirm() would block script execution and this
+    // click would hang forever with no dialog handler registered.
+    await page.click('button[title="Delete this session"]')
+    await page.waitForTimeout(300)
+    await expect(page.locator('text=Delete this session?')).toBeVisible()
+
+    // Cancel — still on the thread, session still exists.
+    await page.locator('button:text-is("Cancel")').click()
+    await page.waitForTimeout(300)
+    expect(page.url()).toContain(`/agent/${session.id}`)
+
+    // Confirm — actually deletes and navigates to the dashboard.
+    await page.click('button[title="Delete this session"]')
+    await page.waitForTimeout(300)
+    await page.locator('button:text-is("Delete")').click()
+    await page.waitForTimeout(600)
+    expect(page.url()).toBe(`${BASE}/`)
+
+    const agentsResp = await page.request.get(`${BASE}/api/agent/${session.id}`)
+    expect(agentsResp.status()).toBe(404)
+  })
+
+  test('dragging the rail divider resizes the right rail and persists across reload', async ({ page }) => {
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, { data: { prompt: '', mode: 'agent' } })
+    const session = await sessionRes.json()
+
+    await page.goto(`${BASE}/agent/${session.id}`)
+    await page.waitForTimeout(600)
+
+    const handle = page.locator('div[title="Drag to resize"]')
+    const before = await handle.boundingBox()
+    if (!before) throw new Error('resize handle not found')
+
+    await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(before.x + before.width / 2 - 120, before.y + before.height / 2, { steps: 8 })
+    await page.mouse.up()
+    await page.waitForTimeout(300)
+
+    const after = await handle.boundingBox()
+    if (!after) throw new Error('resize handle not found after drag')
+    expect(before.x - after.x).toBeGreaterThan(80) // handle moved left with the drag
+
+    await page.reload()
+    await page.waitForTimeout(600)
+    const afterReload = await handle.boundingBox()
+    if (!afterReload) throw new Error('resize handle not found after reload')
+    expect(Math.abs(afterReload.x - after.x)).toBeLessThan(5) // same width, persisted
+
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
   })
 
 })

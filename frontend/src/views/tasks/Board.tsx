@@ -43,9 +43,10 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
     setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t))
   }
 
-  const handleStart = async (task: TaskSummary) => {
+  const handleStart = async (task: TaskSummary, headless: boolean) => {
     const session = await createSession({ prompt: '', mode: 'agent', task_id: task.id, project_id: workspace || undefined })
-    navigate(`/agent/${session.id}`)
+    if (headless) load() // refresh so the card picks up its new "AGENT" badge
+    else navigate(`/agent/${session.id}`)
   }
 
   const stages = enabledStages(allStages)
@@ -99,7 +100,7 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
                   onExpand={() => setExpandedId(expandedId === task.id ? null : task.id)}
                   onMove={s => handleMove(task.id, s)}
                   onDetails={() => navigate(`/tasks/${task.id}`)}
-                  onStart={() => handleStart(task)}
+                  onStart={headless => handleStart(task, headless)}
                   allStages={allStages}
                 />
               ))}
@@ -132,7 +133,7 @@ function TaskCard({ task, expanded, dragging, onDragStart, onDragEnd, onExpand, 
   onExpand: () => void
   onMove: (status: string) => void
   onDetails: () => void
-  onStart: () => void
+  onStart: (headless: boolean) => void
   allStages: Stage[]
 }) {
   const stages = enabledStages(allStages)
@@ -157,6 +158,9 @@ function TaskCard({ task, expanded, dragging, onDragStart, onDragEnd, onExpand, 
         )}
         {task.status === 'blocked' && (
           <span style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 6, background: 'var(--warn-soft)', color: 'var(--warn-ink)' }}>⚠ BLOCKED</span>
+        )}
+        {task.blocked_by_deps && (
+          <span title="Waiting on an unfinished dependency" style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 6, background: 'var(--warn-soft)', color: 'var(--warn-ink)' }}>🔗 DEP</span>
         )}
         {task.status === 'planned' && (
           <span style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 6, background: 'var(--acc-soft)', color: 'var(--acc)' }}>PLANNED</span>
@@ -183,10 +187,15 @@ function TaskCard({ task, expanded, dragging, onDragStart, onDragEnd, onExpand, 
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <button onClick={onDetails} style={{ fontSize: 11.5, color: 'var(--acc)', fontWeight: 600 }}>Details →</button>
-            {!task.assigned_to && (
-              <button onClick={onStart} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'var(--ok-soft)', color: 'var(--ok)', fontWeight: 600 }}>
-                ▶ Start session
-              </button>
+            {!task.assigned_to && !task.blocked_by_deps && (
+              <>
+                <button onClick={() => onStart(false)} title="Start and open the thread now" style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'var(--ok-soft)', color: 'var(--ok)', fontWeight: 600 }}>
+                  ▶ Start (watch)
+                </button>
+                <button onClick={() => onStart(true)} title="Start in the background — open the thread later from this card or Task Detail" style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'var(--card2)', color: 'var(--ink2)', fontWeight: 600 }}>
+                  ⏵ Start headless
+                </button>
+              </>
             )}
           </div>
         </div>

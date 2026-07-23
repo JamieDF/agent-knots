@@ -5,6 +5,7 @@ binding, timeout + process-tree cleanup, and output truncation; the
 sandboxed editor's path confinement and max_file_size enforcement.
 """
 
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -12,8 +13,10 @@ from pathlib import Path
 import pytest
 
 from agent_knots.sandbox_tools import (
+    kill_background_process,
     make_sandboxed_editor,
     make_sandboxed_shell,
+    run_background,
     run_confined,
 )
 
@@ -62,6 +65,58 @@ class TestRunConfined:
         assert len(result["stdout"]) == 200
 
 
+def _is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+
+
+class TestRunBackground:
+    """background=true is the fix for agents having to hand-roll `nohup
+    cmd &` to keep a dev server alive past the shell tool's timeout-kill
+    — see run_confined's docstring / the RLIMIT_AS history in this file
+    for the surrounding context on why long-running processes need a
+    real first-class path instead of a shell trick."""
+
+    def test_returns_immediately_without_waiting_for_the_process(self):
+        start = time.time()
+        result = run_background("sleep 5", cwd=None)
+        elapsed = time.time() - start
+        assert elapsed < 2  # didn't block for anything close to the 5s sleep
+        kill_background_process(result["pid"])
+
+    def test_process_is_still_running_after_call_returns(self):
+        result = run_background("sleep 5", cwd=None)
+        try:
+            assert _is_alive(result["pid"])
+        finally:
+            kill_background_process(result["pid"])
+
+    def test_runs_in_given_cwd(self, workspace):
+        result = run_background("pwd", cwd=workspace)
+        time.sleep(0.3)
+        assert Path(result["log_file"]).read_text().strip() == workspace
+
+    def test_log_file_captures_output(self):
+        result = run_background("echo hello-background", cwd=None)
+        time.sleep(0.3)
+        assert "hello-background" in Path(result["log_file"]).read_text()
+
+    def test_kill_background_process_terminates_it(self):
+        result = run_background("sleep 30", cwd=None)
+        assert _is_alive(result["pid"])
+        kill_background_process(result["pid"])
+        time.sleep(0.3)
+        assert not _is_alive(result["pid"])
+
+    def test_kill_background_process_on_already_dead_pid_does_not_raise(self):
+        result = run_background("true", cwd=None)
+        time.sleep(0.3)
+        kill_background_process(result["pid"])  # already exited — should be a no-op
+
+
 class TestSandboxedShell:
     def test_defaults_cwd_to_workspace(self, workspace):
         shell = make_sandboxed_shell(workspace)
@@ -72,6 +127,29 @@ class TestSandboxedShell:
         shell = make_sandboxed_shell(workspace, max_output=10)
         result = shell("python3 -c \"print('x' * 100, end='')\"")
         assert len(result["stdout"]) < 100
+
+    def test_background_true_returns_immediately_and_is_not_killed(self, workspace):
+        shell = make_sandboxed_shell(workspace)
+        start = time.time()
+        result = shell("sleep 5", background=True)
+        elapsed = time.time() - start
+        assert elapsed < 2
+        assert _is_alive(result["pid"])
+        kill_background_process(result["pid"])
+
+    def test_background_true_records_pid_in_tracking_list(self, workspace):
+        pids: list[int] = []
+        shell = make_sandboxed_shell(workspace, background_pids=pids)
+        result = shell("sleep 5", background=True)
+        assert pids == [result["pid"]]
+        kill_background_process(result["pid"])
+
+    def test_background_false_is_unaffected(self, workspace):
+        pids: list[int] = []
+        shell = make_sandboxed_shell(workspace, background_pids=pids)
+        result = shell("echo hi")
+        assert result["stdout"].strip() == "hi"
+        assert pids == []
 
 
 class TestSandboxedEditor:
