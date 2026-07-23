@@ -507,6 +507,22 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
   return <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--mut)', marginTop: 14, marginBottom: 8 }}>{children}</div>
 }
 
+/** The small status-bar strip at the top of each right-rail panel
+ * (Terminal/Files/Commands) — was copy-pasted across all three. */
+function PanelHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ padding: '6px 10px', fontSize: 10, color: 'var(--mut)', borderBottom: '1px solid var(--line)', fontFamily: 'var(--font-mono)' }}>
+      {children}
+    </div>
+  )
+}
+
+/** The "nothing here yet" message shown below an empty PanelHeader —
+ * same duplication as PanelHeader above. */
+function PanelEmptyState({ children }: { children: React.ReactNode }) {
+  return <div style={{ padding: 12, fontSize: 12, color: 'var(--mut)' }}>{children}</div>
+}
+
 function toggle(s: Set<number>, id: number): Set<number> {
   const next = new Set(s)
   if (next.has(id)) next.delete(id); else next.add(id)
@@ -867,8 +883,8 @@ function FilesPanel({ files, agentId }: { files: FileChange[]; agentId?: string 
 
   return (
     <div>
-      <div style={{ padding: '6px 10px', fontSize: 10, color: 'var(--mut)', borderBottom: '1px solid var(--line)', fontFamily: 'var(--font-mono)' }}>{files.length} file{files.length !== 1 ? 's' : ''} touched</div>
-      {files.length === 0 && <div style={{ padding: 12, fontSize: 12, color: 'var(--mut)' }}>Files the agent reads or edits will appear here.</div>}
+      <PanelHeader>{files.length} file{files.length !== 1 ? 's' : ''} touched</PanelHeader>
+      {files.length === 0 && <PanelEmptyState>Files the agent reads or edits will appear here.</PanelEmptyState>}
       {files.map((f, i) => {
         const isOpen = expanded === f.path
         const entry = cache[f.path]
@@ -908,8 +924,8 @@ function FilesPanel({ files, agentId }: { files: FileChange[]; agentId?: string 
 function CommandLogPanel({ commands }: { commands: CommandEntry[] }) {
   return (
     <div>
-      <div style={{ padding: '6px 10px', fontSize: 10, color: 'var(--mut)', borderBottom: '1px solid var(--line)', fontFamily: 'var(--font-mono)' }}>{commands.length} command{commands.length !== 1 ? 's' : ''} run</div>
-      {commands.length === 0 && <div style={{ padding: 12, fontSize: 12, color: 'var(--mut)' }}>Shell commands the agent runs will appear here, with the time each one ran.</div>}
+      <PanelHeader>{commands.length} command{commands.length !== 1 ? 's' : ''} run</PanelHeader>
+      {commands.length === 0 && <PanelEmptyState>Shell commands the agent runs will appear here, with the time each one ran.</PanelEmptyState>}
       {commands.map((c, i) => {
         const ts = new Date(c.timestamp)
         const tsStr = `${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}:${String(ts.getSeconds()).padStart(2, '0')}`
