@@ -38,7 +38,7 @@ serve at least one of these:
 │                     │                                      │
 │   ┌─────────────────▼─────────────────────────────────┐   │
 │   │     SessionManager                                  │   │
-│   │  InProcessRuntime or SubprocessRuntime               │   │
+│   │  InProcessRuntime                                    │   │
 │   │  ┌──────────────────────────────────────────────┐  │   │
 │   │  │  Strands Agent (MiniMax/OpenAI/Anthropic/...)  │  │   │
 │   │  │  Tools: editor, shell, calculator, think,      │  │   │
@@ -68,9 +68,8 @@ agent-knots/
 │   │   └── web/                   # FastAPI server (auth, SSE, REST, SPA shell)
 │   ├── session/
 │   │   ├── manager.py             # SessionManager, Session, system prompt assembly
-│   │   ├── runtime.py             # InProcessRuntime / SubprocessRuntime
-│   │   ├── features.py            # memory injection, multi-agent delegate, steering
-│   │   └── worker.py              # subprocess worker entry point
+│   │   ├── runtime.py             # SessionRuntime, InProcessRuntime
+│   │   └── features.py            # memory injection, multi-agent delegate, steering
 │   ├── task/                      # Task model, YAML store, Strands tools for agents
 │   ├── project/                   # Workspace model + YAML store
 │   ├── vault/                     # AES-256-GCM crypto + file store
@@ -80,7 +79,7 @@ agent-knots/
 │   ├── provider.py                # Model provider resolution (CLI/env/settings)
 │   ├── isolation.py               # WorkspaceSandbox — cwd confinement config
 │   ├── sandbox_tools.py           # Sandboxed shell/editor tools
-│   ├── intervention.py            # Mode-aware tool gating (assume/relinquish)
+│   ├── intervention.py            # Read-only tool gating for reviewer/security modes
 │   ├── hooks.py                   # Token tracking + auto progress logging
 │   └── events.py                  # Event/EventType/ToolCall wire types
 ├── tests/                         # Python unit tests
@@ -103,23 +102,35 @@ Starting a session resolves the model provider, assembles the system prompt
 (mode + task context), and builds a Strands `Agent` with the tool set and a
 `ModeInterventionHandler`.
 
-`SessionRuntime` (`session/runtime.py`) has two implementations, both real:
+`SessionRuntime` (`session/runtime.py`) has one implementation:
 
 - **`InProcessRuntime`** runs the agent in a background `asyncio` task on
   the same process — fast, no isolation. `start()` kicks off the agent's
   first turn (via `SessionManager._run_agent`) whenever a task description
   or prompt is present; a session created with neither just sits idle
   until `send()`.
-- **`SubprocessRuntime`** spawns a child process (`session/worker.py`)
-  that runs the agent loop and streams JSONL events back over
-  stdin/stdout. Selected per workspace/session when isolation matters
-  more than startup latency. **Currently broken** — its event-forwarding
-  path still references `session._events`, an attribute removed when the
-  SSE fan-out fix replaced the single queue with `_subscribers`/
-  `_history`/`_broadcast()` (see [`docs/RETRO.md`](RETRO.md)); would raise
-  `AttributeError` on the first event a subprocess-runtime session tries
-  to emit. Not caught by any test since the default runtime is
-  `inprocess`.
+
+A second implementation, `SubprocessRuntime`, existed here — it spawned a
+child process (`session/worker.py`) that ran the agent loop and streamed
+JSONL events back over stdin/stdout, selected per workspace/session when
+isolation mattered more than startup latency. It was removed rather than
+fixed: its event-forwarding path referenced `session._events`, an
+attribute removed when the SSE fan-out fix replaced the single queue with
+`_subscribers`/`_history`/`_broadcast()`, so it raised `AttributeError` on
+the first event any subprocess-runtime session tried to emit — uncaught
+by any test since the default runtime is `inprocess`. Its own event-chunk
+parser had also independently drifted from the fixed one in
+`manager.py`. See [`docs/RETRO.md`](RETRO.md) for the full writeup.
+`set_runtime_type()`/`create_runtime()` silently fall back to
+`InProcessRuntime` for any unrecognized runtime value now (including a
+pre-existing `"subprocess"` saved in a settings/project file from before
+the removal), so an existing install doesn't break on upgrade.
+
+The abstraction is still worth keeping as a real interface (rather than
+inlining `InProcessRuntime` directly into `SessionManager`) specifically
+so a *real* isolated runtime — container-backed, most likely, see the
+roadmap — can be added later without changing `SessionManager`'s own
+code, only `create_runtime()`.
 
 `SessionManager.start()` resolves which one to use via `create_runtime()`
 for both paths — there's no special-casing of either runtime type. See
@@ -232,7 +243,7 @@ SessionManager:
   - wraps tools with sandboxed shell/editor if a workspace is set
   - registers hooks (token tracking, auto progress logging, steering)
   - constructs the Strands Agent with a ModeInterventionHandler
-  - hands off to InProcessRuntime or SubprocessRuntime
+  - hands off to InProcessRuntime
                 │
                 ▼
 Events stream from the runtime as an asyncio.Queue (TUI) or are broadcast
@@ -254,13 +265,33 @@ Agent calls task tools (log_progress, update_task_status, ...) as it works.
 Session ends on completion, error, or explicit stop.
 ```
 
-### Assume / relinquish
+### Autonomous toggle
 
-`SessionManager.set_mode()` flips `session.mode` between `agent` and
-`assistant`. The `ModeInterventionHandler` (Strands intervention) checks
-the current mode before every tool call: `agent` → proceed, `assistant` →
-deny. This is how "taking over" a session blocks the agent's tools without
-tearing down and restarting the session.
+`SessionManager.set_autonomous(session_id, on)` (`POST /api/agent/{id}/
+autonomous`) is the web UI's single on/off switch for a task-attached
+session, replacing the older separate Assume/Relinquish actions:
+
+- **Off** — interrupts whatever's currently running (`interrupt()`) and
+  sets `mode = "assistant"`, so the session stops self-continuing the
+  task until switched back on. Tool calls still work in this mode — see
+  below, this is *not* the same thing as the reviewer/security read-only
+  gate.
+- **On** — sets `mode = "agent"` and, if the session has a `task_id`,
+  sends a "resume working on the task" nudge via `send()` so it actually
+  picks the task back up rather than just flipping a label.
+
+`SessionManager.set_mode()` is the lower-level primitive underneath this
+(still directly reachable via `POST /api/agent/{id}/assume`/`relinquish`
+for a raw mode flip with no interrupt/resume behavior) — it just sets
+`session.mode`. It does **not** gate tool calls for `agent`/`assistant`;
+only `ModeInterventionHandler` (`intervention.py`) does that, and only
+for `reviewer`/`security` modes (CLI-only, not exposed in the web UI).
+An earlier version of this doc — and an earlier version of the code —
+had `assistant` mode denying every tool call via the same handler; that
+turned out not to be the wanted behavior (a paused session should still
+be able to act on what you tell it, just not keep self-directing on its
+own), and the handler was also just plain broken for anything it
+tried to gate, see docs/RETRO.md.
 
 ### Interrupt vs stop
 
@@ -332,8 +363,8 @@ timestamp, credential, template, caller, and success.
 
 agent-knots is designed for concurrent agents:
 
-- **Multiple sessions run independently**, each owning its own runtime
-  (in-process task or subprocess).
+- **Multiple sessions run independently**, each owning its own
+  in-process `asyncio` task.
 - **The web server is async** (FastAPI + `asyncio`); each connected
   browser tab gets its own SSE subscriber queue via `Session.subscribe()`,
   fanned out from a shared per-session event history/broadcast
@@ -342,9 +373,11 @@ agent-knots is designed for concurrent agents:
   events and silently lose some.
 - **The TUI polls an `asyncio.Queue`** per focused session.
 
-The orchestrator is single-process for in-process sessions; subprocess
-sessions add one child process each. Multi-process fan-out beyond that
-(e.g. a daemon coordinating multiple hosts) is out of scope for now.
+The orchestrator is single-process today — every session's runtime lives
+in the same Python process. Real process-level isolation (and the
+multi-process fan-out it would enable, e.g. a daemon coordinating
+multiple hosts) is out of scope until the container runtime on the
+roadmap lands.
 
 ## Extensibility
 

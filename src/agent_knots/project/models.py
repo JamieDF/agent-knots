@@ -14,7 +14,7 @@ class Project:
     description: str = ""
     repository: str = ""
     default_branch: str = "main"
-    runtime: str = ""           # "inprocess", "subprocess", or "" (use global)
+    runtime: str = ""           # "inprocess" or "" (use global)
     tags: list[str] = field(default_factory=list)
     # Config-only for now — no scheduler enforces these yet. Surfaced on
     # the Dashboard's "Up next" queue per the Atelier design (auto-assign

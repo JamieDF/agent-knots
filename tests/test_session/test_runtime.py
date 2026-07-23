@@ -1,10 +1,16 @@
-"""Tests for session/runtime.py — InProcessRuntime, SubprocessRuntime
-selection, and create_runtime()'s type resolution.
+"""Tests for session/runtime.py — InProcessRuntime and create_runtime()'s
+type resolution.
 
 Previously had zero coverage; this is where two real bugs lived:
 InProcessRuntime.start() was a no-op, and create_runtime() only ever
 consulted the global runtime-type setting, ignoring an explicitly
 resolved type passed in by the caller.
+
+SubprocessRuntime (and its tests) were removed along with the
+implementation — see docs/RETRO.md for why. set_runtime_type()/
+create_runtime() now treat any non-"inprocess" value (including a
+pre-existing "subprocess" saved in an old settings.yaml/project.yaml)
+as inprocess rather than raising, which the tests below cover.
 """
 
 import asyncio
@@ -14,7 +20,6 @@ import pytest
 from agent_knots.session.manager import Session
 from agent_knots.session.runtime import (
     InProcessRuntime,
-    SubprocessRuntime,
     create_runtime,
     get_runtime_type,
     set_runtime_type,
@@ -54,19 +59,17 @@ class TestCreateRuntime:
         set_runtime_type("inprocess")
         assert isinstance(create_runtime(), InProcessRuntime)
 
-    def test_global_subprocess_setting(self):
-        set_runtime_type("subprocess")
-        assert isinstance(create_runtime(), SubprocessRuntime)
-
-    def test_explicit_type_overrides_global_to_subprocess(self):
-        """Regression: an explicitly resolved runtime_type (e.g. a
-        per-project override) must win over a stale global default."""
+    def test_unknown_global_type_falls_back_to_inprocess(self):
+        """A pre-existing settings.yaml/project.yaml saved with the old
+        "subprocess" runtime (or any other unrecognized value) must not
+        crash session start on upgrade — it silently runs in-process."""
         set_runtime_type("inprocess")
-        assert isinstance(create_runtime(runtime_type="subprocess"), SubprocessRuntime)
-
-    def test_explicit_type_overrides_global_to_inprocess(self):
         set_runtime_type("subprocess")
-        assert isinstance(create_runtime(runtime_type="inprocess"), InProcessRuntime)
+        assert get_runtime_type() == "inprocess"  # rejected by the setter itself
+        assert isinstance(create_runtime(), InProcessRuntime)
+
+    def test_explicit_unknown_type_falls_back_to_inprocess(self):
+        assert isinstance(create_runtime(runtime_type="subprocess"), InProcessRuntime)
 
     def test_inprocess_runtime_carries_session_manager(self):
         mgr = FakeManager()

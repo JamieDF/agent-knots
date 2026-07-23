@@ -16,9 +16,14 @@
 - [x] Custom tools — User-defined shell command tools, enable/disable per tool
 - [x] Workspaces — Multi-project grouping with task/agent filtering, path
   isolation, full CRUD plus archive/unarchive from Settings
-- [x] Runtime modes — In-process (fast) + subprocess (isolated). Configurable per workspace/session
+- [x] Runtime — In-process. (A subprocess-isolated runtime existed but
+  never actually worked — deleted rather than fixed, see the full
+  codebase review item below. Real process isolation is a
+  container-runtime roadmap item instead.)
 - [x] Model providers — MiniMax, OpenAI, Anthropic, Ollama, custom. Selectable in settings
-- [x] Assume/Relinquish — Mode switching with live UI pill updates
+- [x] Autonomous toggle — Single on/off switch replacing Assume/Relinquish:
+  on lets the agent self-direct from its task, off interrupts whatever's
+  running and pauses it for back-and-forth without blocking tool use
 - [x] Full task workflow — Draft → Open → In Progress → Review → Done, with
   a real review-gate enforced on the Done transition (not just displayed)
 - [x] Task editing — Title, description, priority, tags, acceptance
@@ -53,20 +58,20 @@
   lets an agent start a dev server or watcher without the tool's timeout
   killing it; tracked per-session and cleaned up when the session ends
 - [x] Stop vs Delete — Composer's Stop now cancels only the current turn
-  (session stays open); a separate header Delete ends the session.
-  Watching mode is a banner above the composer, not a locked-out state —
-  typing a message assumes control automatically
+  (session stays open); a separate header Delete ends the session
 - [x] Accessibility settings — App-wide font size and font family
 - [x] Resizable Agent Thread layout — Drag to resize the chat/rail split,
   clamped to 5–95% of the available width
+- [x] Fixed mode-gating actually doing nothing — a method-naming
+  mismatch with the Strands SDK meant reviewer/security modes never
+  actually denied a tool call despite the code looking like they should
+- [x] Full codebase review + cleanup pass — dead code removed, real bugs
+  fixed (CLI `--assign` silently unassigning, delegate sub-threads never
+  getting the event-accumulation fix, tool results always rendering as
+  success), `SubprocessRuntime` deleted rather than fixed (see below)
 
 ## Next
 
-- [ ] Fix `SubprocessRuntime` — its event-forwarding path still references
-  `session._events`, removed when the SSE fan-out fix replaced it with
-  `_subscribers`/`_history`/`_broadcast()`; raises `AttributeError` on the
-  first event a subprocess-runtime session tries to emit. Not caught
-  because the default runtime is in-process. See `docs/RETRO.md`.
 - [ ] Container runtime — Podman/Docker isolation with full filesystem + network sandboxing
 - [ ] Git worktree integration — Auto-create worktrees per session on workspace repos
 - [ ] Multi-agent orchestration — Run multiple agents on the same task, merge results

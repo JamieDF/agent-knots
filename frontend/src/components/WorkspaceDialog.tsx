@@ -72,10 +72,12 @@ function WorkspaceDialog({ workspace, onClose, onSaved }: Props) {
           )}
         </Field>
         <Field label="Runtime">
+          {/* Subprocess used to be a second option here — removed along
+              with SubprocessRuntime, which never actually worked (see
+              docs/RETRO.md). In-process is the only real runtime today. */}
           <select aria-label="Runtime" value={runtime} onChange={e => setRuntime(e.target.value)} style={inputStyle}>
             <option value="">(use global)</option>
             <option value="inprocess">In-process</option>
-            <option value="subprocess">Subprocess</option>
           </select>
         </Field>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>

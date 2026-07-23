@@ -1151,54 +1151,60 @@ test.describe('runtime & isolation', () => {
     await authPage(page)
   })
 
-  test('workspace with subprocess runtime spawns agent in child process', async ({ page }) => {
+  test('workspace with a legacy/unknown runtime value falls back to in-process, not a crash', async ({ page }) => {
+    // SubprocessRuntime (a second, isolated-process runtime) was removed
+    // after a code review found it never actually worked — it referenced
+    // a Session API that stopped existing when SSE fan-out landed, so it
+    // crashed on the first event any subprocess-runtime session tried to
+    // emit. See docs/RETRO.md. create_runtime()/set_runtime_type() now
+    // silently treat any non-"inprocess" value (including an old
+    // "subprocess" saved from before the removal) as in-process, so a
+    // pre-existing workspace with that value doesn't break on upgrade —
+    // that's what this test actually verifies now.
     test.setTimeout(60000)
 
-    // Create workspace with subprocess runtime.
     const wsRes = await page.request.post(`${BASE}/api/workspaces`, {
-      data: { id: 'subprocess-test', name: 'Subprocess Test', runtime: 'subprocess' },
+      data: { id: 'legacy-runtime-test', name: 'Legacy Runtime Test', runtime: 'subprocess' },
     })
     expect(wsRes.status()).toBe(200)
 
-    // Create a task in that workspace.
     const taskRes = await page.request.post(`${BASE}/api/tasks`, {
-      data: { title: 'Subprocess task', project: 'subprocess-test' },
+      data: { title: 'Legacy runtime task', project: 'legacy-runtime-test' },
     })
     const task = await taskRes.json()
 
-    // Start session in that workspace.
     const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
-      data: { prompt: 'Say hello', mode: 'agent', project_id: 'subprocess-test' },
+      data: { prompt: 'Say hello', mode: 'agent', project_id: 'legacy-runtime-test' },
     })
     expect(sessionRes.status()).toBe(200)
     const session = await sessionRes.json()
 
-    // Poll for events — subprocess should stream events.
-    await page.waitForTimeout(5000)
+    await page.waitForTimeout(3000)
 
-    // Verify session ran.
+    // The session should show up as a normal running agent, not have
+    // crashed on session start.
     const agents = await (await page.request.get(`${BASE}/api/agents`)).json()
-    console.log(`Agents after subprocess session: ${agents.agents.length}`)
+    expect(agents.agents.some((a: any) => a.id === session.id)).toBe(true)
 
-    // Cleanup.
     await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
     await page.request.delete(`${BASE}/api/tasks/${task.id}`)
-    await page.request.delete(`${BASE}/api/workspaces/subprocess-test`)
+    await page.request.delete(`${BASE}/api/workspaces/legacy-runtime-test`)
   })
 
-  test('workspace runtime appears in settings API', async ({ page }) => {
-    // Create workspace with runtime.
+  test('workspace runtime field round-trips through the API', async ({ page }) => {
+    // The field itself is free-text storage at the workspace-model layer
+    // (no validation against a fixed set of implemented runtimes) — this
+    // deliberately uses a value that was never a real runtime, to keep
+    // the test about the round-trip, not about which runtimes exist.
     await page.request.post(`${BASE}/api/workspaces`, {
-      data: { id: 'runtime-test', name: 'Runtime Test', runtime: 'subprocess' },
+      data: { id: 'runtime-test', name: 'Runtime Test', runtime: 'some-custom-value' },
     })
 
-    // Check workspace list includes runtime.
     const list = await (await page.request.get(`${BASE}/api/workspaces`)).json()
     const ws = list.workspaces.find((w: any) => w.id === 'runtime-test')
     expect(ws).toBeDefined()
-    expect(ws.runtime).toBe('subprocess')
+    expect(ws.runtime).toBe('some-custom-value')
 
-    // Cleanup.
     await page.request.delete(`${BASE}/api/workspaces/runtime-test`)
   })
 

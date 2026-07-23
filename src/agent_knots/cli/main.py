@@ -509,7 +509,7 @@ def create_project(
     description: str = typer.Option("", "--description", help="Longer description."),
     repository: str = typer.Option("", "--repository", "--repo", help="Repo URL or path."),
     default_branch: str = typer.Option("main", "--branch", help="Default branch."),
-    runtime: str = typer.Option("", "--runtime", help="Runtime override (inprocess, subprocess)."),
+    runtime: str = typer.Option("", "--runtime", help="Runtime override (inprocess, or empty for the global default)."),
     tag: list[str] = typer.Option([], "--tag", help="Tags (repeatable)."),
 ) -> None:
     """Create a new project."""

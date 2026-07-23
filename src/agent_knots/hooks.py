@@ -7,14 +7,17 @@ Registered on every agent session to:
 
 from __future__ import annotations
 
-import time
+from typing import TYPE_CHECKING
 
 from strands.hooks.events import AfterModelCallEvent, AfterToolCallEvent
 
 from agent_knots.events import Event, EventType
 
+if TYPE_CHECKING:
+    from agent_knots.session.manager import Session
 
-def register_session_hooks(agent, session: "Session") -> None:
+
+def register_session_hooks(agent, session: Session) -> None:
     """Register hooks on an agent for a session.
 
     Args:
@@ -57,7 +60,7 @@ def register_session_hooks(agent, session: "Session") -> None:
 
         try:
             from agent_knots.task.store import TaskStore
-            from agent_knots.task.models import ProgressEntry, TaskStatus
+            from agent_knots.task.models import ProgressEntry
             from agent_knots.config import tasks_dir
 
             store = TaskStore(tasks_dir())

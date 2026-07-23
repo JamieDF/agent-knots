@@ -20,7 +20,7 @@ class AgentSettings:
     api_key: str = ""
     base_url: str = ""
     default_mode: str = "agent"
-    runtime: str = "inprocess"  # "inprocess" or "subprocess"
+    runtime: str = "inprocess"
 
 
 @dataclass
