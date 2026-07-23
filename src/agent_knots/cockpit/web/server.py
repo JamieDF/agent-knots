@@ -77,6 +77,10 @@ class CheckpointRequest(BaseModel):
     label: str = "checkpoint"
 
 
+class AutonomousRequest(BaseModel):
+    on: bool
+
+
 class CreateTaskRequest(BaseModel):
     title: str
     description: str = ""
@@ -505,6 +509,17 @@ def create_app(
     async def agent_relinquish(agent_id: str):
         """Relinquish control of an agent (switch to agent mode)."""
         await session_manager.set_mode(agent_id, "agent")
+        return {"status": "ok"}
+
+    @app.post("/api/agent/{agent_id}/autonomous")
+    async def agent_set_autonomous(agent_id: str, body: AutonomousRequest):
+        """Toggle a task-attached session between autonomous (self-
+        directed from the task) and paused (interactive). See
+        SessionManager.set_autonomous()."""
+        try:
+            await session_manager.set_autonomous(agent_id, body.on)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="Agent not found")
         return {"status": "ok"}
 
     @app.post("/api/agent/{agent_id}/checkpoint")

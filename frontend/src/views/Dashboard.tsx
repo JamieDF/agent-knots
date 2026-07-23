@@ -281,7 +281,7 @@ function RunningAgentCard({ agent, task, onDeleted }: { agent: AgentInfo; task?:
         {agent.running ? 'working…' : 'idle'}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, color: 'var(--mut)' }}>
-        <span style={{ color: agent.mode === 'assistant' ? 'var(--warn-ink)' : 'var(--ok)', fontWeight: 700 }}>{agent.mode === 'assistant' ? 'driving' : 'watching'}</span>
+        <span style={{ color: agent.mode === 'assistant' ? 'var(--warn-ink)' : 'var(--ok)', fontWeight: 700 }}>{agent.mode === 'assistant' ? 'paused' : 'autonomous'}</span>
         <span>{agent.tokens_used.toLocaleString()} tok</span>
         <button onClick={() => deleteAgent(agent.id).then(onDeleted)} style={{ color: 'var(--mut)' }}>✕</button>
         <button onClick={() => navigate(`/agent/${agent.id}`)} style={{ marginLeft: 'auto', color: 'var(--acc)', fontWeight: 600 }}>Open →</button>

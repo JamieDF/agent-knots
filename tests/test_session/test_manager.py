@@ -311,6 +311,80 @@ class TestSessionManager:
         with pytest.raises(ValueError, match="not found"):
             await mgr.set_mode("nonexistent", "assistant")
 
+    @pytest.mark.asyncio
+    async def test_set_autonomous_nonexistent(self, sessions_dir):
+        mgr = SessionManager(sessions_dir)
+        with pytest.raises(ValueError, match="not found"):
+            await mgr.set_autonomous("nonexistent", True)
+
+    @pytest.mark.asyncio
+    async def test_set_autonomous_off_interrupts_a_running_turn(self, sessions_dir):
+        """Turning autonomous off is the 'hold up' action — it must stop
+        whatever's currently running immediately, not just flip a label."""
+        mgr = SessionManager(sessions_dir)
+        s = Session(mode="agent")
+
+        class ForeverAgent:
+            async def stream_async(self, prompt):
+                while True:
+                    await asyncio.sleep(10)
+                    yield {}
+
+        s._agent = ForeverAgent()
+        mgr._sessions[s.id] = s
+        s._task = asyncio.create_task(mgr._run_agent(s, s._agent, "go"))
+        await asyncio.sleep(0.05)
+        assert s.running
+
+        await mgr.set_autonomous(s.id, False)
+
+        assert not s.running
+        assert s.mode == "assistant"
+        assert s.id in mgr._sessions  # session survives, unlike stop()
+
+    @pytest.mark.asyncio
+    async def test_set_autonomous_off_when_idle_is_a_clean_noop_besides_the_mode_flip(self, sessions_dir):
+        mgr = SessionManager(sessions_dir)
+        s = Session(mode="agent")
+        mgr._sessions[s.id] = s
+
+        await mgr.set_autonomous(s.id, False)
+
+        assert s.mode == "assistant"
+
+    @pytest.mark.asyncio
+    async def test_set_autonomous_on_without_a_task_does_not_send_a_resume_message(self, sessions_dir):
+        mgr = SessionManager(sessions_dir)
+        s = Session(mode="assistant", task_id=None)
+        mgr._sessions[s.id] = s
+
+        await mgr.set_autonomous(s.id, True)
+
+        assert s.mode == "agent"
+        assert s._task is None  # no send() was triggered
+
+    @pytest.mark.asyncio
+    async def test_set_autonomous_on_with_a_task_sends_a_resume_message(self, sessions_dir):
+        mgr = SessionManager(sessions_dir)
+        s = Session(mode="assistant", task_id="T-1")
+
+        class QuickAgent:
+            async def stream_async(self, prompt):
+                return
+                yield {}  # pragma: no cover — makes this an async generator
+
+        s._agent = QuickAgent()
+        mgr._sessions[s.id] = s
+
+        await mgr.set_autonomous(s.id, True)
+        await asyncio.sleep(0.05)
+
+        assert s.mode == "agent"
+        assert any(
+            e.type == EventType.USER and "Resume working on the task" in e.message
+            for e in s._history
+        )
+
     def test_checkpoint_nonexistent(self, sessions_dir):
         mgr = SessionManager(sessions_dir)
         with pytest.raises(ValueError, match="not found"):

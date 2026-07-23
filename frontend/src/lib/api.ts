@@ -56,8 +56,9 @@ export async function fetchAgents(): Promise<{ agents: AgentInfo[] }> {
 export async function fetchAgent(id: string): Promise<AgentInfo> {
   const res = await fetch(`/api/agent/${id}`); if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
 }
-export async function assumeAgent(id: string): Promise<void> { await fetch(`/api/agent/${id}/assume`, { method: 'POST' }) }
-export async function relinquishAgent(id: string): Promise<void> { await fetch(`/api/agent/${id}/relinquish`, { method: 'POST' }) }
+export async function setAutonomous(id: string, on: boolean): Promise<void> {
+  await fetch(`/api/agent/${id}/autonomous`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }) })
+}
 export async function checkpointAgent(id: string, label: string): Promise<void> {
   await fetch(`/api/agent/${id}/checkpoint`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }) })
 }

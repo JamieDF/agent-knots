@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
-  assumeAgent, relinquishAgent, sendMessage, checkpointAgent, revertAgent, interruptAgent,
+  setAutonomous, sendMessage, checkpointAgent, revertAgent, interruptAgent,
   fetchTask, fetchAgent, deleteAgent, fetchAgentFile, type AgentInfo, type TaskDetail,
 } from '../lib/api'
 import { subscribeToAgent, type SSEEvent } from '../lib/sse'
 import { useTheme } from '../theme/ThemeContext'
-import { Chip } from '../components/primitives'
+import { Chip, Toggle } from '../components/primitives'
 import Markdown from '../components/Markdown'
 import ConfirmDialog from '../components/ConfirmDialog'
 import '@xterm/xterm/css/xterm.css'
@@ -34,8 +34,8 @@ const GOAL_RAIL_WIDTH = 260
 
 /** Agent Thread — the full 3-zone Atelier layout (Phase 3). Header, left
  * goal rail (collapsible via Cmd/Ctrl+B), center event stream with a
- * renderer per event kind, composer with driving/watching/ended states,
- * right rail (Terminal/Files/Preview). See
+ * renderer per event kind, composer with autonomous/paused/ended states,
+ * right rail (Terminal/Files/Commands/Browser). See
  * design_handoff_atelier_cockpit/README.md §2. */
 function AgentThread() {
   const { id } = useParams<{ id: string }>()
@@ -167,18 +167,18 @@ function AgentThread() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const handleAssume = useCallback(async () => {
+  // The single Autonomous toggle — only meaningful for a task-attached
+  // session (there's no task to self-direct from otherwise). Turning it
+  // off is the "hold up" action: interrupts whatever's running right now
+  // and stops the agent from self-continuing. Turning it back on nudges
+  // it to resume the task. See SessionManager.set_autonomous().
+  const handleToggleAutonomous = useCallback(async (on: boolean) => {
     if (!id) return
     // Optimistic — the mode/composer state otherwise looks unresponsive
     // for up to one 3s poll cycle after clicking, even though the
     // backend already applied it.
-    setAgent(prev => prev ? { ...prev, mode: 'assistant' } : prev)
-    await assumeAgent(id)
-  }, [id])
-  const handleRelinquish = useCallback(async () => {
-    if (!id) return
-    setAgent(prev => prev ? { ...prev, mode: 'agent' } : prev)
-    await relinquishAgent(id)
+    setAgent(prev => prev ? { ...prev, mode: on ? 'agent' : 'assistant' } : prev)
+    await setAutonomous(id, on)
   }, [id])
   const handleDelete = useCallback(async () => {
     if (!id) return
@@ -193,14 +193,15 @@ function AgentThread() {
     if (!id || !draft.trim()) return
     const text = draft.trim()
     setDraft('')
-    // Typing and sending a message while watching is how you "assume
-    // control" now — no need to click Assume first.
-    if (agent?.mode !== 'assistant') {
+    // Sending a message while autonomous is itself the "hold up" — it
+    // interrupts whatever's running and pauses self-continuation, no
+    // separate toggle-off click required first.
+    if (task && agent?.mode === 'agent') {
       setAgent(prev => prev ? { ...prev, mode: 'assistant' } : prev)
-      await assumeAgent(id)
+      await setAutonomous(id, false)
     }
     await sendMessage(id, text)
-  }, [id, draft, agent])
+  }, [id, draft, agent, task])
   const handleCheckpoint = useCallback(async () => {
     if (!id) return
     const label = window.prompt('Checkpoint label', 'checkpoint') || 'checkpoint'
@@ -282,7 +283,9 @@ function AgentThread() {
   }, [task, railCollapsed])
 
   if (!id) return null
-  const isDriving = agent?.mode === 'assistant'
+  // Autonomous only means anything for a task-attached session — there's
+  // no task to self-direct from otherwise.
+  const isAutonomous = !!task && agent?.mode === 'agent'
   const visibleEvents = replayPos !== null ? events.slice(0, replayPos) : events
   const uptime = agent ? formatUptime(Date.now() / 1000 - agent.started_at) : ''
 
@@ -298,16 +301,27 @@ function AgentThread() {
         <span style={{ width: 7, height: 7, borderRadius: '50%', background: agent?.running ? 'var(--ok)' : 'var(--mut2)' }} />
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{task?.title || id}</span>
         <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>{id}</span>
-        <Chip color={isDriving ? 'var(--warn-ink)' : 'var(--mut)'} soft>{isDriving ? 'DRIVING' : 'WATCHING'}</Chip>
+        {/* The Autonomous toggle — only shown when there's a task to
+            self-direct from. Flipping it off is the "hold up" action:
+            interrupts whatever's running right now; flipping it back on
+            nudges the agent to resume the task. */}
+        {task && (
+          <div
+            title={isAutonomous ? 'Autonomous — working on the task on its own. Turn off to hold up.' : 'Paused — reply below, or turn Autonomous back on to resume the task.'}
+            style={{ display: 'flex', alignItems: 'center', gap: 7 }}
+          >
+            <Toggle checked={isAutonomous} onChange={handleToggleAutonomous} small />
+            <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.05em', color: isAutonomous ? 'var(--acc)' : 'var(--mut)' }}>
+              {isAutonomous ? '⚡ AUTONOMOUS' : '⏸ PAUSED'}
+            </span>
+          </div>
+        )}
         {agent?.model && <Chip mono>{agent.model}</Chip>}
         {task && <button onClick={() => setRailCollapsed(r => !r)} title="Toggle rail (⌘B)" style={{ fontSize: 11, color: 'var(--mut)', fontFamily: 'var(--font-mono)' }}>⌘B</button>}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>
             {agent?.tokens_used.toLocaleString() ?? 0} tok · ${agent?.cost_usd.toFixed(3) ?? '0.000'} · {uptime}
           </span>
-          {isDriving
-            ? <button onClick={handleRelinquish} style={pillBtn('var(--acc-soft)', 'var(--acc)')}>Relinquish</button>
-            : <button onClick={handleAssume} style={pillBtn('var(--warn-soft)', 'var(--warn-ink)')}>Assume</button>}
           <button onClick={() => setConfirmDelete(true)} title="Delete this session" style={pillBtn('var(--card2)', 'var(--err)')}>✕ Delete</button>
         </div>
       </div>
@@ -398,19 +412,21 @@ function AgentThread() {
             </div>
           ) : (
             <div style={{ borderTop: '1px solid var(--line)', background: 'var(--card)' }}>
-              {/* Watching is now just a banner, not a locked composer —
-                  typing below and hitting Send is itself how you assume
-                  control, so there's no separate step required. */}
-              {!isDriving && (
+              {/* A banner, not a locked composer — typing below and
+                  hitting Send is itself the "hold up" that pauses
+                  Autonomous, so there's no separate toggle-off step
+                  required. Only shown while actually autonomous —
+                  paused/no-task sessions are just a normal chat. */}
+              {isAutonomous && (
                 <div style={{ padding: '6px 20px', fontSize: 12, color: 'var(--mut)', background: 'var(--card2)', borderBottom: '1px solid var(--line)' }}>
-                  👁 Watching — the agent is driving. Type a message below to take over.
+                  ⚡ Working autonomously on the task. Type a message anytime to step in.
                 </div>
               )}
               <div style={{ display: 'flex', gap: 8, padding: 12 }}>
                 <input
                   value={draft} onChange={e => setDraft(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handleSend() }}
-                  placeholder={isDriving ? 'Message the agent…' : 'Type to take over…'}
+                  placeholder={isAutonomous ? 'Type to step in…' : 'Message the agent…'}
                   style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--line2)', background: 'var(--card2)', color: 'var(--ink)', fontSize: 13, outline: 'none' }}
                 />
                 <button onClick={handleSend} style={{ padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}>Send</button>

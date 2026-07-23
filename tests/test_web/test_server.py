@@ -555,6 +555,27 @@ class TestAgentDetailAPI:
         assert resp.status_code == 200
         assert "idle" in session_manager._sessions
 
+    @pytest.mark.asyncio
+    async def test_autonomous_unknown_agent_404s(self, authed_client):
+        resp = await authed_client.post("/api/agent/nonexistent/autonomous", json={"on": False})
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_autonomous_off_sets_assistant_mode(self, authed_client, session_manager):
+        from agent_knots.session.manager import Session
+        session_manager._sessions["s1"] = Session(id="s1", mode="agent")
+        resp = await authed_client.post("/api/agent/s1/autonomous", json={"on": False})
+        assert resp.status_code == 200
+        assert session_manager._sessions["s1"].mode == "assistant"
+
+    @pytest.mark.asyncio
+    async def test_autonomous_on_without_task_sets_agent_mode(self, authed_client, session_manager):
+        from agent_knots.session.manager import Session
+        session_manager._sessions["s2"] = Session(id="s2", mode="assistant", task_id=None)
+        resp = await authed_client.post("/api/agent/s2/autonomous", json={"on": True})
+        assert resp.status_code == 200
+        assert session_manager._sessions["s2"].mode == "agent"
+
 
 class TestAgentFileAPI:
     """Files tab preview — reads a file's content confined to the

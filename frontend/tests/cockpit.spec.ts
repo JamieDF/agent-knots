@@ -130,82 +130,83 @@ test.describe('cockpit — real agent flow', () => {
     await authPage(page)
   })
 
-  test('create session, view in cockpit, assume/relinquish', async ({ page }) => {
-    // 1. Create a real session via API.
-    const session = await createSession(
-      page,
-      'My name is Taylor. Favourite colour: teal. Remember both facts and reply confirming.',
-      'agent'
-    )
+  test('create task-attached session, view in cockpit, toggle Autonomous', async ({ page }) => {
+    // The Autonomous toggle only means anything for a task-attached
+    // session — there's no task to self-direct from otherwise.
+    const taskRes = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Remember Taylor', priority: 'medium' },
+    })
+    const task = await taskRes.json()
+
+    // 1. Create a real session via API, attached to the task.
+    const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
+      data: {
+        prompt: 'My name is Taylor. Favourite colour: teal. Remember both facts and reply confirming.',
+        mode: 'agent',
+        task_id: task.id,
+      },
+    })
+    const session = await sessionRes.json()
     console.log(`Session created: ${session.id}`)
 
-    // 2. Navigate to overview — agent card should appear.
+    // 2. Navigate to overview — agent card should appear, showing
+    // "autonomous" (a task-attached agent-mode session starts autonomous
+    // by default — see session/manager.py's mode semantics). A
+    // task-attached card shows the task's title, not the raw session id.
     await page.goto(BASE)
     await page.waitForTimeout(3000) // wait for polling
 
-    const card = page.locator(`text=${session.id}`)
+    const card = page.locator('text=Remember Taylor').first()
     await expect(card).toBeVisible({ timeout: 10000 })
-
-    // A fresh agent-mode session (before assume) shows as "watching" on
-    // the Dashboard's running-agent card — see the driving/watching
-    // terminology mapping in session/manager.py's mode semantics (Phase 0).
-    await expect(page.locator('text=watching')).toBeVisible()
+    await expect(page.locator('text=autonomous').first()).toBeVisible()
 
     // 3. Enter the agent thread — the card's title area isn't itself a
     // nav target (only its "Open →" link is, per the Atelier design).
     await page.goto(`${BASE}/agent/${session.id}`)
     await page.waitForTimeout(2000)
 
-    // Should see the agent header with Assume button.
-    const assumeBtn = page.locator('button:has-text("Assume")').first()
-    await expect(assumeBtn).toBeVisible({ timeout: 5000 })
-
-    // Mode chip should show WATCHING (header chip, Phase 3 rewrite).
-    await expect(page.locator('text=WATCHING')).toBeVisible()
-
-    // 4. Assume control.
-    await assumeBtn.click()
-    await page.waitForTimeout(500)
-
-    // Mode chip should now show DRIVING.
-    await expect(page.locator('text=DRIVING')).toBeVisible()
-
-    // Should see Relinquish button.
-    const relinquishBtn = page.locator('button:has-text("Relinquish")')
-    await expect(relinquishBtn).toBeVisible()
-
-    // 5. Send a multi-turn message.
-    const chatInput = page.locator('input[placeholder="Message the agent…"]')
+    // Header shows the Autonomous toggle, on by default.
+    await expect(page.locator('text=⚡ AUTONOMOUS')).toBeVisible({ timeout: 5000 })
+    // The composer stays a normal chat, plus a banner reminding you that
+    // typing pauses it — never a locked-out state.
+    await expect(page.locator('text=Working autonomously on the task')).toBeVisible()
+    const chatInput = page.locator('input[placeholder="Type to step in…"]')
     await expect(chatInput).toBeVisible()
-    await chatInput.fill('What is my name?')
-    await chatInput.press('Enter')
+    await expect(chatInput).toBeEnabled()
+
+    // 4. Turn the toggle off directly — the "I see it going wrong, hold
+    // up" affordance, without needing to type anything first.
+    await page.locator('[role="switch"]').click()
+    await page.waitForTimeout(500)
+    await expect(page.locator('text=⏸ PAUSED')).toBeVisible()
+    await expect(page.locator('text=Working autonomously on the task')).toHaveCount(0)
+
+    // 5. Send a message while paused — a normal back-and-forth turn,
+    // tools still work (only reviewer/security modes are ever read-only).
+    const pausedInput = page.locator('input[placeholder="Message the agent…"]')
+    await expect(pausedInput).toBeVisible()
+    await pausedInput.fill('What is my name?')
+    await pausedInput.press('Enter')
     await page.waitForTimeout(3000)
 
     // Should see the user message echoed back (the backend broadcasts a
     // USER event for every sent message so all viewers see it).
     await expect(page.locator('text=What is my name?')).toBeVisible({ timeout: 5000 })
 
-    // 6. Relinquish control.
-    await relinquishBtn.click()
-    await page.waitForTimeout(500)
-
-    // Mode chip should go back to WATCHING.
-    await expect(page.locator('text=WATCHING')).toBeVisible()
-
-    // Should see the Assume button again in the header, and a banner
-    // above the composer — but the composer itself stays unlocked (you
-    // can type + Send to take over instead of clicking Assume).
-    await expect(page.locator('button:has-text("Assume")').first()).toBeVisible()
-    await expect(page.locator('text=Watching — the agent is driving')).toBeVisible()
-    const watchingInput = page.locator('input[placeholder="Type to take over…"]')
-    await expect(watchingInput).toBeVisible()
-    await expect(watchingInput).toBeEnabled()
-
-    // 6b. Typing + sending while watching assumes control implicitly.
-    await watchingInput.fill('Taking over now.')
-    await watchingInput.press('Enter')
+    // 6. Turn Autonomous back on — should resume the task (a "Resume
+    // working on the task" message gets sent under the hood).
+    await page.locator('[role="switch"]').click()
     await page.waitForTimeout(1000)
-    await expect(page.locator('text=DRIVING')).toBeVisible()
+    await expect(page.locator('text=⚡ AUTONOMOUS')).toBeVisible()
+    await expect(page.locator('text=Resume working on the task')).toBeVisible({ timeout: 5000 })
+
+    // 6b. Typing + sending while autonomous is itself the "hold up" —
+    // pauses it, no separate toggle-off click required first.
+    const autonomousInput = page.locator('input[placeholder="Type to step in…"]')
+    await autonomousInput.fill('Taking over now.')
+    await autonomousInput.press('Enter')
+    await page.waitForTimeout(1000)
+    await expect(page.locator('text=⏸ PAUSED')).toBeVisible()
     await expect(page.locator('text=Taking over now.')).toBeVisible({ timeout: 5000 })
 
     // 7. Navigate back to the Dashboard.
@@ -214,6 +215,8 @@ test.describe('cockpit — real agent flow', () => {
 
     // Agent card should still be visible.
     await expect(card).toBeVisible()
+
+    await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
   })
 
 })

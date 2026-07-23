@@ -437,11 +437,17 @@ class SessionManager:
         await session.cancel(end_session=False)
 
     async def set_mode(self, session_id: str, mode: str) -> None:
-        """Change the agent's mode (agent ↔ assistant).
+        """Change the agent's raw mode field.
 
-        Implemented via Strands interventions — when mode is 'assistant'
-        (user driving), we register an intervention handler that pauses
-        before each tool call to wait for user approval.
+        Tools run in every mode — 'reviewer'/'security' are the only ones
+        an intervention handler denies tool calls in (see
+        intervention.py). 'agent' vs 'assistant' doesn't gate tool
+        permission at all; it's read by set_autonomous()/the web UI as
+        "is this task-attached session currently self-directing or
+        paused for conversation" — see set_autonomous() below, which is
+        almost always what you want to call instead of this for that
+        agent/assistant toggle, since it also handles interrupting the
+        current turn and resuming the task.
         """
         session = self._sessions.get(session_id)
         if session is None:
@@ -453,6 +459,35 @@ class SessionManager:
             session_id=session_id,
             message=f"Mode changed to {mode}",
         ))
+
+    async def set_autonomous(self, session_id: str, on: bool) -> None:
+        """Toggle a task-attached session between autonomous (self-
+        directed from the task) and paused (interactive, back-and-forth
+        — still fully tool-capable, just not self-continuing) work.
+
+        Turning it off interrupts whatever's currently running
+        immediately — the equivalent of "hold up" — and stops it from
+        self-continuing until turned back on. Turning it back on nudges
+        the agent to resume the task, incorporating anything discussed
+        while paused. Sending a message while autonomous is still on is
+        itself a "hold up": the web UI calls this with on=False before
+        sending, rather than requiring an explicit toggle first.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            raise ValueError(f"session {session_id!r} not found")
+
+        if on:
+            await self.set_mode(session_id, "agent")
+            if session.task_id:
+                await self.send(
+                    session_id,
+                    "Resume working on the task — pick up where you left "
+                    "off, taking into account anything discussed above.",
+                )
+        else:
+            await self.interrupt(session_id)
+            await self.set_mode(session_id, "assistant")
 
     def checkpoint(self, session_id: str, label: str) -> None:
         """Mark a checkpoint in the thread. No real snapshot is taken —
