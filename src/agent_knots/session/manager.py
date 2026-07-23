@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from agent_knots.events import Event, EventType, ToolCall
+from agent_knots.events import Event, EventType, ToolCall, ToolResult
 from agent_knots.vault.store import VaultStore
 
 # ── Strands imports ──────────────────────────────────────────────────────────
@@ -710,11 +710,27 @@ class SessionManager:
                             result_text = ' '.join(
                                 ct.get('text', '') for ct in tr['content'] if isinstance(ct, dict)
                             )
+                        # Strands' own ToolResult.status ("success"/"error")
+                        # is a tool-agnostic success signal — works for the
+                        # shell tool's exit_code as much as the editor,
+                        # calculator, or any task tool, none of which have
+                        # a real exit code. Previously this went unset
+                        # entirely, so the frontend had no way to tell a
+                        # failed tool call from a successful one and
+                        # rendered every result identically.
+                        failed = tr.get('status') == 'error'
                         return Event(
                             type=EventType.TOOL_RESULT,
                             session_id=session_id,
                             message=result_text,
                             data=tr,
+                            tool_result=ToolResult(
+                                tool_call_id=tr.get('toolUseId', ''),
+                                stdout='' if failed else result_text,
+                                stderr=result_text if failed else '',
+                                exit_code=1 if failed else 0,
+                                error=result_text if failed else '',
+                            ),
                             timestamp=now,
                         )
                 # Regular content blocks — extract text.

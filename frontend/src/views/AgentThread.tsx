@@ -23,6 +23,56 @@ function newBrowserTabId(): string {
 interface FileChange { path: string; action: string; timestamp: number }
 interface CommandEntry { command: string; timestamp: number }
 
+/** Pure event-accumulation reducer, shared by the top-level thread and
+ * DelegateSubThread (a delegated sub-agent's nested mini-thread).
+ * DelegateSubThread used to append every raw event with no accumulation
+ * at all, so a sub-agent's thread rendered as a dozen tiny fragment
+ * bubbles and duplicate tool cards even after the top-level thread got
+ * fixed for the same problem — sharing this reducer keeps both in sync.
+ * Handles three things:
+ *  - a tool call streams in incrementally (the backend re-emits the
+ *    whole tool_call event, same id, as its args accumulate) — updates
+ *    the existing card in place instead of appending a duplicate;
+ *  - merges a tool_result into the most recent unresolved tool_call by
+ *    adjacency (tool_call_id linkage isn't reliably populated
+ *    backend-side yet, see events.py::TOOL_RESULT construction);
+ *  - message/thinking stream in as many small text deltas, each its own
+ *    event — accumulates consecutive same-type deltas into the prior
+ *    bubble instead of a dozen fragments (also needed so markdown
+ *    spanning a delta boundary, e.g. "**bold**" split across two
+ *    deltas, renders correctly instead of as literal asterisks).
+ */
+function reduceEvent(prev: EventItem[], evt: SSEEvent, nextId: number, cap = 300): EventItem[] {
+  if (evt.type === 'tool_call' && evt.tool_call) {
+    const callId = evt.tool_call.id
+    for (let i = prev.length - 1; i >= 0; i--) {
+      if (prev[i].type === 'tool_call' && prev[i].tool_call?.id === callId) {
+        const next = [...prev]
+        next[i] = { ...next[i], tool_call: evt.tool_call, timestamp: evt.timestamp }
+        return next
+      }
+    }
+  }
+  if (evt.type === 'tool_result') {
+    for (let i = prev.length - 1; i >= 0; i--) {
+      if (prev[i].type === 'tool_call' && !prev[i].result) {
+        const next = [...prev]
+        next[i] = { ...next[i], result: evt }
+        return next
+      }
+    }
+  }
+  if ((evt.type === 'message' || evt.type === 'thinking') && prev.length > 0) {
+    const last = prev[prev.length - 1]
+    if (last.type === evt.type) {
+      const next = [...prev]
+      next[next.length - 1] = { ...last, message: (last.message || '') + (evt.message || ''), timestamp: evt.timestamp }
+      return next
+    }
+  }
+  return [...prev.slice(-cap), { ...evt, id: nextId }]
+}
+
 const RAIL_WIDTH_KEY = 'agent-knots-thread-rail-width'
 // Bounds are a percentage of the space actually being split between
 // chat and rail (the goal rail, if shown, is a separate fixed-width
@@ -90,53 +140,7 @@ function AgentThread() {
       id,
       (evt: SSEEvent) => {
         counterRef.current += 1
-        setEvents(prev => {
-          // A tool call streams in incrementally — the backend re-emits
-          // the whole tool_call event (same id) as its args accumulate
-          // (e.g. empty args, then partially parsed, then complete).
-          // Update the existing card in place instead of appending a new
-          // one each time, or every tool call would render as 2-3
-          // duplicate cards.
-          if (evt.type === 'tool_call' && evt.tool_call) {
-            const callId = evt.tool_call.id
-            for (let i = prev.length - 1; i >= 0; i--) {
-              if (prev[i].type === 'tool_call' && prev[i].tool_call?.id === callId) {
-                const next = [...prev]
-                next[i] = { ...next[i], tool_call: evt.tool_call, timestamp: evt.timestamp }
-                return next
-              }
-            }
-          }
-          // Merge tool_result into the most recent unresolved tool_call
-          // (tool_call_id linkage isn't reliably populated backend-side
-          // yet, so this merges by adjacency instead — a deliberate
-          // approximation, see events.py::TOOL_RESULT construction).
-          if (evt.type === 'tool_result') {
-            for (let i = prev.length - 1; i >= 0; i--) {
-              if (prev[i].type === 'tool_call' && !prev[i].result) {
-                const next = [...prev]
-                next[i] = { ...next[i], result: evt }
-                return next
-              }
-            }
-          }
-          // message/thinking stream in as many small text deltas, each
-          // its own event — appending each as a separate bubble produced
-          // a dozen tiny fragments per turn instead of one bubble that
-          // grows, which also broke markdown that spans a fragment
-          // boundary (a "**bold**" split across two deltas renders as
-          // literal asterisks in each half instead of one bold run).
-          // Accumulate consecutive same-type text into the prior bubble.
-          if ((evt.type === 'message' || evt.type === 'thinking') && prev.length > 0) {
-            const last = prev[prev.length - 1]
-            if (last.type === evt.type) {
-              const next = [...prev]
-              next[next.length - 1] = { ...last, message: (last.message || '') + (evt.message || ''), timestamp: evt.timestamp }
-              return next
-            }
-          }
-          return [...prev.slice(-300), { ...evt, id: counterRef.current }]
-        })
+        setEvents(prev => reduceEvent(prev, evt, counterRef.current))
 
         if (evt.type === 'tool_call' && evt.tool_call) {
           recordFileTouch(evt.tool_call, setFiles)
@@ -601,7 +605,11 @@ function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onToggleDele
           <span style={{ fontSize: 11.5, fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--ink2)' }}>{evt.tool_call.name}</span>
         </div>
         {args && <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--mut)', whiteSpace: 'pre-wrap' }}>{args}</div>}
-        {evt.result && <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--ok)', marginTop: 4, whiteSpace: 'pre-wrap' }}>{truncate(evt.result.message, 300)}</div>}
+        {evt.result && (
+          <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: evt.result.tool_result?.error ? 'var(--err)' : 'var(--ok)', marginTop: 4, whiteSpace: 'pre-wrap' }}>
+            {truncate(evt.result.message, 300)}
+          </div>
+        )}
       </div>
     )
   }
@@ -705,7 +713,7 @@ function DelegateSubThread({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     const es = subscribeToAgent(sessionId, (evt: SSEEvent) => {
       counterRef.current += 1
-      setEvents(prev => [...prev.slice(-100), { ...evt, id: counterRef.current }])
+      setEvents(prev => reduceEvent(prev, evt, counterRef.current, 100))
     })
     return () => es.close()
   }, [sessionId])
