@@ -147,13 +147,6 @@ function AgentThread() {
           recordCommand(evt.tool_call, setCommands)
         }
       },
-      () => {
-        counterRef.current += 1
-        setEvents(prev => [...prev, {
-          id: counterRef.current, type: 'ended', session_id: id, timestamp: Date.now() / 1000,
-          message: 'Session ended.', tool_call: null, tool_result: null, error: '', data: null,
-        }])
-      },
     )
     return () => es.close()
   }, [id])

@@ -152,11 +152,6 @@ export async function createTool(data: { name: string; description?: string; com
   if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }; return res.json()
 }
 
-export async function updateTool(name: string, data: { description?: string; command?: string; parameters?: any[] }) {
-  const res = await fetch(`/api/tools/${name}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
-}
-
 export async function deleteTool(name: string): Promise<void> {
   const res = await fetch(`/api/tools/${name}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)

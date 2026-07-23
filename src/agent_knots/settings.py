@@ -8,7 +8,6 @@ setup wizard writes directly to this file.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from pathlib import Path
 
 import yaml
 
@@ -115,12 +114,6 @@ def save(settings: Settings) -> None:
     tmp.write_text(yaml.dump(data, default_flow_style=False))
     tmp.chmod(0o600)
     tmp.rename(path)
-
-
-def is_configured() -> bool:
-    """Return True if the user has set up at least an API key."""
-    s = load()
-    return bool(s.agent.api_key)
 
 
 def mask_key(key: str) -> str:

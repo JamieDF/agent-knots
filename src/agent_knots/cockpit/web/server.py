@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlencode
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Form, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -32,13 +32,13 @@ try:
 except ImportError:  # Windows has no pty module
     HAS_PTY = False
 
-from agent_knots.cockpit.web.auth import Auth, COOKIE_NAME, load_or_create_token, verify_token
+from agent_knots.cockpit.web.auth import Auth, COOKIE_NAME, verify_token
 from agent_knots.config import (
     cockpit_token_file, tasks_dir, stages_file, roles_file,
     vault_dir, usage_file, policies_file, mcp_servers_file,
 )
-from agent_knots.events import Event, EventType, serialize_event
-from agent_knots.session.manager import Session, SessionManager
+from agent_knots.events import serialize_event
+from agent_knots.session.manager import SessionManager
 from agent_knots import provider as provider_module
 from agent_knots import settings
 from agent_knots import usage as usage_module
@@ -52,7 +52,7 @@ from agent_knots.workflows.models import Trigger, stage_for_status
 from agent_knots.workflows.store import RolesStore, StagesStore
 from agent_knots.policies.store import PolicyStore
 from agent_knots.mcp_servers import McpServer, McpServerStore
-from agent_knots.vault.store import Credential, LockState, VaultStore
+from agent_knots.vault.store import Credential, VaultStore
 
 
 # ── request models (module-level so FastAPI can resolve them) ────────────────

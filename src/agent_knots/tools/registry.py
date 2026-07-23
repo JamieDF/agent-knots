@@ -28,10 +28,6 @@ class ToolInfo:
     enabled: bool = True       # user can disable tools
     created_at: float = 0.0
 
-    @property
-    def id(self) -> str:
-        return self.name
-
 
 # ── custom tool ──────────────────────────────────────────────────────────────
 

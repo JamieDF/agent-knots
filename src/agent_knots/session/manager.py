@@ -22,7 +22,6 @@ from agent_knots.vault.store import VaultStore
 
 try:
     from strands import Agent
-    from strands.sandbox import PosixShellSandbox
     HAS_STRANDS = True
 except ImportError:
     HAS_STRANDS = False
@@ -229,7 +228,7 @@ class SessionManager:
         # Custom (shell-command) tools are bound to resolved_working_dir here
         # since, unlike the built-in shell/editor tools below, they have no
         # separate sandboxed-swap step.
-        from agent_knots.tools.defaults import DEFAULT_TOOLS, auto_approve_tools
+        from agent_knots.tools.defaults import auto_approve_tools
         from agent_knots.tools.registry import ToolRegistry
 
         auto_approve_tools()

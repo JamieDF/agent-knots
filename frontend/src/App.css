@@ -1,7 +1,8 @@
-/* Topbar, Dashboard, and AgentThread are all built with inline
-   Atelier-token styles directly in their components now (Phases 0-3).
-   What's left here is only what Settings.tsx/ToolManager.tsx (not yet
-   migrated — Phase 5) still depend on. */
+/* Every view now uses inline Atelier-token styles directly in its
+   components. All that's left here is the canvas layout — everything
+   else (including the .btn/.btn-ghost classes ToolManager.tsx used to
+   depend on) was removed when ToolManager.tsx was deleted as a
+   confirmed duplicate of Settings.tsx's own Tools section. */
 
 /* Canvas — main content area. Needs display:flex so DeskLayout's own
    flex:1 + overflow-y:auto gets a bounded height to scroll within —
@@ -13,19 +14,3 @@
   display: flex;
   overflow: hidden;
 }
-
-/* Buttons */
-.btn {
-  padding: 6px 14px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 600;
-  transition: background 0.15s, opacity 0.15s;
-}
-
-.btn-ghost {
-  color: var(--fg-soft);
-  background: var(--surface-raised);
-}
-
-.btn-ghost:hover { background: var(--surface-hover); }
