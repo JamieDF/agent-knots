@@ -279,7 +279,7 @@ function ProvidersCard() {
     <Card>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
         <SectionLabel>Model providers</SectionLabel>
-        <button onClick={() => setShowAdd(true)} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: 'var(--acc)' }}>+ Add provider</button>
+        <button onClick={() => setShowAdd(true)} style={accentTextBtnStyle({ marginLeft: 'auto' })}>+ Add provider</button>
       </div>
 
       {providers.length === 0 && (
@@ -295,7 +295,7 @@ function ProvidersCard() {
           {p.is_default ? <Chip color="var(--acc)" soft>DEFAULT</Chip> : (
             <button onClick={() => handleSetDefault(p.name)} style={{ fontSize: 11, fontWeight: 600, color: 'var(--acc)' }}>Set default</button>
           )}
-          <button onClick={() => handleDelete(p.name)} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
+          <button onClick={() => handleDelete(p.name)} style={deleteBtnStyle}>✕</button>
         </div>
       ))}
 
@@ -374,7 +374,7 @@ function ToolsCard() {
     <Card>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
         <SectionLabel>Tools</SectionLabel>
-        <button onClick={() => setShowAdd(true)} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: 'var(--acc)' }}>+ Custom tool</button>
+        <button onClick={() => setShowAdd(true)} style={accentTextBtnStyle({ marginLeft: 'auto' })}>+ Custom tool</button>
       </div>
       {tools.map(t => (
         <div key={t.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: '1px solid var(--line)' }}>
@@ -382,7 +382,7 @@ function ToolsCard() {
           <span style={{ fontSize: 11.5, color: 'var(--mut)', flex: 1 }}>{t.description}</span>
           <Chip soft color={t.builtin ? 'var(--mut)' : 'var(--acc)'}>{t.builtin ? 'BUILT-IN' : 'CUSTOM'}</Chip>
           <Toggle checked={t.enabled} onChange={async () => { await toggleTool(t.name); load() }} />
-          {!t.builtin && <button onClick={async () => { await deleteTool(t.name); load() }} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>}
+          {!t.builtin && <button onClick={async () => { await deleteTool(t.name); load() }} style={deleteBtnStyle}>✕</button>}
         </div>
       ))}
       <CustomToolDialog open={showAdd} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />
@@ -506,7 +506,7 @@ function McpServersCard() {
           <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', flex: 1 }}>{s.name}</span>
           <span style={{ fontSize: 11, color: 'var(--mut)' }}>{s.tool_count} tools exposed</span>
           <Toggle checked={s.enabled} onChange={async checked => { await toggleMcpServer(s.name, checked); load() }} />
-          <button onClick={async () => { await deleteMcpServer(s.name); load() }} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
+          <button onClick={async () => { await deleteMcpServer(s.name); load() }} style={deleteBtnStyle}>✕</button>
         </div>
       ))}
       {showAdd ? (
@@ -516,7 +516,7 @@ function McpServersCard() {
           <button onClick={handleAdd} style={{ fontSize: 12, fontWeight: 600, color: 'var(--acc-ink)', background: 'var(--acc)', padding: '6px 12px', borderRadius: 8, whiteSpace: 'nowrap' }}>Add</button>
         </div>
       ) : (
-        <button onClick={() => setShowAdd(true)} style={{ marginTop: 10, fontSize: 12, fontWeight: 600, color: 'var(--acc)' }}>+ Add MCP server</button>
+        <button onClick={() => setShowAdd(true)} style={accentTextBtnStyle({ marginTop: 10 })}>+ Add MCP server</button>
       )}
     </Card>
   )
@@ -685,7 +685,7 @@ function VaultCard() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
           <SectionLabel>Vault</SectionLabel>
           <Chip color="var(--ok)" soft>UNLOCKED</Chip>
-          <button onClick={handleLock} style={{ fontSize: 12, fontWeight: 600, color: 'var(--acc)' }}>Lock</button>
+          <button onClick={handleLock} style={accentTextBtnStyle()}>Lock</button>
           <div style={{ marginLeft: 'auto' }}>
             <button
               onClick={() => setShowAdd(true)}
@@ -708,7 +708,7 @@ function VaultCard() {
               {templateChips(c).map((t, i) => <Chip key={i} mono>{t}</Chip>)}
             </div>
             <span style={{ fontSize: 10.5, color: 'var(--mut)', minWidth: 70, textAlign: 'right' }}>{timeAgo(c.last_used, 'never')}</span>
-            <button onClick={() => handleDelete(c.id)} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
+            <button onClick={() => handleDelete(c.id)} style={deleteBtnStyle}>✕</button>
           </div>
         ))}
       </Card>
@@ -814,7 +814,7 @@ function WorkspacesCard() {
     <Card>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
         <SectionLabel>Workspaces</SectionLabel>
-        <button onClick={() => setShowAdd(true)} style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 600, color: 'var(--acc)' }}>+ Add workspace</button>
+        <button onClick={() => setShowAdd(true)} style={accentTextBtnStyle({ marginLeft: 'auto' })}>+ Add workspace</button>
       </div>
       {active.length === 0 && (
         <div style={{ textAlign: 'center', padding: 12, color: 'var(--mut)', fontSize: 13 }}>No workspaces yet.</div>
@@ -827,7 +827,7 @@ function WorkspacesCard() {
           <Chip mono soft>{w.runtime || 'global'}</Chip>
           <button onClick={() => setEditing(w)} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>Edit</button>
           <button onClick={() => setArchived(w.id, true)} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--mut)' }}>Archive</button>
-          <button onClick={() => setDeleteTarget(w)} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
+          <button onClick={() => setDeleteTarget(w)} style={deleteBtnStyle}>✕</button>
         </div>
       ))}
 
@@ -840,7 +840,7 @@ function WorkspacesCard() {
               <span style={{ fontSize: 13, color: 'var(--ink)', flex: 1 }}>{w.name}</span>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--mut)' }}>{w.repository || '—'}</span>
               <button onClick={() => setArchived(w.id, false)} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}>Unarchive</button>
-              <button onClick={() => setDeleteTarget(w)} style={{ color: 'var(--err)', fontSize: 14 }}>✕</button>
+              <button onClick={() => setDeleteTarget(w)} style={deleteBtnStyle}>✕</button>
             </div>
           ))}
         </>
@@ -881,6 +881,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--line2)',
   background: 'var(--card2)', color: 'var(--ink)', fontSize: 13, outline: 'none', fontFamily: 'inherit',
+}
+
+// The delete-"✕" and small accent-text ("+ Add X", "Lock") button
+// styles were copy-pasted 6x/5x across this file's section cards —
+// AgentThread.tsx already extracted an equivalent pillBtn() helper for
+// the same problem, this file never got the same treatment.
+const deleteBtnStyle: React.CSSProperties = { color: 'var(--err)', fontSize: 14 }
+function accentTextBtnStyle(extra?: React.CSSProperties): React.CSSProperties {
+  return { fontSize: 12, fontWeight: 600, color: 'var(--acc)', ...extra }
 }
 
 export default SettingsPage

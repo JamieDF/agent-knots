@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import DeskLayout from '../components/DeskLayout'
-import { Card, Chip, Toggle, SectionLabel } from '../components/primitives'
+import { Card, Chip, Toggle, SectionLabel, Dialog } from '../components/primitives'
 import {
   fetchStages, toggleStage, fetchRoles, updateRole,
   type StageInfo, type RoleInfo,
@@ -160,35 +160,33 @@ function RoleConfigDialog({ role, onClose, onSaved }: { role: RoleInfo; onClose:
   }
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(20,20,30,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: 460, maxWidth: '90vw', background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', padding: 20 }}>
-        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>{role.icon} Configure {role.name}</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <Field label="Model">
-            <input aria-label="Model" value={model} onChange={e => setModel(e.target.value)} placeholder="(use global default)" style={inputStyle} />
-          </Field>
-          <Field label="Trigger">
-            <select aria-label="Trigger" value={trigger} onChange={e => setTrigger(e.target.value)} style={inputStyle}>
-              {Object.entries(TRIGGER_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
-          </Field>
-          <Field label="System prompt">
-            <textarea aria-label="System prompt" value={prompt} onChange={e => setPrompt(e.target.value)} rows={5} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
-          </Field>
-          <Field label="Allowed tools">
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {role.tools.map(t => <Chip key={t} mono>{t}</Chip>)}
-            </div>
-          </Field>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-            <button onClick={onClose} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Cancel</button>
-            <button onClick={handleSave} disabled={saving} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}>
-              {saving ? 'Saving…' : 'Save'}
-            </button>
+    <Dialog open onClose={onClose} width={460}>
+      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>{role.icon} Configure {role.name}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <Field label="Model">
+          <input aria-label="Model" value={model} onChange={e => setModel(e.target.value)} placeholder="(use global default)" style={inputStyle} />
+        </Field>
+        <Field label="Trigger">
+          <select aria-label="Trigger" value={trigger} onChange={e => setTrigger(e.target.value)} style={inputStyle}>
+            {Object.entries(TRIGGER_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </Field>
+        <Field label="System prompt">
+          <textarea aria-label="System prompt" value={prompt} onChange={e => setPrompt(e.target.value)} rows={5} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+        </Field>
+        <Field label="Allowed tools">
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {role.tools.map(t => <Chip key={t} mono>{t}</Chip>)}
           </div>
+        </Field>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+          <button onClick={onClose} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
         </div>
       </div>
-    </div>
+    </Dialog>
   )
 }
 
