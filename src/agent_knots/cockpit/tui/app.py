@@ -381,12 +381,10 @@ class ToolsScreen(Screen):
         if row is None:
             return
         name = str(row[0])
-        registry = ToolRegistry()
-        # Try custom first, then built-in.
-        if registry.get_custom(name):
-            registry.toggle_custom(name)
-        else:
-            registry.toggle_builtin(name)
+        try:
+            ToolRegistry().toggle(name)
+        except ValueError:
+            return
         self._refresh()
 
     def action_delete_tool(self) -> None:

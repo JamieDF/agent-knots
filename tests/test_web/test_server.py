@@ -338,6 +338,33 @@ class TestTaskAPI:
         assert resp.json()["review_gate"] == "auto"
 
     @pytest.mark.asyncio
+    async def test_patch_title_and_assign_together_both_persist(self, authed_client):
+        """Regression guard for a redundant-writes cleanup: update_task()
+        now batches the plain content fields (title, description, tags,
+        etc.) into a single store.update() instead of one write per
+        field, but TaskStore.assign() re-fetches the task from disk
+        itself rather than taking the in-memory object — so if the batch
+        write isn't flushed before assign() runs, assign's fresh
+        re-fetch would silently lose whatever the batch write hadn't
+        persisted yet. Both must survive in the same PATCH."""
+        created = await authed_client.post("/api/tasks", json={"title": "Old title"})
+        task_id = created.json()["id"]
+
+        resp = await authed_client.patch(f"/api/tasks/{task_id}", json={
+            "title": "New title", "assign": "agent-42",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["title"] == "New title"
+        assert body["assigned_to"] == "agent-42"
+
+        # Re-fetch independently to prove it's really on disk, not just
+        # in the response from the same request.
+        refetched = await authed_client.get(f"/api/tasks/{task_id}")
+        assert refetched.json()["title"] == "New title"
+        assert refetched.json()["assigned_to"] == "agent-42"
+
+    @pytest.mark.asyncio
     async def test_patch_updates_description_tags_criteria_steps(self, authed_client):
         """Regression: UpdateTaskRequest used to be missing these fields
         entirely, so PATCH silently dropped description/tags/criteria/

@@ -8,6 +8,7 @@ Serves:
 """
 
 import asyncio
+import functools
 import json
 import os
 import re
@@ -177,6 +178,39 @@ class UpdateToolRequest(BaseModel):
     parameters: Optional[list] = None
 
 
+def raises_as(status_code: int):
+    """Route decorator: convert a ValueError raised inside the handler
+    into an HTTPException with the given status code, so routes don't
+    each hand-roll the same `try: ... except ValueError as e: raise
+    HTTPException(status_code=N, detail=str(e))` (~17 near-identical
+    copies of it before this existed — found in the code review).
+
+    Stack directly under the FastAPI route decorator:
+
+        @app.patch("/api/things/{key}")
+        @raises_as(404)
+        async def update_thing(key: str, body: UpdateRequest):
+            return store.update(key, ...)  # raises ValueError if missing
+
+    functools.wraps sets __wrapped__, which inspect.signature() (what
+    FastAPI actually uses to resolve path/query/body parameters) follows
+    by default — so FastAPI still sees the original handler's real
+    signature through the wrapper, not a bare (*args, **kwargs). Verified
+    directly against a real FastAPI app before applying this broadly.
+    """
+
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            try:
+                return await fn(*args, **kwargs)
+            except ValueError as e:
+                raise HTTPException(status_code=status_code, detail=str(e))
+        return wrapper
+
+    return decorator
+
+
 # ── app factory ──────────────────────────────────────────────────────────────
 
 
@@ -284,22 +318,7 @@ def create_app(
         sessions = session_manager.active
         if project:
             sessions = [s for s in sessions if s.project_id == project]
-        return {
-            "agents": [
-                {
-                    "id": s.id,
-                    "mode": s.mode,
-                    "task_id": s.task_id,
-                    "project_id": s.project_id,
-                    "tokens_used": s.tokens_used,
-                    "cost_usd": s.cost_usd,
-                    "running": s.running,
-                    "model": s.model,
-                    "started_at": s.started_at,
-                }
-                for s in sessions
-            ]
-        }
+        return {"agents": [_agent_to_response(s) for s in sessions]}
 
     @app.get("/api/agent/{agent_id}/events")
     async def agent_events(agent_id: str, request: Request):
@@ -358,17 +377,7 @@ def create_app(
         session = session_manager.get(agent_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Agent not found")
-        return {
-            "id": session.id,
-            "mode": session.mode,
-            "task_id": session.task_id,
-            "project_id": session.project_id,
-            "tokens_used": session.tokens_used,
-            "cost_usd": session.cost_usd,
-            "running": session.running,
-            "model": session.model,
-            "started_at": session.started_at,
-        }
+        return _agent_to_response(session)
 
     @app.get("/api/agent/{agent_id}/file")
     async def get_agent_file(agent_id: str, path: str = Query(...)):
@@ -512,34 +521,28 @@ def create_app(
         return {"status": "ok"}
 
     @app.post("/api/agent/{agent_id}/autonomous")
+    @raises_as(404)
     async def agent_set_autonomous(agent_id: str, body: AutonomousRequest):
         """Toggle a task-attached session between autonomous (self-
         directed from the task) and paused (interactive). See
         SessionManager.set_autonomous()."""
-        try:
-            await session_manager.set_autonomous(agent_id, body.on)
-        except ValueError:
-            raise HTTPException(status_code=404, detail="Agent not found")
+        await session_manager.set_autonomous(agent_id, body.on)
         return {"status": "ok"}
 
     @app.post("/api/agent/{agent_id}/checkpoint")
+    @raises_as(404)
     async def agent_checkpoint(agent_id: str, body: CheckpointRequest):
         """Mark a checkpoint — broadcasts a marker event only, no real
         snapshot (see SessionManager.checkpoint()'s docstring)."""
-        try:
-            session_manager.checkpoint(agent_id, body.label)
-        except ValueError:
-            raise HTTPException(status_code=404, detail="Agent not found")
+        session_manager.checkpoint(agent_id, body.label)
         return {"status": "ok"}
 
     @app.post("/api/agent/{agent_id}/revert")
+    @raises_as(404)
     async def agent_revert(agent_id: str, body: CheckpointRequest):
         """"Revert to" a checkpoint — logs the action only, doesn't
         actually roll back any state (see SessionManager.revert())."""
-        try:
-            session_manager.revert(agent_id, body.label)
-        except ValueError:
-            raise HTTPException(status_code=404, detail="Agent not found")
+        session_manager.revert(agent_id, body.label)
         return {"status": "ok"}
 
     @app.post("/api/agent/{agent_id}/send")
@@ -549,14 +552,12 @@ def create_app(
         return {"status": "ok"}
 
     @app.post("/api/agent/{agent_id}/interrupt")
+    @raises_as(404)
     async def agent_interrupt(agent_id: str):
         """Cancel the agent's current turn only — the session stays open
         so a follow-up message continues the same conversation (unlike
         DELETE, which tears the session down)."""
-        try:
-            await session_manager.interrupt(agent_id)
-        except ValueError:
-            raise HTTPException(status_code=404, detail="Agent not found")
+        await session_manager.interrupt(agent_id)
         return {"status": "ok"}
 
     @app.delete("/api/agent/{agent_id}")
@@ -681,11 +682,9 @@ def create_app(
         return {"policies": [_policy_to_response(p) for p in PolicyStore(policies_file()).list()]}
 
     @app.patch("/api/policies/{key}")
+    @raises_as(404)
     async def update_policy(key: str, body: UpdatePolicyRequest):
-        try:
-            policy = PolicyStore(policies_file()).update(key, **body.model_dump(exclude_unset=True))
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
+        policy = PolicyStore(policies_file()).update(key, **body.model_dump(exclude_unset=True))
         return _policy_to_response(policy)
 
     # ── MCP server registry API (config-only — no real client wiring) ────
@@ -695,30 +694,24 @@ def create_app(
         return {"servers": [_mcp_to_response(s) for s in McpServerStore(mcp_servers_file()).list()]}
 
     @app.post("/api/mcp")
+    @raises_as(409)
     async def add_mcp_server(body: AddMcpServerRequest):
         store = McpServerStore(mcp_servers_file())
-        try:
-            store.add(McpServer(name=body.name, url=body.url))
-        except ValueError as e:
-            raise HTTPException(status_code=409, detail=str(e))
+        store.add(McpServer(name=body.name, url=body.url))
         return {"servers": [_mcp_to_response(s) for s in store.list()]}
 
     @app.post("/api/mcp/{name}/toggle")
+    @raises_as(404)
     async def toggle_mcp_server(name: str, body: ToggleRequest):
         store = McpServerStore(mcp_servers_file())
-        try:
-            server = store.toggle(name, body.enabled)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
+        server = store.toggle(name, body.enabled)
         return _mcp_to_response(server)
 
     @app.delete("/api/mcp/{name}")
+    @raises_as(404)
     async def delete_mcp_server(name: str):
         store = McpServerStore(mcp_servers_file())
-        try:
-            store.remove(name)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
+        store.remove(name)
         return {"status": "ok"}
 
     # ── vault API — metadata only, values never leave the store ─────────
@@ -728,11 +721,9 @@ def create_app(
         return {"lock_state": vault.lock_state.value}
 
     @app.post("/api/vault/unlock")
+    @raises_as(400)
     async def vault_unlock(body: UnlockVaultRequest):
-        try:
-            vault.unlock(body.passphrase)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        vault.unlock(body.passphrase)
         return {"lock_state": vault.lock_state.value}
 
     @app.post("/api/vault/lock")
@@ -948,6 +939,17 @@ def create_app(
         Criteria/steps are matched against existing entries by text so
         criteria_met / step status survive an edit that doesn't touch
         them — a blind overwrite would silently reset that state.
+
+        Mutates the in-memory task across all the content-field checks
+        below and writes once at the end, rather than a separate
+        store.update() per field (a PATCH touching several fields used
+        to do several redundant full-file disk writes and bump
+        updated_at repeatedly instead of once). status and assign are
+        each still their own store call — both TaskStore.set_status()
+        and .assign() re-fetch the task from disk themselves, so unlike
+        the plain content fields they can't just be batched into the
+        in-memory object. status runs first and assign runs last so
+        each sees whatever the other steps have already persisted.
         """
         store = TaskStore(tasks_dir())
         task = store.get(task_id)
@@ -961,30 +963,32 @@ def create_app(
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
             _maybe_fire_role_triggers(old_status, task.status.value, task)
+
+        dirty = False
         if body.priority:
             task.priority = Priority(body.priority)
-            task = store.update(task)
+            dirty = True
         if body.title:
             task.title = body.title
-            task = store.update(task)
+            dirty = True
         if body.description is not None:
             task.description = body.description
-            task = store.update(task)
+            dirty = True
         if body.tags is not None:
             task.tags = body.tags
-            task = store.update(task)
+            dirty = True
         if body.review_gate is not None:
             task.review_gate = ReviewGate(body.review_gate)
-            task = store.update(task)
+            dirty = True
         if body.dependencies is not None:
             task.dependencies = [d for d in body.dependencies if d != task_id]
-            task = store.update(task)
+            dirty = True
         if body.acceptance_criteria is not None:
             # criteria_met is keyed by criterion text, so preserving it
             # here is automatic — no matching needed, just don't touch it.
             task.acceptance_criteria = body.acceptance_criteria
             task.criteria_met = [c for c in task.criteria_met if c in body.acceptance_criteria]
-            task = store.update(task)
+            dirty = True
         if body.steps is not None:
             existing_by_title = {s.title: s for s in task.steps}
             new_steps = []
@@ -995,23 +999,24 @@ def create_app(
                 else:
                     new_steps.append(Step(id=f"s-{secrets.token_hex(3)}", title=title))
             task.steps = new_steps
+            dirty = True
+        if dirty:
             task = store.update(task)
+
         if body.assign is not None:
             task = store.assign(task_id, body.assign)
 
         return _task_to_response(task, store)
 
     @app.post("/api/tasks/{task_id}/criteria/toggle")
+    @raises_as(404)
     async def toggle_criterion(task_id: str, body: ToggleCriterionRequest):
         """Mark/unmark a single acceptance criterion as met."""
         store = TaskStore(tasks_dir())
-        try:
-            if body.met:
-                task = store.mark_criterion_met(task_id, body.criterion)
-            else:
-                task = store.unmark_criterion_met(task_id, body.criterion)
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
+        if body.met:
+            task = store.mark_criterion_met(task_id, body.criterion)
+        else:
+            task = store.unmark_criterion_met(task_id, body.criterion)
         return _task_to_response(task, store)
 
     @app.post("/api/tasks/draft")
@@ -1062,13 +1067,11 @@ def create_app(
         }
 
     @app.delete("/api/tasks/{task_id}")
+    @raises_as(404)
     async def delete_task(task_id: str):
         """Delete a task."""
         store = TaskStore(tasks_dir())
-        try:
-            store.delete(task_id)
-        except ValueError:
-            raise HTTPException(status_code=404, detail="Task not found")
+        store.delete(task_id)
         return {"status": "ok"}
 
     # ── tool API ─────────────────────────────────────────────────────────
@@ -1108,6 +1111,7 @@ def create_app(
         }
 
     @app.post("/api/tools")
+    @raises_as(409)
     async def create_tool(body: CreateToolRequest):
         """Create a new custom tool."""
         registry = ToolRegistry()
@@ -1117,10 +1121,7 @@ def create_app(
             command=body.command,
             parameters=body.parameters,
         )
-        try:
-            registry.add_custom(ct)
-        except ValueError as e:
-            raise HTTPException(status_code=409, detail=str(e))
+        registry.add_custom(ct)
         return {"status": "ok", "name": ct.name}
 
     @app.patch("/api/tools/{name}")
@@ -1140,29 +1141,19 @@ def create_app(
         return {"status": "ok"}
 
     @app.delete("/api/tools/{name}")
+    @raises_as(404)
     async def delete_tool(name: str):
         """Delete a custom tool."""
         registry = ToolRegistry()
-        try:
-            registry.delete_custom(name)
-        except ValueError:
-            raise HTTPException(status_code=404, detail="Custom tool not found")
+        registry.delete_custom(name)
         return {"status": "ok"}
 
     @app.post("/api/tools/{name}/toggle")
+    @raises_as(404)
     async def toggle_tool(name: str):
         """Toggle a tool's enabled state (built-in or custom)."""
-        registry = ToolRegistry()
-        # Try custom first, then built-in.
-        if registry.get_custom(name):
-            ct = registry.toggle_custom(name)
-            return {"enabled": ct.enabled}
-        # Check if it's a built-in.
-        builtins = {t.name for t in registry.list_builtin()}
-        if name in builtins:
-            info = registry.toggle_builtin(name)
-            return {"enabled": info.enabled}
-        raise HTTPException(status_code=404, detail="Tool not found")
+        tool = ToolRegistry().toggle(name)
+        return {"enabled": tool.enabled}
 
     # ── workspace API ────────────────────────────────────────────────────
 
@@ -1204,6 +1195,7 @@ def create_app(
         max_concurrent: int = 2
 
     @app.post("/api/workspaces")
+    @raises_as(409)
     async def create_workspace(body: CreateWorkspaceRequest):
         """Create a new workspace."""
         store = ProjectStore(_projects_dir())
@@ -1217,10 +1209,7 @@ def create_app(
             auto_assign=body.auto_assign,
             max_concurrent=body.max_concurrent,
         )
-        try:
-            store.create(ws)
-        except ValueError as e:
-            raise HTTPException(status_code=409, detail=str(e))
+        store.create(ws)
         return {"status": "ok", "id": ws.id}
 
     class UpdateWorkspaceRequest(BaseModel):
@@ -1260,13 +1249,11 @@ def create_app(
         return {"status": "ok"}
 
     @app.delete("/api/workspaces/{workspace_id}")
+    @raises_as(404)
     async def delete_workspace(workspace_id: str):
         """Delete a workspace."""
         store = ProjectStore(_projects_dir())
-        try:
-            store.delete(workspace_id)
-        except ValueError:
-            raise HTTPException(status_code=404, detail="Workspace not found")
+        store.delete(workspace_id)
         return {"status": "ok"}
 
     # ── workflows API (stages + default agent roles) ────────────────────
@@ -1279,11 +1266,9 @@ def create_app(
         ]}
 
     @app.post("/api/stages/{key}/toggle")
+    @raises_as(400)
     async def toggle_stage(key: str, body: ToggleRequest):
-        try:
-            stages = StagesStore(stages_file()).toggle(key, body.enabled)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        stages = StagesStore(stages_file()).toggle(key, body.enabled)
         return {"stages": [
             {"key": s.key, "label": s.label, "statuses": s.statuses, "enabled": s.enabled, "required": s.required}
             for s in stages
@@ -1294,11 +1279,9 @@ def create_app(
         return {"roles": [_role_to_response(r) for r in RolesStore(roles_file()).list()]}
 
     @app.patch("/api/roles/{key}")
+    @raises_as(404)
     async def update_role(key: str, body: UpdateRoleRequest):
-        try:
-            role = RolesStore(roles_file()).update(key, **body.model_dump(exclude_unset=True))
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e))
+        role = RolesStore(roles_file()).update(key, **body.model_dump(exclude_unset=True))
         return _role_to_response(role)
 
     # ── review API (post-hoc diffs derived live from git) ────────────────
@@ -1431,6 +1414,20 @@ def create_app(
 
 
 # ── serialization helpers ────────────────────────────────────────────────────
+
+
+def _agent_to_response(session) -> dict:
+    return {
+        "id": session.id,
+        "mode": session.mode,
+        "task_id": session.task_id,
+        "project_id": session.project_id,
+        "tokens_used": session.tokens_used,
+        "cost_usd": session.cost_usd,
+        "running": session.running,
+        "model": session.model,
+        "started_at": session.started_at,
+    }
 
 
 def _role_to_response(role) -> dict:

@@ -198,6 +198,23 @@ class ToolRegistry:
         info = ToolInfo(name=name, builtin=True, enabled=name not in disabled)
         return info
 
+    def toggle(self, name: str) -> CustomTool | ToolInfo:
+        """Toggle a tool's enabled state, whether it's custom or built-in
+        — the "try custom, else built-in" branching used to be
+        duplicated between the web server and the TUI (found in the code
+        review). The TUI's copy didn't check built-in membership before
+        assuming a name was one, so toggling a genuinely nonexistent
+        name there silently created a disabled-tools entry for it
+        instead of raising; this version is the stricter one (matching
+        the web server's previous behavior) for both callers.
+        """
+        if self.get_custom(name):
+            return self.toggle_custom(name)
+        builtins = {t.name for t in self.list_builtin()}
+        if name in builtins:
+            return self.toggle_builtin(name)
+        raise ValueError(f"Tool {name!r} not found.")
+
     # ── persistence ──────────────────────────────────────────────────────
 
     def _custom_path(self) -> Path:
