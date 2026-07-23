@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createTask, updateTask, draftTask, fetchTasks, type TaskDetail, type TaskSummary } from '../lib/api'
 import { useWorkspaceScope } from '../lib/workspaceContext'
-import { Dialog, Chip } from './primitives'
+import { Dialog, Chip, Field, inputStyle } from './primitives'
 
 interface Props {
   open: boolean
@@ -267,16 +267,6 @@ function TaskDialog({ open, onClose, onSaved, task, initialStatus }: Props) {
 
 const NUMERALS = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩']
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-      <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--mut)' }}>{label}</label>
-      {children}
-      {hint && <span style={{ fontSize: 11, color: 'var(--mut)' }}>{hint}</span>}
-    </div>
-  )
-}
-
 function RowList({ items, prefix, draft, onDraftChange, onAdd, onRemove, placeholder }: {
   items: string[]
   prefix: string | ((i: number) => string)
@@ -308,11 +298,6 @@ function RowList({ items, prefix, draft, onDraftChange, onAdd, onRemove, placeho
       </div>
     </div>
   )
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--line2)',
-  background: 'var(--card2)', color: 'var(--ink)', fontSize: 13, outline: 'none', fontFamily: 'inherit',
 }
 
 export default TaskDialog

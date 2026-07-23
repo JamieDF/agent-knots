@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import DeskLayout from '../components/DeskLayout'
-import { Card, Chip, Toggle, SectionLabel, Dialog } from '../components/primitives'
+import { Card, Chip, Toggle, SectionLabel, Dialog, Field, inputStyle } from '../components/primitives'
 import {
   fetchStages, toggleStage, fetchRoles, updateRole,
   type StageInfo, type RoleInfo,
@@ -188,20 +188,6 @@ function RoleConfigDialog({ role, onClose, onSaved }: { role: RoleInfo; onClose:
       </div>
     </Dialog>
   )
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-      <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--mut)' }}>{label}</label>
-      {children}
-    </div>
-  )
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--line2)',
-  background: 'var(--card2)', color: 'var(--ink)', fontSize: 13, outline: 'none', fontFamily: 'inherit',
 }
 
 export default Workflows
