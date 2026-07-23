@@ -11,10 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from agent_knots.config import settings_file as _settings_path
 from agent_knots.tools.defaults import DEFAULT_TOOLS, auto_approve_tools
+from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
 
 # ── tool info ────────────────────────────────────────────────────────────────
 
@@ -212,7 +211,7 @@ class ToolRegistry:
         if not path.exists():
             return
         try:
-            data = yaml.safe_load(path.read_text()) or {}
+            data = safe_read_yaml(path) or {}
             for name, d in data.items():
                 self._custom[name] = CustomTool(
                     name=d["name"],
@@ -222,7 +221,7 @@ class ToolRegistry:
                     enabled=d.get("enabled", True),
                     created_at=d.get("created_at", 0.0),
                 )
-        except (yaml.YAMLError, OSError, KeyError):
+        except (AttributeError, KeyError):
             pass
 
     def _save_custom(self) -> None:
@@ -238,25 +237,16 @@ class ToolRegistry:
             }
             for name, ct in self._custom.items()
         }
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(yaml.dump(data, default_flow_style=False))
-        tmp.chmod(0o600)
-        tmp.rename(path)
+        atomic_write_yaml(path, data)
 
     def _load_disabled_builtins(self) -> set[str]:
         path = self._disabled_path()
         if not path.exists():
             return set()
-        try:
-            data = yaml.safe_load(path.read_text()) or {}
-            return set(data.get("disabled", []))
-        except (yaml.YAMLError, OSError):
+        data = safe_read_yaml(path) or {}
+        if not isinstance(data, dict):
             return set()
+        return set(data.get("disabled", []))
 
     def _save_disabled_builtins(self, disabled: set[str]) -> None:
-        path = self._disabled_path()
-        data = {"disabled": sorted(disabled)}
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(yaml.dump(data, default_flow_style=False))
-        tmp.chmod(0o600)
-        tmp.rename(path)
+        atomic_write_yaml(self._disabled_path(), {"disabled": sorted(disabled)})

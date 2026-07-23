@@ -11,9 +11,8 @@ import copy
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from agent_knots.workflows.models import DEFAULT_ROLES, DEFAULT_STAGES, Role, Stage, Trigger
+from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
 
 
 def _stage_to_dict(s: Stage) -> dict[str, Any]:
@@ -52,19 +51,16 @@ class StagesStore:
     def list(self) -> list[Stage]:
         if not self._path.exists():
             return copy.deepcopy(DEFAULT_STAGES)
+        data = safe_read_yaml(self._path)
+        if not isinstance(data, list):
+            return copy.deepcopy(DEFAULT_STAGES)
         try:
-            data = yaml.safe_load(self._path.read_text())
-            if not isinstance(data, list):
-                return copy.deepcopy(DEFAULT_STAGES)
             return [_stage_from_dict(d) for d in data]
-        except (yaml.YAMLError, OSError, KeyError):
+        except KeyError:
             return copy.deepcopy(DEFAULT_STAGES)
 
     def save(self, stages: list[Stage]) -> None:
-        data = [_stage_to_dict(s) for s in stages]
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
-        tmp.rename(self._path)
+        atomic_write_yaml(self._path, [_stage_to_dict(s) for s in stages])
 
     def toggle(self, key: str, enabled: bool) -> list[Stage]:
         stages = self.list()
@@ -86,19 +82,16 @@ class RolesStore:
     def list(self) -> list[Role]:
         if not self._path.exists():
             return copy.deepcopy(DEFAULT_ROLES)
+        data = safe_read_yaml(self._path)
+        if not isinstance(data, list):
+            return copy.deepcopy(DEFAULT_ROLES)
         try:
-            data = yaml.safe_load(self._path.read_text())
-            if not isinstance(data, list):
-                return copy.deepcopy(DEFAULT_ROLES)
             return [_role_from_dict(d) for d in data]
-        except (yaml.YAMLError, OSError, KeyError):
+        except KeyError:
             return copy.deepcopy(DEFAULT_ROLES)
 
     def save(self, roles: list[Role]) -> None:
-        data = [_role_to_dict(r) for r in roles]
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
-        tmp.rename(self._path)
+        atomic_write_yaml(self._path, [_role_to_dict(r) for r in roles])
 
     def get(self, key: str) -> Role | None:
         return next((r for r in self.list() if r.key == key), None)

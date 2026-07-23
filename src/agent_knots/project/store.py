@@ -5,9 +5,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import yaml
-
 from agent_knots.project.models import Project
+from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
 
 
 class ProjectStore:
@@ -71,15 +70,13 @@ class ProjectStore:
             "created_at": project.created_at,
             "updated_at": project.updated_at,
         }
-        tmp = self._path(project.id).with_suffix(".tmp")
-        tmp.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
-        tmp.rename(self._path(project.id))
+        atomic_write_yaml(self._path(project.id), data)
 
     def _load(self, path: Path) -> Project | None:
+        data = safe_read_yaml(path)
+        if not isinstance(data, dict):
+            return None
         try:
-            data = yaml.safe_load(path.read_text())
-            if not isinstance(data, dict):
-                return None
             return Project(
                 id=data["id"],
                 name=data["name"],
@@ -94,5 +91,5 @@ class ProjectStore:
                 created_at=data.get("created_at", time.time()),
                 updated_at=data.get("updated_at", time.time()),
             )
-        except (yaml.YAMLError, OSError, KeyError):
+        except KeyError:
             return None
