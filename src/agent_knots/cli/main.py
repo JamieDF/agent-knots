@@ -704,7 +704,7 @@ def update(
     task_id: str = typer.Argument(..., help="Task ID."),
     status: str = typer.Option("", "--status", help="New status."),
     title: str = typer.Option("", "--title", help="New title."),
-    assign: str = typer.Option("", "--assign", help="Agent ID to assign (empty to unassign)."),
+    assign: str | None = typer.Option(None, "--assign", help="Agent ID to assign. Pass an empty string to unassign."),
 ) -> None:
     """Update a task."""
     store = _get_task_store()
