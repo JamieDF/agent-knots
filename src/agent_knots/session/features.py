@@ -125,7 +125,73 @@ def make_delegate_tool(session_manager: Any, parent_session_id: str) -> Any:
     return delegate_task
 
 
-# ── Steering: criteria validation via hooks ──────────────────────────────────
+# ── Ask User: blocking prompt for human decisions ──────────────────────────
+
+
+def make_ask_user_tool(session_manager: Any, session_id: str) -> Any:
+    """Create a tool that lets the agent ask the user a question mid-task.
+
+    The tool blocks until the user answers via the web UI (the blocker
+    event's answer bar) or API. While blocked, the agent's turn is paused
+    — the event loop remains free to handle the answer endpoint. When the
+    user answers, the tool returns the answer and the agent resumes in the
+    same turn.
+
+    Uses threading.Event (not asyncio.Event) because the @tool decorator
+    runs synchronous tool functions in asyncio.to_thread — the tool thread
+    blocks on the event, while the main event loop stays responsive.
+    """
+
+    import threading
+
+    @_tool_dec(description="Ask the user a question and wait for their answer. Use when you need a decision, clarification, or preference before continuing.")
+    def ask_user(
+        question: str,
+        options: list[str] | None = None,
+    ) -> dict:
+        """Pause and ask the user a question.
+
+        Args:
+            question: The question to ask. Be specific about what you need.
+            options: Optional list of choices to offer as quick-select buttons.
+
+        Returns:
+            The user's answer.
+        """
+        parent = session_manager.get(session_id)
+        if parent is None:
+            return {"error": "Session not found"}
+
+        # Broadcast the blocker event to all subscribers before blocking.
+        parent._broadcast(Event(
+            type=EventType.BLOCKER,
+            session_id=session_id,
+            message=question,
+            data={"options": options} if options else None,
+        ))
+
+        # Block until the user answers.
+        event = threading.Event()
+        parent._pending_question = {
+            "event": event,
+            "answer": None,
+            "question": question,
+            "options": options,
+        }
+
+        event.wait()
+
+        # Retrieve and clear the answer.
+        pending = parent._pending_question
+        answer = (pending or {}).get("answer", "") if pending else ""
+        parent._pending_question = None
+
+        return {
+            "question": question,
+            "answer": answer,
+        }
+
+    return ask_user
 
 
 def register_steering_hook(agent: Any, task_id: str, session: Any = None) -> None:

@@ -134,14 +134,19 @@ function AgentThread() {
     if (!id || !draft.trim()) return
     const text = draft.trim()
     setDraft('')
-    // Sending a message while autonomous is itself the "hold up" — it
-    // interrupts whatever's running and pauses self-continuation, no
-    // separate toggle-off click required first.
-    if (task && agent?.mode === 'agent') {
-      setAgent(prev => prev ? { ...prev, mode: 'assistant' } : prev)
-      await setAutonomous(id, false)
+    try {
+      // Sending a message while autonomous is itself the "hold up" — it
+      // interrupts whatever's running and pauses self-continuation, no
+      // separate toggle-off click required first.
+      if (task && agent?.mode === 'agent') {
+        setAgent(prev => prev ? { ...prev, mode: 'assistant' } : prev)
+        await setAutonomous(id, false)
+      }
+      await sendMessage(id, text)
+    } catch {
+      // Restore draft on error so the message isn't lost.
+      setDraft(text)
     }
-    await sendMessage(id, text)
   }, [id, draft, agent, task])
   const handleCheckpoint = useCallback(async () => {
     if (!id) return
@@ -336,6 +341,8 @@ function AgentThread() {
                 onToggleDelegate={() => setOpenDelegates(s => toggle(s, evt.id))}
                 onRevert={label => id && revertAgent(id, label)}
                 onOpenPreview={openInNewBrowserTab}
+                agentId={id}
+                sessionEnded={ended}
               />
             ))}
             <div ref={eventsEndRef} />

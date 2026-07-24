@@ -33,6 +33,7 @@ export interface AgentInfo {
   id: string; mode: string; task_id: string | null; project_id: string | null
   tokens_used: number; cost_usd: number; running: boolean
   model: string; started_at: number
+  pending_question: { question: string; options: string[] | null } | null
 }
 
 export interface ProviderInfo {
@@ -100,6 +101,15 @@ export async function fetchAgentFile(id: string, path: string): Promise<{ path: 
 }
 export async function sendMessage(id: string, message: string): Promise<void> {
   await apiFetch(`/api/agent/${id}/send`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ message }) })
+}
+export async function answerAgent(id: string, answer: string): Promise<void> {
+  await apiFetch(`/api/agent/${id}/answer`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ answer }) })
+}
+export interface PendingQuestion {
+  agent_id: string; task_id: string | null; question: string; options: string[] | null
+}
+export async function fetchPendingQuestions(): Promise<{ questions: PendingQuestion[] }> {
+  return apiFetch('/api/agents/pending-questions')
 }
 export async function fetchSettings(): Promise<SettingsResponse> {
   return apiFetch('/api/settings')

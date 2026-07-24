@@ -14,12 +14,18 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
   const [dialogStatus, setDialogStatus] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverStage, setDragOverStage] = useState<string | null>(null)
+  const [moveError, setMoveError] = useState<string | null>(null)
   const navigate = useNavigate()
   const { tasks, setTasks, load, workspace, allStages } = useTaskList(reloadSignal)
 
   const handleMove = async (taskId: string, newStatus: string) => {
-    await updateTask(taskId, { status: newStatus })
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t))
+    try {
+      await updateTask(taskId, { status: newStatus })
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t))
+      setMoveError(null)
+    } catch (e) {
+      setMoveError(e instanceof Error ? e.message : 'Failed to move task')
+    }
   }
 
   const handleStart = async (task: TaskSummary, headless: boolean) => {
@@ -35,27 +41,34 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
     tasks.filter(t => stageForStatus(allStages, t.status)?.key === stageKey)
 
   return (
-    <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 12 }}>
-      {stages.map(stage => {
-        const items = tasksForStage(stage.key)
-        return (
-          <div
-            key={stage.key}
-            onDragOver={e => { e.preventDefault(); setDragOverStage(stage.key) }}
-            onDragLeave={() => setDragOverStage(prev => (prev === stage.key ? null : prev))}
-            onDrop={e => {
-              e.preventDefault()
-              const taskId = e.dataTransfer.getData('text/plain')
-              setDragOverStage(null)
-              setDraggingId(null)
-              if (taskId) handleMove(taskId, stage.statuses[0])
-            }}
-            style={{
-              flex: '1 1 0', minWidth: 230, maxWidth: 250, display: 'flex', flexDirection: 'column',
-              borderRadius: 12, transition: 'background 0.1s',
-              background: dragOverStage === stage.key ? 'var(--acc-soft)' : undefined,
-            }}
-          >
+	    <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 12, flex: 1, minHeight: 0 }}>
+	      {stages.map(stage => {
+	        const items = tasksForStage(stage.key)
+	        return (
+	          <div
+	            key={stage.key}
+	            onDragOver={e => { e.preventDefault(); setDragOverStage(stage.key) }}
+	            onDragLeave={e => {
+	              // Only clear if we're actually leaving the column, not
+	              // just entering a child card — check the relatedTarget.
+	              const el = e.currentTarget as HTMLElement
+	              if (!el.contains(e.relatedTarget as Node)) {
+	                setDragOverStage(prev => prev === stage.key ? null : prev)
+	              }
+	            }}
+	            onDrop={e => {
+	              e.preventDefault()
+	              const taskId = e.dataTransfer.getData('text/plain')
+	              setDragOverStage(null)
+	              setDraggingId(null)
+	              if (taskId) handleMove(taskId, stage.statuses[0])
+	            }}
+	            style={{
+	              flex: '1 1 0', minWidth: 230, maxWidth: 250, display: 'flex', flexDirection: 'column',
+	              borderRadius: 12, transition: 'background 0.1s',
+	              background: dragOverStage === stage.key ? 'var(--acc-soft)' : undefined,
+	            }}
+	          >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', marginBottom: 8, borderRadius: 10, background: 'var(--card2)' }}>
               <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--mut)', flexShrink: 0 }} />
               <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink)' }}>{stage.label}</span>
@@ -67,7 +80,7 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
               >+</button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 4, minHeight: 40 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 4, flex: 1, minHeight: 40 }}>
               {items.map(task => (
                 <TaskCard
                   key={task.id}
@@ -98,6 +111,16 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
           onClose={() => setDialogStatus(null)}
           onSaved={() => { setDialogStatus(null); load() }}
         />
+      )}
+
+      {moveError && (
+        <div style={{
+          position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 200,
+          padding: '8px 16px', borderRadius: 10, background: 'var(--err)', color: '#fff',
+          fontSize: 13, fontWeight: 600, boxShadow: 'var(--shadow-lg)', cursor: 'pointer',
+        }} onClick={() => setMoveError(null)}>
+          {moveError}
+        </div>
       )}
     </div>
   )

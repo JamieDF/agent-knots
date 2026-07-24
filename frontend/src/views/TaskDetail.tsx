@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  fetchTask, updateTask, deleteTask, toggleCriterion, createSession, fetchAgent,
+  fetchTask, updateTask, deleteTask, toggleCriterion, createSession, fetchAgent, answerAgent,
   type TaskDetail as TDetail, type AgentInfo,
 } from '../lib/api'
 import { useWorkspaceScope } from '../lib/workspaceContext'
@@ -134,6 +134,9 @@ function TaskDetail() {
           <button onClick={handleDelete} style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--err)', background: 'var(--card2)' }}>✕ Delete</button>
         </div>
       </div>
+
+      {/* Agent pending question — answerable from here, no need to open the thread */}
+      {agent?.pending_question && <PendingQuestionCard agentId={agent.id} pq={agent.pending_question} onAnswered={load} />}
 
       {/* Lifecycle strip */}
       <Card style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -355,6 +358,51 @@ function toolCounts(progress: TDetail['progress']): [string, number][] {
     if (m) counts.set(m[1], (counts.get(m[1]) || 0) + 1)
   }
   return [...counts.entries()]
+}
+
+function PendingQuestionCard({ agentId, pq, onAnswered }: { agentId: string; pq: { question: string; options: string[] | null }; onAnswered: () => void }) {
+  const [answer, setAnswer] = useState('')
+  const [sending, setSending] = useState(false)
+
+  const handleAnswer = async (text: string) => {
+    if (!text.trim() || sending) return
+    setSending(true)
+    try {
+      await answerAgent(agentId, text.trim())
+      setAnswer('')
+      onAnswered()
+    } catch { setSending(false) }
+  }
+
+  return (
+    <Card style={{ marginBottom: 20, border: '2px solid var(--acc)', borderLeft: '4px solid var(--acc)' }}>
+      <div style={{ fontSize: 12.5, color: 'var(--ink)', fontStyle: 'italic', marginBottom: 8, lineHeight: 1.5 }}>
+        ❓ {pq.question}
+      </div>
+      {pq.options && pq.options.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+          {pq.options.map((o, i) => (
+            <button key={i} disabled={sending} onClick={() => handleAnswer(o)}
+              style={{ fontSize: 12, padding: '5px 12px', borderRadius: 8, background: 'var(--acc-soft)', color: 'var(--acc)', fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit', opacity: sending ? 0.6 : 1 }}
+            >{o}</button>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <input
+          value={answer}
+          onChange={e => setAnswer(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') handleAnswer(answer) }}
+          placeholder="Answer…"
+          disabled={sending}
+          style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--line2)', background: 'var(--card2)', color: 'var(--ink)', fontSize: 12.5, outline: 'none', fontFamily: 'inherit', opacity: sending ? 0.6 : 1 }}
+        />
+        <button onClick={() => handleAnswer(answer)} disabled={sending || !answer.trim()}
+          style={{ padding: '6px 16px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', border: 'none', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', opacity: sending || !answer.trim() ? 0.6 : 1 }}
+        >Answer</button>
+      </div>
+    </Card>
+  )
 }
 
 export default TaskDetail

@@ -1,32 +1,30 @@
 import { useEffect, useState } from 'react'
-import { fetchTasks, type TaskSummary } from './api'
+import { fetchTasks, fetchPendingQuestions, type TaskSummary, type PendingQuestion } from './api'
 
 export interface NotificationItem {
   id: string
-  kind: 'blocker' | 'done'
+  kind: 'blocker' | 'done' | 'question'
   title: string
   taskId: string
   time: number
+  agentId?: string
 }
 
-/** Derives notifications from the tasks list rather than a live SSE
- * subscription — a global bell watching every active session's own
- * event stream simultaneously is a much bigger lift than polling the
- * same tasks list the Dashboard already polls, for the same practical
- * result (blocked tasks page you regardless; done tasks you'll see on
- * your next task-list visit either way). The badge count is
- * specifically pending blockers, per the design's own copy — "tests"
- * notifications are left out entirely since nothing in this backend
- * produces test-run data to derive them from. */
+/** Derives notifications from the tasks list plus pending agent questions.
+ * The badge count is specifically pending blockers + agent questions. */
 export function useNotifications() {
   const [tasks, setTasks] = useState<TaskSummary[]>([])
+  const [questions, setQuestions] = useState<PendingQuestion[]>([])
 
   useEffect(() => {
     let mounted = true
     const poll = async () => {
       try {
-        const d = await fetchTasks({ limit: 300 })
-        if (mounted) setTasks(d.tasks)
+        const [td, qd] = await Promise.all([
+          fetchTasks({ limit: 300 }),
+          fetchPendingQuestions(),
+        ])
+        if (mounted) { setTasks(td.tasks); setQuestions(qd.questions) }
       } catch { /* ignore */ }
     }
     poll()
@@ -41,7 +39,16 @@ export function useNotifications() {
   const recentlyDone: NotificationItem[] = tasks
     .filter(t => t.status === 'done' && now - t.updated_at < 86400)
     .map(t => ({ id: `done:${t.id}`, kind: 'done' as const, title: t.title, taskId: t.id, time: t.updated_at }))
+  const agentQuestions: NotificationItem[] = questions
+    .map(q => ({
+      id: `q:${q.agent_id}`,
+      kind: 'question' as const,
+      title: q.question,
+      taskId: q.task_id || '',
+      time: now,
+      agentId: q.agent_id,
+    }))
 
-  const items = [...blockers, ...recentlyDone].sort((a, b) => b.time - a.time)
-  return { items, blockerCount: blockers.length }
+  const items = [...agentQuestions, ...blockers, ...recentlyDone].sort((a, b) => b.time - a.time)
+  return { items, blockerCount: blockers.length + agentQuestions.length }
 }

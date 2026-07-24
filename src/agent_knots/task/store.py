@@ -273,8 +273,6 @@ class TaskStore:
 
     def _validate_transition(self, task: Task, new_status: TaskStatus, actor: str = "agent") -> None:
         """Raise ValueError if transitioning to new_status isn't allowed."""
-        if task.status.is_terminal():
-            raise ValueError(f"cannot change status of terminal task {task.id!r}")
         if new_status == TaskStatus.DONE:
             if not task.all_criteria_met():
                 unmet = task.unmet_criteria()

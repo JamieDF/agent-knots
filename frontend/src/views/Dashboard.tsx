@@ -10,7 +10,7 @@ import { useStages, enabledStages, stageForStatus, type Stage } from '../lib/sta
 import { useWorkspaceScope } from '../lib/workspaceContext'
 import {
   fetchAgents, fetchSettings, fetchTasks, fetchTask, fetchWorkspaces, deleteAgent, sendMessage,
-  updateTask, createSession, updateWorkspace,
+  updateTask, createSession, updateWorkspace, answerAgent,
   type AgentInfo, type TaskSummary, type Workspace,
 } from '../lib/api'
 
@@ -268,6 +268,20 @@ function BlockerHero({ task, onChanged }: { task: TaskSummary; onChanged: () => 
 
 function RunningAgentCard({ agent, task, onDeleted }: { agent: AgentInfo; task?: TaskSummary; onDeleted: () => void }) {
   const navigate = useNavigate()
+  const [answer, setAnswer] = useState('')
+  const [sending, setSending] = useState(false)
+  const pq = agent.pending_question
+
+  const handleAnswer = async (text: string) => {
+    if (!text.trim() || sending) return
+    setSending(true)
+    try {
+      await answerAgent(agent.id, text.trim())
+      setAnswer('')
+      onDeleted() // refresh to clear the pending question
+    } catch { setSending(false) }
+  }
+
   return (
     <Card>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -277,9 +291,42 @@ function RunningAgentCard({ agent, task, onDeleted }: { agent: AgentInfo; task?:
         </span>
         {task && <span style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>{task.progress_count}/{task.steps_count || task.criteria_count}</span>}
       </div>
-      <div style={{ background: 'var(--card2)', borderRadius: 8, padding: '6px 8px', marginBottom: 8, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>
-        {agent.running ? 'working…' : 'idle'}
-      </div>
+
+      {/* Pending question — card-level answer UI */}
+      {pq ? (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 12, color: 'var(--ink)', fontStyle: 'italic', marginBottom: 6, lineHeight: 1.4 }}>
+            ❓ {pq.question}
+          </div>
+          {pq.options && pq.options.length > 0 && (
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 }}>
+              {pq.options.map((o, i) => (
+                <button key={i} disabled={sending} onClick={() => handleAnswer(o)}
+                  style={{ fontSize: 11, padding: '3px 8px', borderRadius: 6, background: 'var(--acc-soft)', color: 'var(--acc)', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', border: 'none', opacity: sending ? 0.6 : 1 }}
+                >{o}</button>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              value={answer}
+              onChange={e => setAnswer(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleAnswer(answer) }}
+              placeholder="Answer…"
+              disabled={sending}
+              style={{ flex: 1, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--line2)', background: 'var(--card2)', color: 'var(--ink)', fontSize: 11.5, outline: 'none', fontFamily: 'inherit', opacity: sending ? 0.6 : 1 }}
+            />
+            <button onClick={() => handleAnswer(answer)} disabled={sending || !answer.trim()}
+              style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', border: 'none', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', opacity: sending || !answer.trim() ? 0.6 : 1 }}
+            >Answer</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ background: 'var(--card2)', borderRadius: 8, padding: '6px 8px', marginBottom: 8, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>
+          {agent.running ? 'working…' : 'idle'}
+        </div>
+      )}
+
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, color: 'var(--mut)' }}>
         <span style={{ color: agent.mode === 'assistant' ? 'var(--warn-ink)' : 'var(--ok)', fontWeight: 700 }}>{agent.mode === 'assistant' ? 'paused' : 'autonomous'}</span>
         <span>{agent.tokens_used.toLocaleString()} tok</span>

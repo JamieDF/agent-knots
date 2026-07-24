@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { subscribeToAgent, type SSEEvent } from '../../lib/sse'
+import { answerAgent } from '../../lib/api'
 import Markdown from '../../components/Markdown'
 import { type EventItem, reduceEvent } from './types'
 
-export function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onToggleDelegate, onRevert, onOpenPreview }: {
+export function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onToggleDelegate, onRevert, onOpenPreview, agentId, sessionEnded }: {
   evt: EventItem
   collapsed: boolean
   onToggleCollapse: () => void
@@ -11,6 +12,8 @@ export function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onTog
   onToggleDelegate: () => void
   onRevert: (label: string) => void
   onOpenPreview: (url: string) => void
+  agentId?: string
+  sessionEnded?: boolean
 }) {
   const ts = new Date(evt.timestamp * 1000)
   const tsStr = `${String(ts.getHours()).padStart(2, '0')}:${String(ts.getMinutes()).padStart(2, '0')}`
@@ -89,11 +92,9 @@ export function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onTog
   }
 
   if (evt.type === 'blocker' || evt.type === 'ask') {
-    return (
-      <Bubble align="left" bg="var(--warn-soft)" ts={tsStr}>
-        <Markdown onLinkClick={onOpenPreview}>{evt.message}</Markdown>
-      </Bubble>
-    )
+    const options: string[] | undefined = evt.data?.options as string[] | undefined
+    const live = agentId && !sessionEnded
+    return <BlockerCard evt={evt} agentId={agentId} options={options} live={live} tsStr={tsStr} onOpenPreview={onOpenPreview} />
   }
 
   if (evt.type === 'user') {
@@ -118,6 +119,134 @@ export function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onTog
 
   // state_change / default — subtle info line.
   return <div style={{ fontSize: 11.5, color: 'var(--mut)', padding: '4px 0 4px 36px' }}>{evt.message}</div>
+}
+
+/** Interactive blocker card — the agent asked a question via ask_user().
+ * When the session is live, shows quick-choice chips (if options were
+ * provided) and an answer input. On submit, calls the /api/agent/{id}/answer
+ * endpoint to unblock the agent. */
+function BlockerCard({ evt, agentId, options, live, tsStr, onOpenPreview }: {
+  evt: EventItem
+  agentId?: string
+  options?: string[]
+  live: boolean
+  tsStr: string
+  onOpenPreview: (url: string) => void
+}) {
+  const [answer, setAnswer] = useState('')
+  const [submitted, setSubmitted] = useState(false)
+  const [sending, setSending] = useState(false)
+
+  const handleAnswer = async (text: string) => {
+    if (!agentId || !text.trim() || sending) return
+    setSending(true)
+    try {
+      await answerAgent(agentId, text.trim())
+      setSubmitted(true)
+    } catch {
+      setSending(false)
+    }
+  }
+
+  const handleChip = (opt: string) => {
+    setAnswer(opt)
+    handleAnswer(opt)
+  }
+
+  if (submitted) {
+    return (
+      <div style={{ alignSelf: 'flex-start', maxWidth: '88%', display: 'flex', flexDirection: 'column' }}>
+        <div style={{
+          padding: '10px 14px', borderRadius: 12,
+          background: 'var(--card2)', border: '1px solid var(--line)',
+          borderLeft: '3px solid var(--acc)',
+        }}>
+          <Markdown onLinkClick={onOpenPreview}>{evt.message}</Markdown>
+          <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 8, background: 'var(--ok-soft)', fontSize: 12, color: 'var(--ok)', fontWeight: 600 }}>
+            ✓ Answered — {answer}
+          </div>
+        </div>
+        <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--mut2)', marginTop: 3, padding: '0 3px' }}>{tsStr}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ alignSelf: 'flex-start', maxWidth: '88%', display: 'flex', flexDirection: 'column' }}>
+      {/* Question body */}
+      <div style={{
+        padding: '12px 16px',
+        borderRadius: live ? '12px 12px 0 0' : 12,
+        background: 'var(--card2)', border: '1px solid var(--line)',
+        borderLeft: '3px solid var(--acc)',
+        borderBottom: live ? 'none' : undefined,
+      }}>
+        <Markdown onLinkClick={onOpenPreview}>{evt.message}</Markdown>
+      </div>
+
+      {/* Answer bar — only when session is live */}
+      {live && (
+        <div style={{
+          padding: '10px 14px 12px',
+          borderRadius: '0 0 12px 12px',
+          border: '1px solid var(--line)',
+          borderLeft: '3px solid var(--acc)',
+          borderTop: '1px solid var(--line)',
+          background: 'var(--card)',
+        }}>
+          {options && options.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+              {options.map((opt, i) => (
+                <button
+                  key={i}
+                  onClick={() => handleChip(opt)}
+                  disabled={sending}
+                  style={{
+                    padding: '5px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                    border: '1px solid var(--line2)', background: 'var(--card2)',
+                    color: 'var(--ink2)', cursor: 'pointer', fontFamily: 'inherit',
+                    opacity: sending ? 0.6 : 1,
+                  }}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              value={answer}
+              onChange={e => setAnswer(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleAnswer(answer) }}
+              placeholder="Type your answer…"
+              disabled={sending}
+              style={{
+                flex: 1, padding: '7px 10px', borderRadius: 8,
+                border: '1px solid var(--line2)', background: 'var(--card2)',
+                color: 'var(--ink)', fontSize: 12.5, outline: 'none',
+                fontFamily: 'inherit', opacity: sending ? 0.6 : 1,
+              }}
+            />
+            <button
+              onClick={() => handleAnswer(answer)}
+              disabled={sending || !answer.trim()}
+              style={{
+                padding: '7px 16px', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                background: 'var(--acc)', color: 'var(--acc-ink)', border: 'none',
+                cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+                opacity: sending || !answer.trim() ? 0.6 : 1,
+              }}
+            >
+              Answer
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Timestamp below the card */}
+      <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--mut2)', marginTop: 3, padding: '0 3px' }}>{tsStr}</div>
+    </div>
+  )
 }
 
 /** Chat-turn layout: agent on the left, human ("user" events) on the

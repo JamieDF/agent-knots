@@ -31,6 +31,13 @@ from agent_knots.task.store import TaskStore
 
 
 def _agent_to_response(session) -> dict:
+    pq = session._pending_question
+    pending = None
+    if pq and pq.get("event") and not pq["event"].is_set():
+        pending = {
+            "question": pq.get("question", ""),
+            "options": pq.get("options"),
+        }
     return {
         "id": session.id,
         "mode": session.mode,
@@ -41,6 +48,7 @@ def _agent_to_response(session) -> dict:
         "running": session.running,
         "model": session.model,
         "started_at": session.started_at,
+        "pending_question": pending,
     }
 
 
@@ -54,6 +62,23 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
         if project:
             sessions = [s for s in sessions if s.project_id == project]
         return {"agents": [_agent_to_response(s) for s in sessions]}
+
+    @router.get("/api/agents/pending-questions")
+    async def list_pending_questions():
+        """Return all sessions with an unanswered ask_user question.
+        Polled by the notification bell so pending questions are visible
+        from any view, not just the agent's thread."""
+        items = []
+        for s in session_manager.active:
+            pq = s._pending_question
+            if pq and pq.get("event") and not pq["event"].is_set():
+                items.append({
+                    "agent_id": s.id,
+                    "task_id": s.task_id,
+                    "question": pq.get("question", ""),
+                    "options": pq.get("options"),
+                })
+        return {"questions": items}
 
     @router.get("/api/agent/{agent_id}/events")
     async def agent_events(agent_id: str, request: Request):
@@ -296,6 +321,24 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
         DELETE, which tears the session down)."""
         await session_manager.interrupt(agent_id)
         return {"status": "ok"}
+
+    @router.post("/api/agent/{agent_id}/answer")
+    @raises_as(404)
+    async def agent_answer(agent_id: str, answer: str = Form(...)):
+        """Answer a pending ask_user question from the agent.
+
+        Resolves the blocking tool call so the agent can continue its
+        turn with the user's answer. A no-op if no question is pending.
+        """
+        session = session_manager.get(agent_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        pending = session._pending_question
+        if pending is None:
+            return {"status": "ok", "answered": False}
+        pending["answer"] = answer
+        pending["event"].set()
+        return {"status": "ok", "answered": True}
 
     @router.delete("/api/agent/{agent_id}")
     async def agent_delete(agent_id: str):

@@ -170,11 +170,14 @@ class TestOperations:
         task = store.set_status(sample_task.id, TaskStatus.IN_PROGRESS)
         assert task.status == TaskStatus.IN_PROGRESS
 
-    def test_set_status_terminal_fails(self, store, sample_task):
+    def test_set_status_reopen_terminal(self, store, sample_task):
+        """Done/Abandoned tasks can be reopened — terminal is no longer a
+        one-way trap. The old blanket ban on changing terminal tasks was
+        removed so a human can drag a Done card back to In Progress."""
         sample_task.status = TaskStatus.DONE
         store.create(sample_task)
-        with pytest.raises(ValueError, match="terminal"):
-            store.set_status(sample_task.id, TaskStatus.OPEN)
+        task = store.set_status(sample_task.id, TaskStatus.OPEN, actor="human")
+        assert task.status == TaskStatus.OPEN
 
     def test_add_step(self, store, sample_task):
         store.create(sample_task)

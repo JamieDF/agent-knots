@@ -57,16 +57,22 @@ function NotificationBell() {
             {items.map(i => (
               <div
                 key={i.id}
-                onClick={() => { navigate(`/tasks/${i.taskId}`); setOpen(false) }}
+                onClick={() => {
+                  if (i.kind === 'question' && i.agentId) navigate(`/agent/${i.agentId}`)
+                  else navigate(`/tasks/${i.taskId}`)
+                  setOpen(false)
+                }}
                 style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '10px 14px', borderBottom: '1px solid var(--line)', cursor: 'pointer' }}
               >
-                <span style={{ fontSize: 13, color: i.kind === 'blocker' ? 'var(--warn-ink)' : 'var(--ok)', marginTop: 1 }}>
-                  {i.kind === 'blocker' ? '⚠' : '✓'}
+                <span style={{ fontSize: 13, color: i.kind === 'blocker' ? 'var(--warn-ink)' : i.kind === 'question' ? 'var(--acc)' : 'var(--ok)', marginTop: 1 }}>
+                  {i.kind === 'blocker' ? '⚠' : i.kind === 'question' ? '❓' : '✓'}
                 </span>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 12.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.title}</div>
                   <div style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>
-                    {i.kind === 'blocker' ? 'blocked' : 'done'} · {timeAgo(i.time)}
+                    {i.kind === 'question' ? 'agent question' : i.kind === 'blocker' ? 'blocked' : 'done'}
+                    {i.agentId && <span> · {i.agentId}</span>}
+                    {i.time > 0 && <span> · {timeAgo(i.time)}</span>}
                   </div>
                 </div>
               </div>

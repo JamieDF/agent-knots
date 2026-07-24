@@ -79,6 +79,15 @@ class Session:
     # turn/interrupt, but SessionManager.stop() kills them so they don't
     # outlive the session itself forever.
     _background_pids: list[int] = field(default_factory=list, repr=False)
+    # System-prompt components stored so set_mode() can rebuild the prompt
+    # when autonomous is toggled — otherwise the agent keeps the original
+    # mode's instruction forever, even after mode changes.
+    _base_prompt: str = field(default="", repr=False)
+    _task_context: str = field(default="", repr=False)
+    # Pending ask_user question — a dict with keys: event (threading.Event),
+    # answer (str), question (str), options (list[str] | None). The tool
+    # blocks on the Event; the /api/agent/{id}/answer endpoint sets it.
+    _pending_question: dict | None = field(default=None, repr=False)
 
     @property
     def running(self) -> bool:
@@ -244,6 +253,8 @@ class SessionManager:
             model=provider.model,
             _agent=agent,
             _background_pids=background_pids,
+            _base_prompt=system_prompt,
+            _task_context=task_context,
         )
         self._sessions[session_id] = session
 
@@ -364,12 +375,30 @@ class SessionManager:
         almost always what you want to call instead of this for that
         agent/assistant toggle, since it also handles interrupting the
         current turn and resuming the task.
+
+        Also rebuilds the system prompt so the agent's own instructions
+        match its current mode — without this the agent still thinks it's
+        autonomous (or interactive) based on whatever mode the session
+        was created in, regardless of later toggles.
         """
         session = self._sessions.get(session_id)
         if session is None:
             raise ValueError(f"session {session_id!r} not found")
 
         session.mode = mode
+
+        # Rebuild the system prompt from stored components with the new mode.
+        if session._agent is not None:
+            new_prompt = _build_system_prompt(
+                session._base_prompt, session._task_context, mode,
+            )
+            if session.task_id:
+                from agent_knots.session.features import inject_memory
+                memory_block = inject_memory(session.task_id)
+                if memory_block:
+                    new_prompt = new_prompt + "\n\n" + memory_block
+            session._agent.system_prompt = new_prompt
+
         session._broadcast(Event(
             type=EventType.STATE_CHANGE,
             session_id=session_id,
@@ -770,8 +799,9 @@ class SessionManager:
         registry = ToolRegistry()
         all_tools = list(tools or []) + registry.list_enabled(cwd=resolved_working_dir)
 
-        from agent_knots.session.features import make_delegate_tool
+        from agent_knots.session.features import make_delegate_tool, make_ask_user_tool
         all_tools.append(make_delegate_tool(self, session_id))
+        all_tools.append(make_ask_user_tool(self, session_id))
         return all_tools
 
     @staticmethod
