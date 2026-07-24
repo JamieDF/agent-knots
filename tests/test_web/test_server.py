@@ -743,26 +743,26 @@ class TestExtractJsonObject:
     completion text has to be parsed leniently instead."""
 
     def test_plain_json(self):
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         assert _extract_json_object('{"a": 1}') == {"a": 1}
 
     def test_markdown_code_fence(self):
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         text = '```json\n{"a": 1}\n```'
         assert _extract_json_object(text) == {"a": 1}
 
     def test_plain_code_fence_no_language(self):
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         text = '```\n{"a": 1}\n```'
         assert _extract_json_object(text) == {"a": 1}
 
     def test_stray_commentary_around_json(self):
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         text = 'Sure, here you go:\n{"a": 1}\nHope that helps!'
         assert _extract_json_object(text) == {"a": 1}
 
     def test_no_json_raises(self):
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         with pytest.raises(Exception):
             _extract_json_object("no json here at all")
 
@@ -770,7 +770,7 @@ class TestExtractJsonObject:
         """MiniMax M2.7 (a reasoning model) inlines a <think>...</think>
         block directly into a plain completion's message.content — there's
         no separate reasoning field to read instead."""
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         text = '<think>Let me plan this out...</think>\n{"a": 1}'
         assert _extract_json_object(text) == {"a": 1}
 
@@ -780,7 +780,7 @@ class TestExtractJsonObject:
         code or gives JSON examples) instead of the real object, producing
         text that isn't valid JSON at all and a cryptic raw json.JSONDecodeError
         ("Expecting value: line 1 column 1 (char 0)") instead of a clear one."""
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         text = (
             '<think>Something like {"example": "not the real answer"} maybe? '
             'Let me reconsider.</think>\n'
@@ -792,7 +792,7 @@ class TestExtractJsonObject:
         """Even after stripping think-blocks/fences, genuinely broken JSON
         must raise a ValueError with an actionable message — not let a raw
         json.JSONDecodeError bubble up uncaught."""
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         with pytest.raises(ValueError, match="No valid JSON object found"):
             _extract_json_object('<think>{unbalanced</think>{"a": broken}')
 
