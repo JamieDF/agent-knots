@@ -1,40 +1,17 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchTasks, type TaskSummary } from '../../lib/api'
-import { useWorkspaceScope } from '../../lib/workspaceContext'
-import { useStages, enabledStages, stageForStatus } from '../../lib/stages'
+import { enabledStages, stageForStatus } from '../../lib/stages'
 import { statusStyle } from '../../lib/statusColors'
 import { priorityColor } from '../../lib/priorityColors'
+import { useTaskList } from '../../lib/useTaskList'
 import { Card, Chip } from '../../components/primitives'
-
-const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 }
 
 /** List tab of the Tasks screen — stage filter chips + task rows, per
  * design_handoff_atelier_cockpit/README.md §3. */
 function List({ reloadSignal }: { reloadSignal?: number } = {}) {
-  const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [stageFilter, setStageFilter] = useState<string | null>(null)
-  const { workspace } = useWorkspaceScope()
   const navigate = useNavigate()
-
-  const load = useCallback(async () => {
-    try {
-      const data = await fetchTasks({ limit: 200, project: workspace || undefined })
-      setTasks(data.tasks.sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 2) - (PRIORITY_ORDER[b.priority] ?? 2)))
-    } catch { /* ignore */ }
-  }, [workspace])
-
-  useEffect(() => {
-    load()
-    const interval = setInterval(load, 5000)
-    return () => clearInterval(interval)
-  }, [load])
-
-  // A task created elsewhere (the Tasks screen header's own dialog)
-  // should show up immediately, not on the next poll tick.
-  useEffect(() => { if (reloadSignal !== undefined) load() }, [reloadSignal]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const allStages = useStages()
+  const { tasks, allStages } = useTaskList(reloadSignal)
   const stages = enabledStages(allStages)
   const filtered = stageFilter
     ? tasks.filter(t => stageForStatus(allStages, t.status)?.key === stageFilter)

@@ -1,5 +1,32 @@
 /** API client for the agent-knots backend. */
 
+// ── fetch helpers ─────────────────────────────────────────────────────────────
+// Every route below used to hand-roll its own error handling, and had
+// drifted into three inconsistent variants: throw new Error(`HTTP
+// ${status}`), throw new Error('') (no message at all — the UI's error
+// boxes rendered blank), and `const err = await res.json(); throw new
+// Error(err.detail)` (which itself throws a confusing JSON-parse error
+// if the error body isn't valid JSON, instead of the real failure). A
+// few mutating calls (setAutonomous, sendMessage, deleteAgent, etc.)
+// didn't check res.ok at all, silently succeeding from the caller's
+// perspective on a failed request. apiFetch() unifies all of that:
+// always throws with the backend's `detail` message when present,
+// falls back to a plain HTTP status, and never masks a real failure
+// behind a secondary JSON-parse error.
+
+async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init)
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.detail || `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+function jsonInit(method: string, body?: unknown): RequestInit {
+  return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) }
+}
+
 // ── types ───────────────────────────────────────────────────────────────────
 
 export interface AgentInfo {
@@ -51,42 +78,37 @@ export interface TaskDetail {
 // ── agents ──────────────────────────────────────────────────────────────────
 
 export async function fetchAgents(): Promise<{ agents: AgentInfo[] }> {
-  const res = await fetch('/api/agents'); if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+  return apiFetch('/api/agents')
 }
 export async function fetchAgent(id: string): Promise<AgentInfo> {
-  const res = await fetch(`/api/agent/${id}`); if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+  return apiFetch(`/api/agent/${id}`)
 }
 export async function setAutonomous(id: string, on: boolean): Promise<void> {
-  await fetch(`/api/agent/${id}/autonomous`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }) })
+  await apiFetch(`/api/agent/${id}/autonomous`, jsonInit('POST', { on }))
 }
 export async function checkpointAgent(id: string, label: string): Promise<void> {
-  await fetch(`/api/agent/${id}/checkpoint`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }) })
+  await apiFetch(`/api/agent/${id}/checkpoint`, jsonInit('POST', { label }))
 }
 export async function revertAgent(id: string, label: string): Promise<void> {
-  await fetch(`/api/agent/${id}/revert`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }) })
+  await apiFetch(`/api/agent/${id}/revert`, jsonInit('POST', { label }))
 }
 export async function interruptAgent(id: string): Promise<void> {
-  await fetch(`/api/agent/${id}/interrupt`, { method: 'POST' })
+  await apiFetch(`/api/agent/${id}/interrupt`, { method: 'POST' })
 }
 export async function fetchAgentFile(id: string, path: string): Promise<{ path: string; content: string; truncated: boolean }> {
-  const res = await fetch(`/api/agent/${id}/file?path=${encodeURIComponent(path)}`)
-  if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || `HTTP ${res.status}`) }
-  return res.json()
+  return apiFetch(`/api/agent/${id}/file?path=${encodeURIComponent(path)}`)
 }
 export async function sendMessage(id: string, message: string): Promise<void> {
-  await fetch(`/api/agent/${id}/send`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ message }) })
+  await apiFetch(`/api/agent/${id}/send`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ message }) })
 }
 export async function fetchSettings(): Promise<SettingsResponse> {
-  const res = await fetch('/api/settings'); if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+  return apiFetch('/api/settings')
 }
 export async function saveSettings(s: { default_model: string; api_key: string; base_url: string; default_mode: string }) {
-  const res = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+  return apiFetch<any>('/api/settings', jsonInit('PUT', s))
 }
 export async function createSession(body: { prompt: string; mode?: string; project_id?: string; task_id?: string }) {
-  const res = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-  if (!res.ok) { const err = await res.json(); throw new Error(err.detail || `HTTP ${res.status}`) }
-  return res.json()
+  return apiFetch<any>('/api/sessions', jsonInit('POST', body))
 }
 
 // ── tasks ───────────────────────────────────────────────────────────────────
@@ -96,12 +118,11 @@ export async function fetchTasks(params?: { status?: string; project?: string; l
   if (params?.status) qs.set('status', params.status)
   if (params?.project) qs.set('project', params.project)
   if (params?.limit) qs.set('limit', String(params.limit))
-  const res = await fetch('/api/tasks' + (qs.toString() ? '?' + qs.toString() : ''))
-  if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+  return apiFetch('/api/tasks' + (qs.toString() ? '?' + qs.toString() : ''))
 }
 
 export async function fetchTask(id: string): Promise<TaskDetail> {
-  const res = await fetch(`/api/tasks/${id}`); if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+  return apiFetch(`/api/tasks/${id}`)
 }
 
 export async function createTask(data: {
@@ -109,8 +130,7 @@ export async function createTask(data: {
   acceptance_criteria?: string[]; review_gate?: string; project?: string
   dependencies?: string[]
 }): Promise<TaskDetail> {
-  const res = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+  return apiFetch('/api/tasks', jsonInit('POST', data))
 }
 
 export async function updateTask(id: string, data: {
@@ -118,23 +138,19 @@ export async function updateTask(id: string, data: {
   tags?: string[]; acceptance_criteria?: string[]; steps?: string[]; review_gate?: string
   dependencies?: string[]
 }): Promise<TaskDetail> {
-  const res = await fetch(`/api/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+  return apiFetch(`/api/tasks/${id}`, jsonInit('PATCH', data))
 }
 
 export async function toggleCriterion(id: string, criterion: string, met: boolean): Promise<TaskDetail> {
-  const res = await fetch(`/api/tasks/${id}/criteria/toggle`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ criterion, met }) })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+  return apiFetch(`/api/tasks/${id}/criteria/toggle`, jsonInit('POST', { criterion, met }))
 }
 
 export async function draftTask(title: string): Promise<{ description: string; acceptance_criteria: string[]; tags: string[]; steps: string[] }> {
-  const res = await fetch('/api/tasks/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) })
-  if (!res.ok) { const err = await res.json(); throw new Error(err.detail || `HTTP ${res.status}`) }
-  return res.json()
+  return apiFetch('/api/tasks/draft', jsonInit('POST', { title }))
 }
 
 export async function deleteTask(id: string): Promise<void> {
-  await fetch(`/api/tasks/${id}`, { method: 'DELETE' })
+  await apiFetch(`/api/tasks/${id}`, { method: 'DELETE' })
 }
 
 // ── tools ───────────────────────────────────────────────────────────────────
@@ -144,22 +160,19 @@ export interface ToolInfo {
 }
 
 export async function fetchTools(): Promise<{ tools: ToolInfo[] }> {
-  const res = await fetch('/api/tools'); if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+  return apiFetch('/api/tools')
 }
 
 export async function createTool(data: { name: string; description?: string; command: string; parameters?: {name:string,type:string,description:string}[] }) {
-  const res = await fetch('/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }; return res.json()
+  return apiFetch<any>('/api/tools', jsonInit('POST', data))
 }
 
 export async function deleteTool(name: string): Promise<void> {
-  const res = await fetch(`/api/tools/${name}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  await apiFetch(`/api/tools/${name}`, { method: 'DELETE' })
 }
 
 export async function toggleTool(name: string): Promise<{ enabled: boolean }> {
-  const res = await fetch(`/api/tools/${name}/toggle`, { method: 'POST' })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json()
+  return apiFetch(`/api/tools/${name}/toggle`, { method: 'POST' })
 }
 
 // ── workspaces ──────────────────────────────────────────────────────────────
@@ -171,26 +184,26 @@ export interface Workspace {
 }
 
 export async function fetchWorkspaces(includeArchived = false): Promise<{ workspaces: Workspace[] }> {
-  const res = await fetch(`/api/workspaces${includeArchived ? '?include_archived=true' : ''}`)
-  if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch(`/api/workspaces${includeArchived ? '?include_archived=true' : ''}`)
+}
+
+export async function fetchWorkspace(id: string): Promise<Workspace> {
+  return apiFetch(`/api/workspaces/${id}`)
 }
 
 export async function createWorkspace(data: { id?: string; name: string; description?: string; repository?: string; runtime?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number }) {
-  const res = await fetch('/api/workspaces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }; return res.json()
+  return apiFetch<any>('/api/workspaces', jsonInit('POST', data))
 }
 
 export async function updateWorkspace(id: string, data: { name?: string; description?: string; repository?: string; runtime?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number; archived?: boolean }) {
-  const res = await fetch(`/api/workspaces/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch<any>(`/api/workspaces/${id}`, jsonInit('PATCH', data))
 }
 
 export async function deleteWorkspace(id: string): Promise<void> {
-  const res = await fetch(`/api/workspaces/${id}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error('')
+  await apiFetch(`/api/workspaces/${id}`, { method: 'DELETE' })
 }
 export async function deleteAgent(id: string): Promise<void> {
-  await fetch(`/api/agent/${id}`, { method: 'DELETE' })
+  await apiFetch(`/api/agent/${id}`, { method: 'DELETE' })
 }
 
 // ── workflows: stages + roles ────────────────────────────────────────────────
@@ -200,12 +213,11 @@ export interface StageInfo {
 }
 
 export async function fetchStages(): Promise<{ stages: StageInfo[] }> {
-  const res = await fetch('/api/stages'); if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch('/api/stages')
 }
 
 export async function toggleStage(key: string, enabled: boolean): Promise<{ stages: StageInfo[] }> {
-  const res = await fetch(`/api/stages/${key}/toggle`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) })
-  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }; return res.json()
+  return apiFetch(`/api/stages/${key}/toggle`, jsonInit('POST', { enabled }))
 }
 
 export interface RoleInfo {
@@ -214,12 +226,11 @@ export interface RoleInfo {
 }
 
 export async function fetchRoles(): Promise<{ roles: RoleInfo[] }> {
-  const res = await fetch('/api/roles'); if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch('/api/roles')
 }
 
 export async function updateRole(key: string, data: { model?: string; trigger?: string; prompt?: string; enabled?: boolean }): Promise<RoleInfo> {
-  const res = await fetch(`/api/roles/${key}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch(`/api/roles/${key}`, jsonInit('PATCH', data))
 }
 
 // ── review ───────────────────────────────────────────────────────────────────
@@ -229,44 +240,37 @@ export interface ReviewDiff {
 }
 
 export async function fetchReviewDiffs(): Promise<{ diffs: ReviewDiff[] }> {
-  const res = await fetch('/api/review/diffs'); if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch('/api/review/diffs')
 }
 
 export async function fetchReviewDiffText(workspace: string, file: string): Promise<{ diff: string }> {
-  const res = await fetch(`/api/review/diff?workspace=${encodeURIComponent(workspace)}&file=${encodeURIComponent(file)}`)
-  if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch(`/api/review/diff?workspace=${encodeURIComponent(workspace)}&file=${encodeURIComponent(file)}`)
 }
 
 export async function approveReview(workspace: string, file?: string): Promise<void> {
-  const res = await fetch('/api/review/approve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace, file }) })
-  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }
+  await apiFetch('/api/review/approve', jsonInit('POST', { workspace, file }))
 }
 
 export async function rejectReview(workspace: string, file?: string): Promise<void> {
-  const res = await fetch('/api/review/reject', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace, file }) })
-  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }
+  await apiFetch('/api/review/reject', jsonInit('POST', { workspace, file }))
 }
 
 // ── providers + integrations ─────────────────────────────────────────────────
 
 export async function addProvider(data: { name: string; model?: string; api_key?: string; base_url?: string }): Promise<{ providers: ProviderInfo[] }> {
-  const res = await fetch('/api/settings/providers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }; return res.json()
+  return apiFetch('/api/settings/providers', jsonInit('POST', data))
 }
 
 export async function deleteProvider(name: string): Promise<{ providers: ProviderInfo[] }> {
-  const res = await fetch(`/api/settings/providers/${encodeURIComponent(name)}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch(`/api/settings/providers/${encodeURIComponent(name)}`, { method: 'DELETE' })
 }
 
 export async function setDefaultProvider(name: string): Promise<void> {
-  const res = await fetch(`/api/settings/providers/${encodeURIComponent(name)}/default`, { method: 'POST' })
-  if (!res.ok) throw new Error('')
+  await apiFetch(`/api/settings/providers/${encodeURIComponent(name)}/default`, { method: 'POST' })
 }
 
 export async function saveIntegrations(data: { github_pr_on_review?: boolean; phone_push?: boolean }): Promise<void> {
-  const res = await fetch('/api/integrations', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  if (!res.ok) throw new Error('')
+  await apiFetch('/api/integrations', jsonInit('PUT', data))
 }
 
 // ── usage ────────────────────────────────────────────────────────────────────
@@ -279,7 +283,7 @@ export interface UsageSummary {
 }
 
 export async function fetchUsage(): Promise<UsageSummary> {
-  const res = await fetch('/api/usage'); if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch('/api/usage')
 }
 
 // ── policies ─────────────────────────────────────────────────────────────────
@@ -289,12 +293,11 @@ export interface PolicyInfo {
 }
 
 export async function fetchPolicies(): Promise<{ policies: PolicyInfo[] }> {
-  const res = await fetch('/api/policies'); if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch('/api/policies')
 }
 
 export async function updatePolicy(key: string, data: { enabled?: boolean; value?: string }): Promise<PolicyInfo> {
-  const res = await fetch(`/api/policies/${key}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch(`/api/policies/${key}`, jsonInit('PATCH', data))
 }
 
 // ── MCP servers ──────────────────────────────────────────────────────────────
@@ -304,22 +307,23 @@ export interface McpServerInfo {
 }
 
 export async function fetchMcpServers(): Promise<{ servers: McpServerInfo[] }> {
-  const res = await fetch('/api/mcp'); if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch('/api/mcp')
+}
+
+export async function fetchMcpServer(name: string): Promise<McpServerInfo> {
+  return apiFetch(`/api/mcp/${encodeURIComponent(name)}`)
 }
 
 export async function addMcpServer(data: { name: string; url?: string }): Promise<{ servers: McpServerInfo[] }> {
-  const res = await fetch('/api/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }; return res.json()
+  return apiFetch('/api/mcp', jsonInit('POST', data))
 }
 
 export async function toggleMcpServer(name: string, enabled: boolean): Promise<McpServerInfo> {
-  const res = await fetch(`/api/mcp/${encodeURIComponent(name)}/toggle`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) })
-  if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch(`/api/mcp/${encodeURIComponent(name)}/toggle`, jsonInit('POST', { enabled }))
 }
 
 export async function deleteMcpServer(name: string): Promise<void> {
-  const res = await fetch(`/api/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error('')
+  await apiFetch(`/api/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' })
 }
 
 // ── vault ────────────────────────────────────────────────────────────────────
@@ -336,34 +340,31 @@ export interface AuditEntryInfo {
 }
 
 export async function fetchVaultStatus(): Promise<{ lock_state: 'locked' | 'unlocked' | 'uninitialized' }> {
-  const res = await fetch('/api/vault/status'); if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch('/api/vault/status')
 }
 
 export async function unlockVault(passphrase: string): Promise<{ lock_state: string }> {
-  const res = await fetch('/api/vault/unlock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ passphrase }) })
-  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }; return res.json()
+  return apiFetch('/api/vault/unlock', jsonInit('POST', { passphrase }))
 }
 
 export async function lockVault(): Promise<void> {
-  await fetch('/api/vault/lock', { method: 'POST' })
+  await apiFetch('/api/vault/lock', { method: 'POST' })
 }
 
 export async function fetchCredentials(): Promise<{ credentials: CredentialInfo[] }> {
-  const res = await fetch('/api/vault/credentials'); if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch('/api/vault/credentials')
 }
 
 export async function addCredential(data: { id: string; description?: string; tags?: string[]; value: string }): Promise<void> {
-  const res = await fetch('/api/vault/credentials', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }
+  await apiFetch('/api/vault/credentials', jsonInit('POST', data))
 }
 
 export async function deleteCredential(id: string): Promise<void> {
-  const res = await fetch(`/api/vault/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' })
-  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }
+  await apiFetch(`/api/vault/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export async function fetchAuditLog(limit = 50): Promise<{ entries: AuditEntryInfo[] }> {
-  const res = await fetch(`/api/vault/audit?limit=${limit}`); if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch(`/api/vault/audit?limit=${limit}`)
 }
 
 // ── filesystem browse (workspace folder picker) ──────────────────────────────
@@ -374,12 +375,9 @@ export interface FsEntry {
 
 export async function fetchFsBrowse(path?: string): Promise<{ path: string; parent: string | null; entries: FsEntry[] }> {
   const qs = path ? `?path=${encodeURIComponent(path)}` : ''
-  const res = await fetch(`/api/fs/browse${qs}`)
-  if (!res.ok) { const err = await res.json(); throw new Error(err.detail) }
-  return res.json()
+  return apiFetch(`/api/fs/browse${qs}`)
 }
 
 export async function fetchGitInfo(path: string): Promise<{ is_git: boolean; github_url: string | null }> {
-  const res = await fetch(`/api/fs/git-info?path=${encodeURIComponent(path)}`)
-  if (!res.ok) throw new Error(''); return res.json()
+  return apiFetch(`/api/fs/git-info?path=${encodeURIComponent(path)}`)
 }

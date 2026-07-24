@@ -12,7 +12,19 @@ export function ProvidersCard() {
   useEffect(() => { load() }, [load])
 
   const handleSetDefault = async (name: string) => { await setDefaultProvider(name); load() }
-  const handleDelete = async (name: string) => { try { await deleteProvider(name) } catch { /* synthetic legacy row, nothing to delete server-side */ } load() }
+  const handleDelete = async (name: string) => {
+    try {
+      await deleteProvider(name)
+    } catch (e) {
+      // Expected for the synthetic "default" row (legacy single-provider
+      // config, not a real saved profile) — nothing to delete
+      // server-side. Still logged, not silently swallowed, since a real
+      // network/server failure would look identical to the user
+      // otherwise (the row just disappears from the list either way).
+      console.warn(`Failed to delete provider "${name}":`, e)
+    }
+    load()
+  }
 
   return (
     <Card>

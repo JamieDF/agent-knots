@@ -4,6 +4,7 @@ import { Toggle } from './primitives'
 import { useNotifications } from '../lib/notifications'
 import { fetchSettings, saveIntegrations } from '../lib/api'
 import { timeAgo } from '../lib/format'
+import { useClickOutside } from '../lib/useClickOutside'
 
 /** Notification bell — pending-blocker count badge, dropdown of
  * blocker/done rows deep-linking to their task, and a phone-push
@@ -17,14 +18,7 @@ function NotificationBell() {
 
   useEffect(() => { fetchSettings().then(s => setPhonePush(s.integrations.phone_push)).catch(() => {}) }, [])
 
-  useEffect(() => {
-    if (!open) return
-    const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
-  }, [open])
+  useClickOutside(ref, open, () => setOpen(false))
 
   const handleTogglePush = async (checked: boolean) => {
     setPhonePush(checked)
