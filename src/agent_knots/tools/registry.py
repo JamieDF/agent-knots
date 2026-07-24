@@ -100,18 +100,26 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._custom: dict[str, CustomTool] = {}
         self._load_custom()
+        # Read once here (same pattern as _custom above) rather than
+        # re-reading disabled_tools.yaml from disk on every list_builtin()/
+        # toggle_builtin() call — a single toggle() on a built-in tool
+        # used to hit disk twice (once via list_builtin()'s membership
+        # check, once via toggle_builtin() itself). A fresh ToolRegistry
+        # is instantiated per request (see cockpit/web/routes/tools.py),
+        # so there's no cross-request staleness risk from caching this
+        # for the instance's lifetime.
+        self._disabled_builtins: set[str] = self._read_disabled_builtins()
 
     # ── built-in tools ───────────────────────────────────────────────────
 
     def list_builtin(self) -> list[ToolInfo]:
         """Return metadata for all built-in tools, reflecting disabled state."""
-        disabled = self._load_disabled_builtins()
         return [
             ToolInfo(
                 name=t.__name__,
                 description=(t.__doc__ or "").split("\n")[0][:120] if t.__doc__ else "",
                 builtin=True,
-                enabled=t.__name__ not in disabled,
+                enabled=t.__name__ not in self._disabled_builtins,
             )
             for t in DEFAULT_TOOLS
         ]
@@ -188,15 +196,13 @@ class ToolRegistry:
 
     def toggle_builtin(self, name: str) -> ToolInfo:
         """Toggle a built-in tool's enabled state (persisted as disabled override)."""
-        disabled = self._load_disabled_builtins()
-        if name in disabled:
-            disabled.remove(name)
+        if name in self._disabled_builtins:
+            self._disabled_builtins.remove(name)
         else:
-            disabled.add(name)
-        self._save_disabled_builtins(disabled)
+            self._disabled_builtins.add(name)
+        self._save_disabled_builtins(self._disabled_builtins)
 
-        info = ToolInfo(name=name, builtin=True, enabled=name not in disabled)
-        return info
+        return ToolInfo(name=name, builtin=True, enabled=name not in self._disabled_builtins)
 
     def toggle(self, name: str) -> CustomTool | ToolInfo:
         """Toggle a tool's enabled state, whether it's custom or built-in
@@ -210,8 +216,7 @@ class ToolRegistry:
         """
         if self.get_custom(name):
             return self.toggle_custom(name)
-        builtins = {t.name for t in self.list_builtin()}
-        if name in builtins:
+        if name in {t.__name__ for t in DEFAULT_TOOLS}:
             return self.toggle_builtin(name)
         raise ValueError(f"Tool {name!r} not found.")
 
@@ -256,7 +261,7 @@ class ToolRegistry:
         }
         atomic_write_yaml(path, data)
 
-    def _load_disabled_builtins(self) -> set[str]:
+    def _read_disabled_builtins(self) -> set[str]:
         path = self._disabled_path()
         if not path.exists():
             return set()
