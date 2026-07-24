@@ -170,9 +170,14 @@ def update_task_status(task_id: str, status: str) -> dict:
                 'in_progress', 'blocked', 'review', 'done', 'abandoned'.
 
     Returns:
-        Updated task details, or an error if the transition isn't allowed
-        (e.g. unmet acceptance criteria for 'done').
+        Updated task details, or an error if the status is malformed or
+        the transition isn't allowed (e.g. unmet acceptance criteria for
+        'done').
     """
+    validation = validate_task_output({"status": status})
+    if not validation["valid"]:
+        return {"error": "; ".join(validation["errors"])}
+
     store = _store()
     try:
         task = store.set_status(task_id, TaskStatus(status))
@@ -265,8 +270,13 @@ def log_progress(
 
     Returns:
         Confirmation with updated progress count, or an error if the
-        status change isn't allowed (e.g. unmet acceptance criteria).
+        status is malformed or the status change isn't allowed (e.g.
+        unmet acceptance criteria).
     """
+    validation = validate_task_output({"status": status})
+    if not validation["valid"]:
+        return {"error": "; ".join(validation["errors"])}
+
     store = _store()
     pe = ProgressEntry(
         entry=entry,
