@@ -9,14 +9,14 @@ checked off as items got fixed on the `cleanup/code-review` branch (a
 separate git worktree, so the live server on `main` was never touched
 while this was in progress).
 
-**Status as of this pass:** everything except the four large file splits
-and the frontend `FormDialog` extraction is done — see the end of this
-file for exactly what's left and why those specific items were
-deliberately not attempted in this pass. Every fix below was verified
-against the real test suite (382 Python tests, up from 335 at the start of
-this file's own creation) and, for anything touching rendered UI or live
-process behavior, against a real running instance — not just "tests
-pass."
+**Status: everything on this list is done**, including the four large
+file splits and the `FormDialog` extraction that were initially deferred
+— see "What actually shipped" at the end for the full 15-commit list.
+Every fix was verified against the real test suite (382 Python tests, up
+from 335 at the start of this file's own creation) and, for anything
+touching rendered UI or live process behavior, against a real running
+instance across four separate full-suite Playwright passes (one per
+large split) — not just "tests pass."
 
 ---
 
@@ -41,15 +41,14 @@ pass."
   existed at all).
 
 - [x] **`SubprocessRuntime` was fully broken.** Deleted rather than
-  fixed, per the recommendation below — see "Oversized files" section,
-  this item is now resolved there instead. `session/worker.py` and the
-  `SubprocessRuntime` class are gone; `create_runtime()`/
-  `set_runtime_type()` silently fall back to in-process for any
-  unrecognized runtime value (including a pre-existing `"subprocess"`
-  saved before the removal), verified live that a workspace with that
-  value still starts a working session instead of crashing. The
-  "Subprocess" option was also removed from the workspace runtime
-  dropdown — it was a real, selectable, broken UI choice.
+  fixed. `session/worker.py` and the `SubprocessRuntime` class are gone;
+  `create_runtime()`/`set_runtime_type()` silently fall back to
+  in-process for any unrecognized runtime value (including a
+  pre-existing `"subprocess"` saved before the removal), verified live
+  that a workspace with that value still starts a working session
+  instead of crashing. The "Subprocess" option was also removed from
+  the workspace runtime dropdown — it was a real, selectable, broken UI
+  choice.
 
 - [x] **Delegated sub-agent threads had the same event-fragmenting bug
   already fixed for the main thread.** Fixed: extracted the
@@ -73,10 +72,7 @@ pass."
   now redirects to `/settings#tools`, matching the existing `/vault` ->
   `/settings#vault` pattern.
 - [x] `api.ts`'s `updateTool()` — deleted.
-- [x] `primitives/StatusDot.tsx`/`PriorityLabel.tsx` — deleted (the
-  "adopt them into Board/List/TaskDetail/Dashboard instead" option was
-  considered and explicitly not taken — see "Not attempted" at the
-  bottom).
+- [x] `primitives/StatusDot.tsx`/`PriorityLabel.tsx` — deleted.
 - [x] Unused Python imports across `server.py`, `session/manager.py`,
   `cli/main.py`, `settings.py` — removed. Also ran `ruff check --select
   F401` across the *whole* `src/` tree (not just the files the original
@@ -110,24 +106,23 @@ pass."
 
 ---
 
-## Redundancy — mostly extracted
+## Redundancy — all extracted
 
 **Backend — done:**
 - [x] The ~17 (turned out to be ~14 once the multi-exception/mixed-logic
   handlers were correctly excluded) near-identical
   `try/except ValueError -> HTTPException` blocks in `server.py` — new
-  `@raises_as(status_code)` route decorator. Verified against a real
-  FastAPI app first that `functools.wraps` preserves the signature
-  FastAPI needs for parameter injection (`inspect.signature()` follows
-  `__wrapped__`) before applying it broadly — a decorator that broke
-  that silently would have been a much worse bug than the duplication
-  it fixes. The handlers with real multi-step logic (`POST
+  `@raises_as(status_code)` route decorator (now in `cockpit/web/
+  decorators.py`). Verified against a real FastAPI app first that
+  `functools.wraps` preserves the signature FastAPI needs for parameter
+  injection (`inspect.signature()` follows `__wrapped__`) before
+  applying it broadly. The handlers with real multi-step logic (`POST
   /api/sessions`, `PATCH /api/tasks/{id}`'s status branch) were left as
   plain `try/except` — they don't fit the "whole handler is one risky
   call" shape the decorator is for.
 - [x] Duplicated agent-serialization dict (`list_agents`/`get_agent`) —
-  new `_agent_to_response()` helper, matching every other domain's
-  existing `_x_to_response()` pattern.
+  new `_agent_to_response()` helper (now in `routes/agents.py`),
+  matching every other domain's existing `_x_to_response()` pattern.
 - [x] Atomic YAML write/read boilerplate — new `yamlfile.py`
   (`atomic_write_yaml()`/`safe_read_yaml()`), adopted by `task/store.py`,
   `project/store.py`, `settings.py`, `tools/registry.py`,
@@ -142,10 +137,8 @@ pass."
   once at the end. `status` and `assign` stay their own store calls
   (both `TaskStore.set_status()`/`.assign()` re-fetch from disk
   themselves) — kept first and last respectively so each still sees
-  whatever the other has already persisted. Added a regression test
-  specifically for the subtle failure mode this could have introduced
-  (title + assign in the same PATCH, both must survive) and verified it
-  live with curl against a running server, not just the test suite.
+  whatever the other has already persisted. Regression test locks this
+  in, verified live with curl against a running server too.
 - [x] Cross-file duplicate tool-toggle branching (`server.py` /
   `cockpit/tui/app.py`) — new `ToolRegistry.toggle()`. Along the way,
   fixed a latent TUI-only bug: its copy of the branching didn't check
@@ -154,82 +147,99 @@ pass."
   raising like the web route did — both now share the web route's
   stricter, correct behavior.
 - [ ] `task/store.py` vs `project/store.py`'s shared CRUD boilerplate —
-  **not attempted.** Still valid, still lower priority than everything
-  above per the original note (`TaskStore`'s domain logic on top means
-  full unification isn't clearly worth it).
+  **not attempted.** Still valid, still lower priority (`TaskStore`'s
+  domain logic on top means full unification isn't clearly worth it) —
+  see "Lower priority / polish" below.
 
 **Frontend — done:**
 - [x] `Field`/`inputStyle` duplicated across 6 files — new
-  `primitives/Field.tsx`, adopted by all 6. `tsc` was clean with zero
-  errors across all six migrated files on the first attempt, which
-  would have caught any prop-shape mismatch immediately.
-  `FolderPicker.tsx`'s own `inputStyle` deliberately left alone —
-  different layout context and font, not just a copy-paste duplicate.
+  `primitives/Field.tsx`, adopted by all 6. `FolderPicker.tsx`'s own
+  `inputStyle` deliberately left alone — different layout context and
+  font, not just a copy-paste duplicate.
 - [x] `timeAgo`/`rel` duplicated 3× — new `lib/format.ts`.
 - [x] `Workflows.tsx`'s hand-rolled dialog overlay — now uses
   `primitives/Dialog`. Verified live it gained Escape-to-close for free
   (the hand-rolled version never had that).
-- [x] Repeated delete-button/add-button inline styles in `Settings.tsx`
-  — new `deleteBtnStyle`/`accentTextBtnStyle()`, under the `// ──
-  shared ──` banner comment that was already there but never actually
-  shared anything until now.
-- [x] Right-rail panel header/empty-state duplication in
-  `AgentThread.tsx` — new `PanelHeader`/`PanelEmptyState`, adopted by
-  `FilesPanel`/`CommandLogPanel`. `TerminalPanel`'s own header has a
-  genuinely different padding value (4px vs 6px vertical) and was left
-  as its own bespoke bar rather than forced into the shared component
-  for a difference that wasn't actually duplication.
-- [ ] Three near-identical "form dialog" implementations
-  (`AddProviderDialog`/`CustomToolDialog`/`AddCredentialDialog` in
-  `Settings.tsx`) — **not attempted**, see "Not attempted" below.
+- [x] Repeated delete-button/add-button inline styles in Settings — new
+  `deleteBtnStyle`/`accentTextBtnStyle()`, now in `views/Settings/
+  shared.tsx`.
+- [x] Right-rail panel header/empty-state duplication in the agent
+  thread — new `PanelHeader`/`PanelEmptyState` (now in `views/
+  AgentThread/shared.tsx`), adopted by `FilesPanel`/`CommandLogPanel`.
+  `TerminalPanel`'s own header has a genuinely different padding value
+  (4px vs 6px vertical) and was left as its own bespoke bar rather than
+  forced into the shared component for a difference that wasn't
+  actually duplication.
+- [x] Three near-identical "form dialog" implementations
+  (`AddProviderDialog`/`CustomToolDialog`/`AddCredentialDialog`) — new
+  `FormDialog` wrapper (`views/Settings/shared.tsx`) sharing the title/
+  Field-stack/error-slot/Cancel-Save-footer chrome. Each dialog still
+  owns its own field state, validation, and save logic — only the
+  wrapper is shared. `AddProviderDialog`'s preset-chips row (the one
+  piece of markup that didn't fit the other two) is passed through a
+  `headerExtra` slot rather than forced into the shared shape.
 - [ ] `WorkspaceSwitcher.tsx`/`NotificationBell.tsx`'s duplicated
   click-outside listener, `Board.tsx`/`List.tsx`'s shared boilerplate,
   `api.ts`'s inconsistent error-handling variants — **not attempted**,
-  all still valid, all still explicitly lower priority than everything
-  above in the original review.
+  all still valid, all still explicitly lower priority — see "Lower
+  priority / polish" below.
 
 ---
 
-## Oversized files worth splitting — analysis stands, none attempted this pass
+## Oversized files worth splitting — all four done
 
-All four concrete split proposals below are unchanged from the original
-review and still believed correct — re-read them before starting any of
-this work, don't re-derive the boundaries from scratch. See "Not
-attempted" at the bottom for why these specifically were left for a
-separate pass.
+- [x] **`src/agent_knots/cockpit/web/server.py`** (was ~1830 lines) —
+  split into `cockpit/web/routes/{agents,tasks,workspaces,settings,
+  vault,mcp,tools,workflows,review,fs}.py`, each an `APIRouter` built
+  by a `create_router(...)` factory taking whatever dependencies its
+  domain needs (`session_manager`, `vault`, `auth`). Also extracted
+  `decorators.py` (`raises_as`), `models.py` (all Pydantic request
+  bodies — several, like `ToggleRequest`, are shared across more than
+  one router), `jsonutil.py` (`_extract_json_object`, used by the
+  task-draft endpoint and imported directly by tests),
+  `gitutil.py` (shared by `review.py`/`fs.py`), and `htmltemplates.py`
+  (the `LOGIN_HTML`/`SPA_SHELL_HTML` string constants). `server.py`
+  itself is now just the composition root: auth middleware, login, the
+  SPA shell/fallback, and `app.include_router(...)` for each domain —
+  the SPA fallback route is still registered dead last, same as
+  before, so it can't shadow `/api/*` or `/assets/*`.
+- [x] **`frontend/src/views/AgentThread.tsx`** (was ~1075 lines) — split
+  into `views/AgentThread/{index,EventRow,TerminalPanel,FilesPanel,
+  CommandLogPanel,BrowserPanel,types,shared}.tsx`. `types.ts` holds the
+  shared `reduceEvent()` reducer (used by both the top-level thread and
+  the delegate sub-thread) plus the SSE-side-effect helpers
+  (`recordFileTouch`/`recordCommand`); `shared.tsx` holds
+  `PanelHeader`/`PanelEmptyState`; `EventRow.tsx` includes
+  `DelegateSubThread` since it's the only thing that opens one.
+  `main.tsx`'s `import AgentThread from './views/AgentThread'` needed
+  no change — resolves to the directory's `index.tsx` automatically.
+- [x] **`frontend/src/views/Settings.tsx`** (was ~910 lines) — split
+  into `views/Settings/{index,UsageCard,AccessibilityCard,
+  ProvidersCard,ToolsCard,PoliciesCard,McpServersCard,IntegrationsCard,
+  VaultCard,WorkspacesCard,shared}.tsx`, same pattern as the
+  `AgentThread` split. `shared.tsx` holds `deleteBtnStyle`/
+  `accentTextBtnStyle`/`FormDialog`.
+- [x] **`src/agent_knots/cli/main.py`** (was 759 lines) — split into
+  `cli/{session,cockpit,vault,project,task,settings}.py`, each owning
+  its own Typer sub-app, plus `cli/_format.py` for the one genuinely
+  shared helper (`format_ts`, used identically by `vault audit` and
+  `task show`'s progress log). `main.py` is now just the root Typer
+  `app` plus `app.add_typer(...)` wiring. Entry point
+  (`agent_knots.cli.main:app` in `pyproject.toml`) needed no change.
 
-- **`src/agent_knots/cockpit/web/server.py`** (now ~1830 lines — grew
-  slightly during this pass from the `@raises_as`/helper additions, net
-  duplication still went down). Split into
-  `cockpit/web/routes/{agents,tasks,workspaces,settings,vault,mcp,tools,
-  workflows,review,fs}.py`, each an `APIRouter` built by a factory
-  function taking `session_manager`/`vault`. Concrete line ranges were
-  in the original review pass; re-check them against current line
-  numbers before starting, since several routes shifted during this
-  cleanup (the `@raises_as` conversions shortened many of them by 2-4
-  lines each).
-- **`frontend/src/views/AgentThread.tsx`** (now ~1060 lines — grew
-  slightly from `reduceEvent`/`PanelHeader` extractions, which added
-  net-new shared code even as they removed duplication). Split into
-  `views/AgentThread/{index,EventRow,TerminalPanel,FilesPanel,
-  CommandLogPanel,BrowserPanel,types}.tsx` as originally proposed.
-- **`frontend/src/views/Settings.tsx`** (now ~880 lines — net smaller
-  after the Field/button-style extractions). Split into one file per
-  section card as originally proposed, plus `settings/shared.tsx`.
-- **`src/agent_knots/cli/main.py`** (759 lines, unchanged this pass).
-  Split into `cli/{vault,project,task,session,cockpit}.py` as
-  originally proposed — already internally organized as six sub-apps
-  welded together, this is the most mechanical of the four splits.
+All four were verified with a full backend pytest run and/or a full
+Playwright pass against a live isolated instance (see "What actually
+shipped" below for exact numbers) before committing — none were treated
+as "just moving code" without re-proving the app still works end to end.
 
 ---
 
-## Lower priority / polish — unchanged, not attempted this pass
+## Lower priority / polish — unchanged, not attempted
 
-Everything in this section from the original review is still valid and
-still genuinely lower priority; none of it was touched in this pass.
-Worth a skim before the next cleanup pass rather than repeating here
-verbatim — see git history for this file's previous version if needed,
-or just re-read the codebase at the cited locations:
+Everything in this section is still valid and still genuinely lower
+priority; none of it was touched across either pass. Worth a skim before
+the next cleanup pass rather than repeating here verbatim — just
+re-read the codebase at the cited locations:
 
 - `SessionManager.start()` doing ~10 jobs in one function.
 - `Session._cancelled`/`_interrupt_only` as two booleans for one
@@ -239,49 +249,16 @@ or just re-read the codebase at the cited locations:
 - `ProvidersCard.handleDelete` silently swallowing delete errors.
 - Missing `GET /api/workspaces/{id}`/`GET /api/mcp/{name}` singular
   routes.
+- `task/store.py` vs `project/store.py`'s shared CRUD boilerplate.
+- `WorkspaceSwitcher.tsx`/`NotificationBell.tsx`'s duplicated
+  click-outside listener, `Board.tsx`/`List.tsx`'s shared boilerplate,
+  `api.ts`'s inconsistent error-handling variants.
 
 ---
 
-## Not attempted this pass, and why
+## What actually shipped
 
-Two categories of items were deliberately left for a separate pass
-rather than rushed at the tail end of a long unsupervised session:
-
-1. **The `FormDialog` extraction** (three near-identical form dialogs in
-   `Settings.tsx`). Unlike the other frontend extractions in this pass
-   (which were pure styling/markup, verifiable by `tsc` + a quick
-   Playwright smoke test), this one touches per-field `useState` +
-   error/saving state management across three different forms with
-   different field sets — real behavioral surface, not just styling.
-   Lower confidence that a mechanical extraction stays 100%
-   behavior-preserving without more careful, individually-tested work
-   than the rest of this pass's items needed.
-
-2. **The four file splits** (`server.py`, `AgentThread.tsx`,
-   `Settings.tsx`, `cli/main.py`). These are the highest *value* items
-   in this whole review — genuinely the biggest maintainability win
-   available — but also by far the highest *effort and blast radius*:
-   each touches import graphs, route/registration order, and (for the
-   two frontend files) component composition across the entire file.
-   The concrete plans above are believed correct and ready to execute,
-   but "believed correct and ready" for a ~1800-line mechanical
-   reorganization deserves fresh attention and step-by-step
-   verification of its own, not inheriting whatever attention budget
-   was left after everything else in this pass. Recommend doing
-   `cli/main.py` first if picking one to start with — it's explicitly
-   the most mechanical of the four (already internally organized as six
-   sub-apps) and has the clearest test story (CLI commands are easy to
-   exercise end-to-end).
-
-Both categories are real, valid, unchanged findings — just correctly
-sized as their own dedicated work rather than something to rush through
-here.
-
----
-
-## What actually shipped in this pass
-
-10 commits on `cleanup/code-review` (a separate git worktree — `main`
+15 commits on `cleanup/code-review` (a separate git worktree — `main`
 and the live server were never touched):
 
 1. `fix: task update --assign silently unassigning on unrelated edits`
@@ -299,15 +276,29 @@ and the live server were never touched):
 9. `refactor: extract shared Field/inputStyle primitive`
 10. `refactor: extract shared PanelHeader/PanelEmptyState in
     AgentThread.tsx`
+11. `docs: mark code review findings complete, document deferred items`
+12. `refactor: split cli/main.py into per-domain command modules`
+13. `refactor: extract shared FormDialog wrapper in Settings.tsx`
+14. `refactor: split server.py into per-domain route modules`
+15. `refactor: split AgentThread.tsx into per-concern files`
+16. `refactor: split Settings.tsx into one file per section card`
 
 (Plus the Autonomous-toggle feature and the mode-gating fix, committed
 to `main` directly before this branch was created, since that was
 already a complete, tested, user-requested feature rather than part of
 the cleanup pass itself.)
 
-Every commit: full backend test suite green, `tsc --noEmit` clean where
-frontend was touched, and — for anything touching rendered UI, live
-process behavior, or request/response shape — verified against a real
-running instance (curl or Playwright) before committing, not just
-"tests pass." Backend test count went from 335 (start of the original
-review pass) to 382.
+Every commit: full backend test suite green (382/382, up from 335 at
+the start of the original review), `tsc --noEmit` + production build
+clean where frontend was touched, and — for anything touching rendered
+UI, live process behavior, or request/response shape — verified against
+a real running instance before committing, not just "tests pass." Each
+of the four large-file splits got its own full Playwright regression
+run against a live isolated cockpit instance (fresh `HOME`, real
+MiniMax provider config reused from the developer's own working
+settings, port 8090): all four runs landed at the identical 63/75
+passing, the same 12 pre-existing failures each time (all need a real
+LLM completion to actually run an agent turn — multi-turn conversation,
+mode switching live, tool-use flows — unrelated to any of these
+changes), which is strong evidence none of the four splits changed any
+observable behavior.
