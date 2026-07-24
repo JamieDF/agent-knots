@@ -11,6 +11,21 @@ from agent_knots.project.models import Project
 from agent_knots.project.store import ProjectStore
 
 
+def _workspace_to_response(w: Project) -> dict:
+    return {
+        "id": w.id,
+        "name": w.name,
+        "description": w.description,
+        "repository": w.repository,
+        "runtime": w.runtime,
+        "tags": w.tags,
+        "auto_assign": w.auto_assign,
+        "max_concurrent": w.max_concurrent,
+        "archived": w.archived,
+        "created_at": w.created_at,
+    }
+
+
 def _unique_project_id(store: ProjectStore, name: str) -> str:
     """Slugify a workspace name into an id, deduping against existing
     workspaces — lets the create-workspace dialog drop the id field
@@ -36,23 +51,16 @@ def create_router() -> APIRouter:
         workspaces = store.list()
         if not include_archived:
             workspaces = [w for w in workspaces if not w.archived]
-        return {
-            "workspaces": [
-                {
-                    "id": w.id,
-                    "name": w.name,
-                    "description": w.description,
-                    "repository": w.repository,
-                    "runtime": w.runtime,
-                    "tags": w.tags,
-                    "auto_assign": w.auto_assign,
-                    "max_concurrent": w.max_concurrent,
-                    "archived": w.archived,
-                    "created_at": w.created_at,
-                }
-                for w in workspaces
-            ]
-        }
+        return {"workspaces": [_workspace_to_response(w) for w in workspaces]}
+
+    @router.get("/api/workspaces/{workspace_id}")
+    async def get_workspace(workspace_id: str):
+        """Get a single workspace's detail."""
+        store = ProjectStore(_projects_dir())
+        ws = store.get(workspace_id)
+        if ws is None:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        return _workspace_to_response(ws)
 
     @router.post("/api/workspaces")
     @raises_as(409)

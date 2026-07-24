@@ -850,6 +850,22 @@ class TestWorkspaceAPI:
         assert resp.status_code == 200
         assert resp.json()["id"] == "dupe-2"
 
+    @pytest.mark.asyncio
+    async def test_get_single_workspace(self, authed_client):
+        await authed_client.post("/api/workspaces", json={"id": "ws-single", "name": "Single WS", "repository": "/tmp/x"})
+        resp = await authed_client.get("/api/workspaces/ws-single")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "id": "ws-single", "name": "Single WS", "description": "", "repository": "/tmp/x",
+            "runtime": "", "tags": [], "auto_assign": False, "max_concurrent": 2, "archived": False,
+            "created_at": resp.json()["created_at"],
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_single_workspace_not_found_404s(self, authed_client):
+        resp = await authed_client.get("/api/workspaces/nonexistent")
+        assert resp.status_code == 404
+
 
 class TestFilesystemBrowseAPI:
     @pytest.mark.asyncio
@@ -1336,6 +1352,19 @@ class TestMcpServersAPI:
         await authed_client.post("/api/mcp", json={"name": "filesystem"})
         resp = await authed_client.post("/api/mcp", json={"name": "filesystem"})
         assert resp.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_get_single_server(self, authed_client):
+        await authed_client.post("/api/mcp", json={"name": "filesystem", "url": "stdio://fs"})
+        resp = await authed_client.get("/api/mcp/filesystem")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "filesystem"
+        assert resp.json()["url"] == "stdio://fs"
+
+    @pytest.mark.asyncio
+    async def test_get_single_server_not_found_404s(self, authed_client):
+        resp = await authed_client.get("/api/mcp/nonexistent")
+        assert resp.status_code == 404
 
 
 class TestProvidersAndIntegrationsAPI:

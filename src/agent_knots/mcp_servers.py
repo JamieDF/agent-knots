@@ -41,6 +41,9 @@ class McpServerStore:
         except (yaml.YAMLError, OSError, KeyError):
             return []
 
+    def get(self, name: str) -> McpServer | None:
+        return next((s for s in self.list() if s.name == name), None)
+
     def add(self, server: McpServer) -> None:
         servers = self.list()
         if any(s.name == server.name for s in servers):
