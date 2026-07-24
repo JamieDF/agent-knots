@@ -321,6 +321,7 @@ function AddProviderDialog({ open, onClose, onSaved }: { open: boolean; onClose:
   }
 
   const reset = () => { setName(''); setApiKey(''); setError(''); handlePreset('minimax') }
+  const close = () => { reset(); onClose() }
 
   const handleSave = async () => {
     if (!name.trim()) return
@@ -337,27 +338,22 @@ function AddProviderDialog({ open, onClose, onSaved }: { open: boolean; onClose:
   }
 
   return (
-    <Dialog open={open} onClose={() => { reset(); onClose() }} width={440}>
-      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>+ Add provider</div>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-        {Object.keys(PROVIDER_PRESETS).map(p => (
-          <Chip key={p} color={preset === p ? 'var(--acc)' : undefined} soft={preset === p} onClick={() => handlePreset(p)}>{p}</Chip>
-        ))}
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Field label="Name"><input aria-label="Provider name" value={name} onChange={e => setName(e.target.value)} placeholder="minimax" style={inputStyle} /></Field>
-        <Field label="Model ID"><input aria-label="Model ID" value={model} onChange={e => setModel(e.target.value)} placeholder="minimax-m2.7" style={inputStyle} /></Field>
-        <Field label="API key"><input aria-label="API key" type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-..." style={inputStyle} /></Field>
-        <Field label="Base URL"><input aria-label="Base URL" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="optional" style={inputStyle} /></Field>
-        {error && <div style={{ fontSize: 11.5, color: 'var(--err)' }}>{error}</div>}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-          <button onClick={() => { reset(); onClose() }} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Cancel</button>
-          <button onClick={handleSave} disabled={saving || !name.trim()} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: saving || !name.trim() ? 0.6 : 1 }}>
-            {saving ? 'Adding…' : 'Add'}
-          </button>
+    <FormDialog
+      open={open} onClose={close} title="+ Add provider" width={440}
+      onSave={handleSave} saveDisabled={!name.trim()} saving={saving} error={error}
+      headerExtra={
+        <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+          {Object.keys(PROVIDER_PRESETS).map(p => (
+            <Chip key={p} color={preset === p ? 'var(--acc)' : undefined} soft={preset === p} onClick={() => handlePreset(p)}>{p}</Chip>
+          ))}
         </div>
-      </div>
-    </Dialog>
+      }
+    >
+      <Field label="Name"><input aria-label="Provider name" value={name} onChange={e => setName(e.target.value)} placeholder="minimax" style={inputStyle} /></Field>
+      <Field label="Model ID"><input aria-label="Model ID" value={model} onChange={e => setModel(e.target.value)} placeholder="minimax-m2.7" style={inputStyle} /></Field>
+      <Field label="API key"><input aria-label="API key" type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="sk-..." style={inputStyle} /></Field>
+      <Field label="Base URL"><input aria-label="Base URL" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="optional" style={inputStyle} /></Field>
+    </FormDialog>
   )
 }
 
@@ -399,6 +395,7 @@ function CustomToolDialog({ open, onClose, onSaved }: { open: boolean; onClose: 
   const [saving, setSaving] = useState(false)
 
   const reset = () => { setName(''); setDescription(''); setCommand(''); setParams(''); setError('') }
+  const close = () => { reset(); onClose() }
 
   const parseParams = () => params.split(',').map(s => s.trim()).filter(Boolean).map(entry => {
     const [pname, ptype] = entry.split(':').map(s => s.trim())
@@ -420,22 +417,15 @@ function CustomToolDialog({ open, onClose, onSaved }: { open: boolean; onClose: 
   }
 
   return (
-    <Dialog open={open} onClose={() => { reset(); onClose() }} width={460}>
-      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>+ Custom tool</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Field label="Name"><input aria-label="Tool name" value={name} onChange={e => setName(e.target.value)} placeholder="run_tests" style={inputStyle} /></Field>
-        <Field label="Description"><input aria-label="Tool description" value={description} onChange={e => setDescription(e.target.value)} placeholder="optional" style={inputStyle} /></Field>
-        <Field label="Shell command"><input aria-label="Shell command" value={command} onChange={e => setCommand(e.target.value)} placeholder="pytest {path} -v" style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} /></Field>
-        <Field label="Params"><input aria-label="Params" value={params} onChange={e => setParams(e.target.value)} placeholder="path:string, verbose:boolean" style={inputStyle} /></Field>
-        {error && <div style={{ fontSize: 11.5, color: 'var(--err)' }}>{error}</div>}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-          <button onClick={() => { reset(); onClose() }} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Cancel</button>
-          <button onClick={handleSave} disabled={saving || !name.trim() || !command.trim()} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: saving || !name.trim() || !command.trim() ? 0.6 : 1 }}>
-            {saving ? 'Adding…' : 'Add'}
-          </button>
-        </div>
-      </div>
-    </Dialog>
+    <FormDialog
+      open={open} onClose={close} title="+ Custom tool" width={460}
+      onSave={handleSave} saveDisabled={!name.trim() || !command.trim()} saving={saving} error={error}
+    >
+      <Field label="Name"><input aria-label="Tool name" value={name} onChange={e => setName(e.target.value)} placeholder="run_tests" style={inputStyle} /></Field>
+      <Field label="Description"><input aria-label="Tool description" value={description} onChange={e => setDescription(e.target.value)} placeholder="optional" style={inputStyle} /></Field>
+      <Field label="Shell command"><input aria-label="Shell command" value={command} onChange={e => setCommand(e.target.value)} placeholder="pytest {path} -v" style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }} /></Field>
+      <Field label="Params"><input aria-label="Params" value={params} onChange={e => setParams(e.target.value)} placeholder="path:string, verbose:boolean" style={inputStyle} /></Field>
+    </FormDialog>
   )
 }
 
@@ -748,6 +738,7 @@ function AddCredentialDialog({ open, onClose, onSaved }: { open: boolean; onClos
   const [saving, setSaving] = useState(false)
 
   const reset = () => { setId(''); setDescription(''); setValue(''); setError('') }
+  const close = () => { reset(); onClose() }
 
   const handleSave = async () => {
     if (!id.trim() || !value) return
@@ -764,27 +755,20 @@ function AddCredentialDialog({ open, onClose, onSaved }: { open: boolean; onClos
   }
 
   return (
-    <Dialog open={open} onClose={() => { reset(); onClose() }} width={420}>
-      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>+ Add credential</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Field label="ID">
-          <input aria-label="Credential ID" value={id} onChange={e => setId(e.target.value)} placeholder="github" style={inputStyle} />
-        </Field>
-        <Field label="Description">
-          <input aria-label="Description" value={description} onChange={e => setDescription(e.target.value)} placeholder="optional" style={inputStyle} />
-        </Field>
-        <Field label="Value">
-          <input aria-label="Credential value" type="password" value={value} onChange={e => setValue(e.target.value)} placeholder="ghp_xxx" style={inputStyle} />
-        </Field>
-        {error && <div style={{ fontSize: 11.5, color: 'var(--err)' }}>{error}</div>}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-          <button onClick={() => { reset(); onClose() }} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Cancel</button>
-          <button onClick={handleSave} disabled={saving || !id.trim() || !value} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: saving || !id.trim() || !value ? 0.6 : 1 }}>
-            {saving ? 'Adding…' : 'Add'}
-          </button>
-        </div>
-      </div>
-    </Dialog>
+    <FormDialog
+      open={open} onClose={close} title="+ Add credential" width={420}
+      onSave={handleSave} saveDisabled={!id.trim() || !value} saving={saving} error={error}
+    >
+      <Field label="ID">
+        <input aria-label="Credential ID" value={id} onChange={e => setId(e.target.value)} placeholder="github" style={inputStyle} />
+      </Field>
+      <Field label="Description">
+        <input aria-label="Description" value={description} onChange={e => setDescription(e.target.value)} placeholder="optional" style={inputStyle} />
+      </Field>
+      <Field label="Value">
+        <input aria-label="Credential value" type="password" value={value} onChange={e => setValue(e.target.value)} placeholder="ghp_xxx" style={inputStyle} />
+      </Field>
+    </FormDialog>
   )
 }
 
@@ -879,6 +863,47 @@ function WorkspacesCard() {
 const deleteBtnStyle: React.CSSProperties = { color: 'var(--err)', fontSize: 14 }
 function accentTextBtnStyle(extra?: React.CSSProperties): React.CSSProperties {
   return { fontSize: 12, fontWeight: 600, color: 'var(--acc)', ...extra }
+}
+
+// AddProviderDialog/CustomToolDialog/AddCredentialDialog were three
+// near-identical "title + Field stack + error + Cancel/Save footer"
+// dialogs, differing only in their fields and one preset-chips row
+// (AddProviderDialog only, passed via headerExtra). Each dialog still
+// owns its own field state and save logic — only the wrapper chrome
+// (title, error slot, footer buttons, saving/disabled states) is shared.
+function FormDialog({
+  open, onClose, title, width = 440, headerExtra, children,
+  onSave, saveDisabled, saving, error, saveLabel = 'Add', savingLabel = 'Adding…',
+}: {
+  open: boolean
+  onClose: () => void
+  title: string
+  width?: number
+  headerExtra?: React.ReactNode
+  children: React.ReactNode
+  onSave: () => void
+  saveDisabled?: boolean
+  saving: boolean
+  error: string
+  saveLabel?: string
+  savingLabel?: string
+}) {
+  return (
+    <Dialog open={open} onClose={onClose} width={width}>
+      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>{title}</div>
+      {headerExtra}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {children}
+        {error && <div style={{ fontSize: 11.5, color: 'var(--err)' }}>{error}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+          <button onClick={onClose} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Cancel</button>
+          <button onClick={onSave} disabled={saving || saveDisabled} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: saving || saveDisabled ? 0.6 : 1 }}>
+            {saving ? savingLabel : saveLabel}
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  )
 }
 
 export default SettingsPage
