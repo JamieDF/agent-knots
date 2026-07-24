@@ -6,13 +6,13 @@ about developing the frontend itself.
 
 ## Develop
 
-The backend (`agent-knots cockpit launch --web --port 8080`) must be
+The backend (`agent-knots launch --web --port 8080`) must be
 running separately — the dev server proxies `/api` and `/login` to it
 (see `vite.config.ts`).
 
 ```bash
 # terminal 1 — backend
-uv run agent-knots cockpit launch --web --port 8080
+uv run agent-knots launch --web --port 8080
 
 # terminal 2 — frontend, with hot reload
 cd frontend
@@ -76,7 +76,7 @@ npm run lint
 # playwright.config.ts's baseURL); point HOME at an isolated directory
 # first so tests don't touch your real ~/.agent-knots data
 rm -rf /tmp/pw-test-home && mkdir -p /tmp/pw-test-home
-HOME=/tmp/pw-test-home uv run agent-knots cockpit launch --web --port 8090 &
+HOME=/tmp/pw-test-home uv run agent-knots launch --web --port 8090 &
 
 # The test-code (cockpit.spec.ts's getToken()) also reads the cookie
 # token from $HOME/.agent-knots/cockpit.token, so HOME needs to be set

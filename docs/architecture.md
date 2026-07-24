@@ -27,7 +27,7 @@ serve at least one of these:
 ## High-level diagram
 
 ```
-┌─ agent-knots cockpit ────────────────────────────────────┐
+┌─ agent-knots ────────────────────────────────────────────┐
 │                                                            │
 │   Web UI (React SPA)    TUI (Textual)                     │
 │       ↕ REST + SSE         ↕ asyncio.Queue                │

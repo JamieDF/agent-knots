@@ -59,7 +59,7 @@ def _format_event_for_display(evt: Event) -> str:
     if evt.type == EventType.BLOCKER:
         return f"[bold yellow]? {evt.message}[/]"
     if evt.type == EventType.STATE_CHANGE:
-        return f"[dim]⚡ {evt.message}[/]"
+        return f"[dim]· {evt.message}[/]"
     return evt.message[:80]
 
 
@@ -297,7 +297,7 @@ class FocusScreen(Screen):
 class CockpitApp(App):
     """The agent-knots TUI cockpit."""
 
-    TITLE = "agent-knots cockpit"
+    TITLE = "agent-knots"
     SCREENS = {}  # managed manually
 
     def __init__(self, session_manager: SessionManager) -> None:

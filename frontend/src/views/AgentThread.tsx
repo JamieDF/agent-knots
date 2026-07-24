@@ -312,7 +312,7 @@ function AgentThread() {
           >
             <Toggle checked={isAutonomous} onChange={handleToggleAutonomous} small />
             <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.05em', color: isAutonomous ? 'var(--acc)' : 'var(--mut)' }}>
-              {isAutonomous ? '⚡ AUTONOMOUS' : '⏸ PAUSED'}
+              {isAutonomous ? '▶ AUTONOMOUS' : '⏸ PAUSED'}
             </span>
           </div>
         )}
@@ -419,7 +419,7 @@ function AgentThread() {
                   paused/no-task sessions are just a normal chat. */}
               {isAutonomous && (
                 <div style={{ padding: '6px 20px', fontSize: 12, color: 'var(--mut)', background: 'var(--card2)', borderBottom: '1px solid var(--line)' }}>
-                  ⚡ Working autonomously on the task. Type a message anytime to step in.
+                  ▶ Working autonomously on the task. Type a message anytime to step in.
                 </div>
               )}
               <div style={{ display: 'flex', gap: 8, padding: 12 }}>

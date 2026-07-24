@@ -45,14 +45,12 @@ def version() -> None:
 # ── subcommand groups ────────────────────────────────────────────────────────
 
 session_app = typer.Typer(help="Manage agent sessions.", no_args_is_help=True)
-cockpit_app = typer.Typer(help="Launch monitoring surfaces.", no_args_is_help=True)
 vault_app = typer.Typer(help="Manage the encrypted credential vault.", no_args_is_help=True)
 project_app = typer.Typer(help="Manage projects (multi-repo workspaces).", no_args_is_help=True)
 task_app = typer.Typer(help="Manage structured tasks.", no_args_is_help=True)
 settings_app = typer.Typer(help="View and change global settings.", no_args_is_help=True)
 
 app.add_typer(session_app, name="session")
-app.add_typer(cockpit_app, name="cockpit")
 app.add_typer(vault_app, name="vault")
 app.add_typer(project_app, name="project")
 app.add_typer(task_app, name="task")
@@ -113,7 +111,7 @@ def start(
         typer.echo(f"Task: {task}")
 
     if session.running:
-        typer.echo("Agent is running. Use 'agent-knots cockpit' to monitor.")
+        typer.echo("Agent is running. Use 'agent-knots launch' to monitor.")
     else:
         typer.echo("Session created but not started (no --prompt given).")
 
@@ -134,7 +132,7 @@ def list_sessions() -> None:
 # ── cockpit commands ─────────────────────────────────────────────────────────
 
 
-@cockpit_app.command()
+@app.command()
 def launch(
     web: bool = typer.Option(False, "--web", help="Launch the web GUI instead of TUI."),
     port: int = typer.Option(8080, "--port", help="Port for the web server."),
@@ -172,7 +170,7 @@ def _launch_web(host: str, port: int) -> None:
     web_app = create_app(mgr, static_dir=static_dir)
     token = load_or_create_token(cockpit_token_file())
 
-    typer.echo(f"⚡ agent-knots cockpit (web): http://{host}:{port}/?token={token}")
+    typer.echo(f"agent-knots (web): http://{host}:{port}/?token={token}")
     typer.echo("Press Ctrl-C to stop.")
 
     uvicorn.run(web_app, host=host, port=port, log_level="warning")

@@ -38,7 +38,7 @@ Run the CLI/cockpit against your local checkout with:
 
 ```bash
 uv run agent-knots version
-uv run agent-knots cockpit launch --web
+uv run agent-knots launch --web
 ```
 
 ## Project layout

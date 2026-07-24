@@ -88,7 +88,7 @@ class TestAuth:
     async def test_login_page(self, client):
         resp = await client.get("/login")
         assert resp.status_code == 200
-        assert "agent-knots cockpit" in resp.text
+        assert "agent-knots" in resp.text
 
     @pytest.mark.asyncio
     async def test_protected_redirects_to_login(self, client):
@@ -777,7 +777,7 @@ class TestSPAFallback:
         on a hard refresh, not 404."""
         resp = await authed_client.get("/tasks/T-123")
         assert resp.status_code == 200
-        assert "agent-knots cockpit" in resp.text
+        assert "agent-knots" in resp.text
 
     @pytest.mark.asyncio
     async def test_unknown_api_path_still_404s(self, authed_client):
@@ -1360,3 +1360,45 @@ class TestProvidersAndIntegrationsAPI:
         integrations = settings_resp.json()["integrations"]
         assert integrations["github_pr_on_review"] is True
         assert integrations["phone_push"] is True
+
+
+class TestSpaFallbackServesRootStaticFiles:
+    """Vite copies frontend/public/* to the root of dist/ (favicon.svg,
+    favicon.ico, site.webmanifest, etc.), not into dist/assets/ — only
+    /assets was ever mounted as StaticFiles, so a request for one of
+    these root-level files used to fall through to the SPA fallback
+    and get the HTML shell back instead of the real file (the browser
+    then silently fails to render it as a favicon/icon/manifest)."""
+
+    @pytest.fixture
+    async def static_client(self, session_manager, auth_token, tmp_path):
+        static_dir = tmp_path / "dist"
+        static_dir.mkdir()
+        (static_dir / "index.html").write_text("<html>spa shell</html>")
+        (static_dir / "favicon.svg").write_text("<svg>real favicon</svg>")
+        secret_outside = tmp_path / "secret.txt"
+        secret_outside.write_text("should never be served")
+
+        app = create_app(session_manager, static_dir=static_dir)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as c:
+            c.cookies.set("agent-knots-session", auth_token)
+            yield c
+
+    @pytest.mark.asyncio
+    async def test_root_level_static_file_served_directly(self, static_client):
+        resp = await static_client.get("/favicon.svg")
+        assert resp.status_code == 200
+        assert resp.text == "<svg>real favicon</svg>"
+        assert "spa shell" not in resp.text
+
+    @pytest.mark.asyncio
+    async def test_unknown_path_still_falls_back_to_spa_shell(self, static_client):
+        resp = await static_client.get("/tasks/T-123")
+        assert resp.status_code == 200
+        assert "spa shell" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_path_traversal_does_not_escape_static_dir(self, static_client):
+        resp = await static_client.get("/../secret.txt")
+        assert "should never be served" not in resp.text

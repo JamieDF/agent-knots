@@ -45,7 +45,10 @@ function Topbar({ agents }: Props) {
         flexShrink: 0,
       }}
     >
-      <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--ink)', paddingRight: 4 }}>⚡ agent-knots</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 15, color: 'var(--ink)', paddingRight: 4 }}>
+        <img src={theme === 'dark' ? '/logoDark.svg' : '/logo.svg'} alt="agent-knots" style={{ height: 16, width: 'auto' }} />
+        agent-knots
+      </div>
 
       <nav style={{ display: 'flex', gap: 2 }}>
         {NAV_ITEMS.map(item => (

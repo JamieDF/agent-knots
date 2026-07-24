@@ -166,7 +166,7 @@ test.describe('cockpit — real agent flow', () => {
     await page.waitForTimeout(2000)
 
     // Header shows the Autonomous toggle, on by default.
-    await expect(page.locator('text=⚡ AUTONOMOUS')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=▶ AUTONOMOUS')).toBeVisible({ timeout: 5000 })
     // The composer stays a normal chat, plus a banner reminding you that
     // typing pauses it — never a locked-out state.
     await expect(page.locator('text=Working autonomously on the task')).toBeVisible()
@@ -197,7 +197,7 @@ test.describe('cockpit — real agent flow', () => {
     // working on the task" message gets sent under the hood).
     await page.locator('[role="switch"]').click()
     await page.waitForTimeout(1000)
-    await expect(page.locator('text=⚡ AUTONOMOUS')).toBeVisible()
+    await expect(page.locator('text=▶ AUTONOMOUS')).toBeVisible()
     await expect(page.locator('text=Resume working on the task')).toBeVisible({ timeout: 5000 })
 
     // 6b. Typing + sending while autonomous is itself the "hold up" —

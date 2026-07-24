@@ -1,7 +1,7 @@
 # Quickstart
 
 The GUI is the primary way to use agent-knots — `./install.sh` then
-`agent-knots cockpit launch --web` gets you a setup wizard in the browser
+`agent-knots launch --web` gets you a setup wizard in the browser
 with no manual config. This walkthrough goes a bit deeper than that: vault,
 tasks, and a full session lifecycle from the CLI, for scripting and
 automation.
@@ -39,7 +39,7 @@ version`, etc.
 
 ## Configure a model provider
 
-**Via the GUI:** `agent-knots cockpit launch --web` opens a setup wizard
+**Via the GUI:** `agent-knots launch --web` opens a setup wizard
 automatically on first launch — pick a provider preset (OpenAI, MiniMax,
 Anthropic, Ollama, or custom), paste an API key, done. No manual file
 editing.
@@ -172,11 +172,11 @@ needed from a well-behaved agent).
 
 ```bash
 # TUI (default)
-agent-knots cockpit launch
+agent-knots launch
 # → j/k navigate, Enter focus, a assume, r relinquish, t tools, d delete, q quit
 
 # Web
-agent-knots cockpit launch --web --port 8080
+agent-knots launch --web --port 8080
 # → http://127.0.0.1:8080/?token=...
 ```
 

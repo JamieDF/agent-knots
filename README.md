@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/logoDark.svg">
+    <img src="frontend/public/logo.svg" alt="agent-knots" width="320">
+  </picture>
+</p>
+
 # Agent Knots
 
 > Local-first orchestrator for AI coding agents. You stay in control.
@@ -21,13 +28,13 @@ cd agent-knots
 ./install.sh
 
 # Launch the web cockpit — GUI is the primary surface.
-agent-knots cockpit launch --web --port 8080
+agent-knots launch --web --port 8080
 # → http://127.0.0.1:8080/?token=...
 # First launch opens a setup wizard in the browser to configure your
 # model provider (API key, model, base URL). No manual config needed.
 
 # Or launch the TUI cockpit
-agent-knots cockpit launch
+agent-knots launch
 # → j/k navigate, Enter focus, a assume, r relinquish, t tools, d delete, q quit
 ```
 
@@ -106,7 +113,7 @@ agent-knots
 ## Architecture
 
 ```
-┌─ agent-knots cockpit ──────────────────────────────┐
+┌─ agent-knots ──────────────────────────────────────┐
 │                                                   │
 │   Web UI (React SPA)    TUI (Textual)             │
 │       ↕ REST + SSE         ↕ asyncio.Queue        │

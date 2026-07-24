@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Card, Chip } from './primitives'
 import { fetchSettings, saveSettings, type SettingsResponse } from '../lib/api'
 import { PROVIDER_PRESETS } from '../lib/providerPresets'
+import { useTheme } from '../theme/ThemeContext'
 
 interface Props {
   onComplete: () => void
@@ -12,6 +13,7 @@ interface Props {
  * until a model provider is configured. See
  * design_handoff_atelier_cockpit/README.md §9. */
 function SetupWizard({ onComplete, onSkip }: Props) {
+  const { theme } = useTheme()
   const [settings, setSettings] = useState<SettingsResponse | null>(null)
   const [preset, setPreset] = useState('minimax')
   const [model, setModel] = useState(PROVIDER_PRESETS.minimax.model)
@@ -71,8 +73,10 @@ function SetupWizard({ onComplete, onSkip }: Props) {
           <div style={{
             width: 48, height: 48, borderRadius: 12, background: 'var(--card2)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 22, margin: '0 auto 12px',
-          }}>⚡</div>
+            margin: '0 auto 12px',
+          }}>
+            <img src={theme === 'dark' ? '/logoDark.svg' : '/logo.svg'} alt="agent-knots" style={{ width: 28, height: 'auto' }} />
+          </div>
           <div style={{ fontSize: 18, fontWeight: 700 }}>Welcome to agent-knots</div>
           <div style={{ fontSize: 12.5, color: 'var(--mut)', marginTop: 4 }}>
             Configure a model provider to get started.
