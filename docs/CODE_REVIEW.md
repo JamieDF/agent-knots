@@ -10,13 +10,13 @@ separate git worktree, so the live server on `main` was never touched
 while this was in progress).
 
 **Status: everything on this list is done**, including the four large
-file splits and the `FormDialog` extraction that were initially deferred
-— see "What actually shipped" at the end for the full 15-commit list.
-Every fix was verified against the real test suite (382 Python tests, up
-from 335 at the start of this file's own creation) and, for anything
-touching rendered UI or live process behavior, against a real running
-instance across four separate full-suite Playwright passes (one per
-large split) — not just "tests pass."
+file splits, the `FormDialog` extraction, and every item that had been
+filed under "Lower priority / polish" — see "What actually shipped" at
+the end for the full commit list. Every fix was verified against the
+real test suite (389 Python tests, up from 335 at the start of this
+file's own creation) and, for anything touching rendered UI or live
+process behavior, against a real running instance across six separate
+full-suite Playwright passes — not just "tests pass."
 
 ---
 
@@ -146,10 +146,21 @@ large split) — not just "tests pass."
   genuinely nonexistent tool there silently no-opped instead of
   raising like the web route did — both now share the web route's
   stricter, correct behavior.
-- [ ] `task/store.py` vs `project/store.py`'s shared CRUD boilerplate —
-  **not attempted.** Still valid, still lower priority (`TaskStore`'s
-  domain logic on top means full unification isn't clearly worth it) —
-  see "Lower priority / polish" below.
+- [x] `task/store.py` vs `project/store.py`'s shared CRUD boilerplate —
+  **evaluated, deliberately left alone.** Re-read both stores in full:
+  the actual overlap is a thin ~25-line skeleton (`__init__`/`_path`/
+  `create`/`get`/`delete`, the "check exists, else raise ValueError"
+  pattern). Everything else genuinely differs — `TaskStore.list()` has
+  real filtering/sorting business logic with a different signature
+  than `ProjectStore`'s trivial no-args list; `_save`/`_load` are
+  irreducibly different serialization; and the ~300 lines of
+  `TaskStore`'s actual domain logic (`set_status` + its
+  `_validate_transition` state machine, `log_progress`, `assign`,
+  `mark_criterion_met`, `unmet_dependencies`, `add_step`, `_must_get`)
+  has zero counterpart in `ProjectStore` at all. A generic base class
+  would save ~25 lines at the cost of a shared abstraction for exactly
+  two consumers, one of which barely uses it beyond create/get/delete
+  anyway — a premature-abstraction trade, not a genuine simplification.
 
 **Frontend — done:**
 - [x] `Field`/`inputStyle` duplicated across 6 files — new
@@ -178,11 +189,21 @@ large split) — not just "tests pass."
   wrapper is shared. `AddProviderDialog`'s preset-chips row (the one
   piece of markup that didn't fit the other two) is passed through a
   `headerExtra` slot rather than forced into the shared shape.
-- [ ] `WorkspaceSwitcher.tsx`/`NotificationBell.tsx`'s duplicated
-  click-outside listener, `Board.tsx`/`List.tsx`'s shared boilerplate,
-  `api.ts`'s inconsistent error-handling variants — **not attempted**,
-  all still valid, all still explicitly lower priority — see "Lower
-  priority / polish" below.
+- [x] `WorkspaceSwitcher.tsx`/`NotificationBell.tsx`'s duplicated
+  click-outside listener — new `lib/useClickOutside.ts`.
+- [x] `Board.tsx`/`List.tsx`'s shared task-fetching/polling/sorting
+  boilerplate (including a duplicated `PRIORITY_ORDER` constant) — new
+  `lib/useTaskList.ts`. `Board`'s per-stage filter no longer re-sorts,
+  since the hook already returns priority-sorted tasks.
+- [x] `api.ts`'s three inconsistent error-handling variants (`throw new
+  Error(\`HTTP ${status}\`)`, `throw new Error('')` with a blank
+  message, and an unguarded `res.json()` that itself threw a confusing
+  parse error on a non-JSON failure body) — new `apiFetch<T>()` helper
+  used by every exported function. Also surfaced a 4th, worse variant
+  along the way: several mutating calls (`setAutonomous`, `sendMessage`,
+  `deleteAgent`, `lockVault`, etc.) never checked `res.ok` at all,
+  silently "succeeding" on a failed request — now consistent with
+  everything else.
 
 ---
 
@@ -234,31 +255,68 @@ as "just moving code" without re-proving the app still works end to end.
 
 ---
 
-## Lower priority / polish — unchanged, not attempted
+## Lower priority / polish — all resolved
 
-Everything in this section is still valid and still genuinely lower
-priority; none of it was touched across either pass. Worth a skim before
-the next cleanup pass rather than repeating here verbatim — just
-re-read the codebase at the cited locations:
+Everything that was previously filed here is done, in a third pass on
+this branch after the first two (findings + fixes, then the four large
+file splits):
 
-- `SessionManager.start()` doing ~10 jobs in one function.
-- `Session._cancelled`/`_interrupt_only` as two booleans for one
-  tri-state concept.
-- `task/tools.py`'s two different validation mechanisms.
-- `tools/registry.py` re-reading `disabled_tools.yaml` redundantly.
-- `ProvidersCard.handleDelete` silently swallowing delete errors.
-- Missing `GET /api/workspaces/{id}`/`GET /api/mcp/{name}` singular
-  routes.
-- `task/store.py` vs `project/store.py`'s shared CRUD boilerplate.
-- `WorkspaceSwitcher.tsx`/`NotificationBell.tsx`'s duplicated
-  click-outside listener, `Board.tsx`/`List.tsx`'s shared boilerplate,
-  `api.ts`'s inconsistent error-handling variants.
+- [x] `SessionManager.start()` did ~10 distinct jobs inline in one
+  function — extracted into named private helpers
+  (`_resolve_task_context`, `_build_full_prompt`, `_resolve_working_dir`,
+  `_build_tools`, `_build_model_instance`, `_maybe_create_sandbox`,
+  `_swap_sandboxed_tools`, `_register_hooks`, `_resolve_runtime_type`),
+  leaving `start()` as an orchestrator. The Agent/Session/intervention-
+  handler construction block deliberately stays inline —
+  `ModeInterventionHandler`'s `lambda: session.mode` relies on Python's
+  late-binding closures to read `session` before it's actually assigned
+  (Agent must be built first, since `Session`'s constructor takes the
+  already-built Agent), and that ordering subtlety wasn't worth risking
+  by pulling into a helper.
+- [x] `Session._cancelled`/`_interrupt_only` were two independent
+  booleans for one tri-state concept (not cancelled / cancelled-and-
+  ending / cancelled-but-session-stays-alive) — `_interrupt_only` was
+  only ever meaningful when `_cancelled` was also true. Collapsed into
+  a single `CancelKind` enum (`NONE`/`INTERRUPT`/`STOP`) on
+  `Session._cancel_kind`.
+- [x] `task/tools.py`'s two validation mechanisms turned out to be a
+  real bug, not just style drift: `validate_task_output()` pre-checks
+  title/priority/status format, but was only ever wired into
+  `create_task`/`update_task` (title/priority) — no tool actually
+  routed `status` through it, even though the function already had a
+  tested status branch ready to use. `update_task_status` happened to
+  be safe anyway (its `TaskStatus(status)` conversion lived inside its
+  own try/except), but `log_progress` built its `ProgressEntry` — and
+  so called `TaskStatus(status)` — *before* its try/except, so an
+  agent passing a malformed status there raised an **uncaught
+  ValueError** instead of the structured `{"error": ...}` every other
+  tool returns. Confirmed live before fixing. Both tools now validate
+  through `validate_task_output()` first; 3 new regression tests.
+- [x] `tools/registry.py` re-read `disabled_tools.yaml` from disk on
+  every `list_builtin()` call, and `toggle_builtin()` read it again
+  independently — a single `toggle()` on a built-in tool hit disk
+  twice. Now read once in `__init__` into `self._disabled_builtins`,
+  mirroring the existing `_custom` dict pattern (loaded once, mutated
+  in memory, persisted on write). Safe since `ToolRegistry` is
+  instantiated fresh per request.
+- [x] `ProvidersCard.handleDelete` silently swallowed delete failures
+  with a bare `catch {}` — now logs via `console.warn` (the synthetic-
+  legacy-row 404 is expected and still non-fatal, but a real failure
+  looked identical to it before).
+- [x] Missing `GET /api/workspaces/{id}`/`GET /api/mcp/{name}` singular
+  routes — added both, plus `McpServerStore.get(name)` (the store had
+  no single-item lookup at all before this) and a shared
+  `_workspace_to_response()` helper. 4 new tests.
+- [x] `task/store.py` vs `project/store.py`'s CRUD boilerplate, and the
+  three frontend dedup items — see their entries under "Redundancy"
+  above (the store one was evaluated and deliberately left alone; the
+  three frontend ones were all extracted).
 
 ---
 
 ## What actually shipped
 
-15 commits on `cleanup/code-review` (a separate git worktree — `main`
+23 commits on `cleanup/code-review` (a separate git worktree — `main`
 and the live server were never touched):
 
 1. `fix: task update --assign silently unassigning on unrelated edits`
@@ -282,23 +340,34 @@ and the live server were never touched):
 14. `refactor: split server.py into per-domain route modules`
 15. `refactor: split AgentThread.tsx into per-concern files`
 16. `refactor: split Settings.tsx into one file per section card`
+17. `docs: mark all deferred code review items complete`
+18. `refactor: unify api.ts error handling, dedupe click-outside/
+    task-list hooks`
+19. `refactor: extract SessionManager.start() helpers, collapse cancel
+    booleans`
+20. `fix: log_progress crashes uncaught on an invalid status string`
+21. `refactor: cache disabled_tools.yaml read once per ToolRegistry
+    instance`
+22. `feat: add missing singular GET /api/workspaces/{id}, GET
+    /api/mcp/{name}`
+23. `docs: mark all "lower priority / polish" items complete`
 
 (Plus the Autonomous-toggle feature and the mode-gating fix, committed
 to `main` directly before this branch was created, since that was
 already a complete, tested, user-requested feature rather than part of
 the cleanup pass itself.)
 
-Every commit: full backend test suite green (382/382, up from 335 at
-the start of the original review), `tsc --noEmit` + production build
-clean where frontend was touched, and — for anything touching rendered
-UI, live process behavior, or request/response shape — verified against
-a real running instance before committing, not just "tests pass." Each
-of the four large-file splits got its own full Playwright regression
-run against a live isolated cockpit instance (fresh `HOME`, real
-MiniMax provider config reused from the developer's own working
-settings, port 8090): all four runs landed at the identical 63/75
-passing, the same 12 pre-existing failures each time (all need a real
-LLM completion to actually run an agent turn — multi-turn conversation,
-mode switching live, tool-use flows — unrelated to any of these
-changes), which is strong evidence none of the four splits changed any
-observable behavior.
+Every commit: full backend test suite green (389/389 by the end, up
+from 335 at the start of the original review), `tsc --noEmit` +
+production build clean where frontend was touched, ruff clean, and —
+for anything touching rendered UI, live process behavior, or
+request/response shape — verified against a real running instance
+before committing, not just "tests pass." Six separate full Playwright
+regression runs across this branch's lifetime (one per large split,
+one after the frontend polish batch, one final consolidated pass) all
+landed at the identical 63/75 passing, the same 12 pre-existing
+failures every time (all need a real LLM completion to actually run an
+agent turn — multi-turn conversation, mode switching live, tool-use
+flows — unrelated to any of these changes), which is strong evidence
+none of this branch's changes altered any observable behavior outside
+what was specifically intended to change.
