@@ -8,6 +8,8 @@ as a side effect of an unrelated field edit (e.g. --title).
 """
 
 import importlib
+from dataclasses import dataclass
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -15,16 +17,24 @@ from typer.testing import CliRunner
 runner = CliRunner()
 
 
+@dataclass
+class CliEnv:
+    app: Any
+    get_task_store: Any
+
+
 @pytest.fixture
 def cli_env(tmp_path, monkeypatch):
-    """Isolate AGENT_KNOTS_HOME and reset cli.main's cached TaskStore
+    """Isolate AGENT_KNOTS_HOME and reset cli.task's cached TaskStore
     singleton, which is otherwise created once per process and would
     leak state (and the wrong AGENT_KNOTS_HOME) across tests."""
     monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
     import agent_knots.cli.main as cli_main
+    import agent_knots.cli.task as cli_task
+    importlib.reload(cli_task)
     importlib.reload(cli_main)
-    yield cli_main
-    cli_main._task_store = None
+    yield CliEnv(app=cli_main.app, get_task_store=cli_task._get_task_store)
+    cli_task._task_store = None
 
 
 def _create_task(cli_env, title: str) -> str:
@@ -43,7 +53,7 @@ class TestTaskUpdateAssign:
         title_result = runner.invoke(cli_env.app, ["task", "update", task_id, "--title", "Renamed"])
         assert title_result.exit_code == 0, title_result.output
 
-        task = cli_env._get_task_store().get(task_id)
+        task = cli_env.get_task_store().get(task_id)
         assert task.title == "Renamed"
         assert task.assigned_to == "agent-1"  # must survive the unrelated edit
 
@@ -54,7 +64,7 @@ class TestTaskUpdateAssign:
         result = runner.invoke(cli_env.app, ["task", "update", task_id, "--assign", ""])
         assert result.exit_code == 0, result.output
 
-        task = cli_env._get_task_store().get(task_id)
+        task = cli_env.get_task_store().get(task_id)
         assert task.assigned_to == ""
 
     def test_update_with_assign_flag_assigns(self, cli_env):
@@ -62,5 +72,5 @@ class TestTaskUpdateAssign:
         result = runner.invoke(cli_env.app, ["task", "update", task_id, "--assign", "agent-2"])
         assert result.exit_code == 0, result.output
 
-        task = cli_env._get_task_store().get(task_id)
+        task = cli_env.get_task_store().get(task_id)
         assert task.assigned_to == "agent-2"
