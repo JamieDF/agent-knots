@@ -11,10 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from agent_knots.config import settings_file as _settings_path
 from agent_knots.tools.defaults import DEFAULT_TOOLS, auto_approve_tools
+from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
 
 # ── tool info ────────────────────────────────────────────────────────────────
 
@@ -27,10 +26,6 @@ class ToolInfo:
     builtin: bool = True      # built-in vs custom
     enabled: bool = True       # user can disable tools
     created_at: float = 0.0
-
-    @property
-    def id(self) -> str:
-        return self.name
 
 
 # ── custom tool ──────────────────────────────────────────────────────────────
@@ -105,18 +100,26 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._custom: dict[str, CustomTool] = {}
         self._load_custom()
+        # Read once here (same pattern as _custom above) rather than
+        # re-reading disabled_tools.yaml from disk on every list_builtin()/
+        # toggle_builtin() call — a single toggle() on a built-in tool
+        # used to hit disk twice (once via list_builtin()'s membership
+        # check, once via toggle_builtin() itself). A fresh ToolRegistry
+        # is instantiated per request (see cockpit/web/routes/tools.py),
+        # so there's no cross-request staleness risk from caching this
+        # for the instance's lifetime.
+        self._disabled_builtins: set[str] = self._read_disabled_builtins()
 
     # ── built-in tools ───────────────────────────────────────────────────
 
     def list_builtin(self) -> list[ToolInfo]:
         """Return metadata for all built-in tools, reflecting disabled state."""
-        disabled = self._load_disabled_builtins()
         return [
             ToolInfo(
                 name=t.__name__,
                 description=(t.__doc__ or "").split("\n")[0][:120] if t.__doc__ else "",
                 builtin=True,
-                enabled=t.__name__ not in disabled,
+                enabled=t.__name__ not in self._disabled_builtins,
             )
             for t in DEFAULT_TOOLS
         ]
@@ -193,15 +196,29 @@ class ToolRegistry:
 
     def toggle_builtin(self, name: str) -> ToolInfo:
         """Toggle a built-in tool's enabled state (persisted as disabled override)."""
-        disabled = self._load_disabled_builtins()
-        if name in disabled:
-            disabled.remove(name)
+        if name in self._disabled_builtins:
+            self._disabled_builtins.remove(name)
         else:
-            disabled.add(name)
-        self._save_disabled_builtins(disabled)
+            self._disabled_builtins.add(name)
+        self._save_disabled_builtins(self._disabled_builtins)
 
-        info = ToolInfo(name=name, builtin=True, enabled=name not in disabled)
-        return info
+        return ToolInfo(name=name, builtin=True, enabled=name not in self._disabled_builtins)
+
+    def toggle(self, name: str) -> CustomTool | ToolInfo:
+        """Toggle a tool's enabled state, whether it's custom or built-in
+        — the "try custom, else built-in" branching used to be
+        duplicated between the web server and the TUI (found in the code
+        review). The TUI's copy didn't check built-in membership before
+        assuming a name was one, so toggling a genuinely nonexistent
+        name there silently created a disabled-tools entry for it
+        instead of raising; this version is the stricter one (matching
+        the web server's previous behavior) for both callers.
+        """
+        if self.get_custom(name):
+            return self.toggle_custom(name)
+        if name in {t.__name__ for t in DEFAULT_TOOLS}:
+            return self.toggle_builtin(name)
+        raise ValueError(f"Tool {name!r} not found.")
 
     # ── persistence ──────────────────────────────────────────────────────
 
@@ -216,7 +233,7 @@ class ToolRegistry:
         if not path.exists():
             return
         try:
-            data = yaml.safe_load(path.read_text()) or {}
+            data = safe_read_yaml(path) or {}
             for name, d in data.items():
                 self._custom[name] = CustomTool(
                     name=d["name"],
@@ -226,7 +243,7 @@ class ToolRegistry:
                     enabled=d.get("enabled", True),
                     created_at=d.get("created_at", 0.0),
                 )
-        except (yaml.YAMLError, OSError, KeyError):
+        except (AttributeError, KeyError):
             pass
 
     def _save_custom(self) -> None:
@@ -242,25 +259,16 @@ class ToolRegistry:
             }
             for name, ct in self._custom.items()
         }
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(yaml.dump(data, default_flow_style=False))
-        tmp.chmod(0o600)
-        tmp.rename(path)
+        atomic_write_yaml(path, data)
 
-    def _load_disabled_builtins(self) -> set[str]:
+    def _read_disabled_builtins(self) -> set[str]:
         path = self._disabled_path()
         if not path.exists():
             return set()
-        try:
-            data = yaml.safe_load(path.read_text()) or {}
-            return set(data.get("disabled", []))
-        except (yaml.YAMLError, OSError):
+        data = safe_read_yaml(path) or {}
+        if not isinstance(data, dict):
             return set()
+        return set(data.get("disabled", []))
 
     def _save_disabled_builtins(self, disabled: set[str]) -> None:
-        path = self._disabled_path()
-        data = {"disabled": sorted(disabled)}
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(yaml.dump(data, default_flow_style=False))
-        tmp.chmod(0o600)
-        tmp.rename(path)
+        atomic_write_yaml(self._disabled_path(), {"disabled": sorted(disabled)})

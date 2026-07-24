@@ -1,42 +1,21 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchTasks, updateTask, createSession, type TaskSummary } from '../../lib/api'
-import { useWorkspaceScope } from '../../lib/workspaceContext'
-import { useStages, enabledStages, stageForStatus, type Stage } from '../../lib/stages'
+import { updateTask, createSession, type TaskSummary } from '../../lib/api'
+import { enabledStages, stageForStatus, type Stage } from '../../lib/stages'
 import { priorityColor } from '../../lib/priorityColors'
+import { useTaskList } from '../../lib/useTaskList'
 import TaskDialog from '../../components/TaskDialog'
-
-const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 }
 
 /** Board tab of the Tasks screen — stage-driven columns per
  * design_handoff_atelier_cockpit/README.md §3, backed by the real
  * Workflows stage config (Phase 4). */
 function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
-  const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [dialogStatus, setDialogStatus] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverStage, setDragOverStage] = useState<string | null>(null)
-  const { workspace } = useWorkspaceScope()
   const navigate = useNavigate()
-  const allStages = useStages()
-
-  const load = useCallback(async () => {
-    try {
-      const data = await fetchTasks({ limit: 200, project: workspace || undefined })
-      setTasks(data.tasks)
-    } catch { /* ignore */ }
-  }, [workspace])
-
-  useEffect(() => {
-    load()
-    const interval = setInterval(load, 5000)
-    return () => clearInterval(interval)
-  }, [load])
-
-  // A task created elsewhere (the Tasks screen header's own dialog)
-  // should show up immediately, not on the next poll tick.
-  useEffect(() => { if (reloadSignal !== undefined) load() }, [reloadSignal]) // eslint-disable-line react-hooks/exhaustive-deps
+  const { tasks, setTasks, load, workspace, allStages } = useTaskList(reloadSignal)
 
   const handleMove = async (taskId: string, newStatus: string) => {
     await updateTask(taskId, { status: newStatus })
@@ -50,10 +29,10 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
   }
 
   const stages = enabledStages(allStages)
+  // useTaskList already returns tasks priority-sorted, so filtering by
+  // stage here preserves that order within each column.
   const tasksForStage = (stageKey: string) =>
-    tasks
-      .filter(t => stageForStatus(allStages, t.status)?.key === stageKey)
-      .sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 2) - (PRIORITY_ORDER[b.priority] ?? 2))
+    tasks.filter(t => stageForStatus(allStages, t.status)?.key === stageKey)
 
   return (
     <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 12 }}>

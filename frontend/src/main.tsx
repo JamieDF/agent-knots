@@ -8,7 +8,6 @@ import Tasks from './views/Tasks'
 import TaskDetail from './views/TaskDetail'
 import Review from './views/Review'
 import Workflows from './views/Workflows'
-import ToolManager from './views/ToolManager'
 import SettingsPage from './views/Settings'
 import './index.css'
 
@@ -41,7 +40,11 @@ createRoot(document.getElementById('root')!).render(
           {/* Vault folded into a Settings section (jump-to via the side
               nav's #vault anchor) instead of its own top-nav screen. */}
           <Route path="vault" element={<Navigate to="/settings#vault" replace />} />
-          <Route path="tools" element={<ToolManager />} />
+          {/* ToolManager.tsx was a confirmed exact duplicate of Settings'
+              own Tools section (same API, same functionality, never
+              linked from the topbar nav) — deleted rather than kept as
+              a second implementation of the same screen. */}
+          <Route path="tools" element={<Navigate to="/settings#tools" replace />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>
       </Routes>

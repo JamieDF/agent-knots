@@ -10,8 +10,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from agent_knots.task.models import (
     Blocker,
     Priority,
@@ -21,6 +19,7 @@ from agent_knots.task.models import (
     Task,
     TaskStatus,
 )
+from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
 
 
 def _step_to_dict(step: Step) -> dict[str, Any]:
@@ -368,17 +367,13 @@ class TaskStore:
         return task
 
     def _save(self, task: Task) -> None:
-        """Atomic save: write to .tmp, then rename."""
-        data = _task_to_dict(task)
-        tmp = self._path(task.id).with_suffix(".tmp")
-        tmp.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
-        tmp.rename(self._path(task.id))
+        atomic_write_yaml(self._path(task.id), _task_to_dict(task))
 
     def _load(self, path: Path) -> Task | None:
+        data = safe_read_yaml(path)
+        if not isinstance(data, dict) or "id" not in data:
+            return None
         try:
-            data = yaml.safe_load(path.read_text())
-            if not isinstance(data, dict) or "id" not in data:
-                return None
             return _task_from_dict(data)
-        except (yaml.YAMLError, OSError, KeyError):
+        except KeyError:
             return None

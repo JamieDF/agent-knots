@@ -17,14 +17,11 @@ Keyboard shortcuts:
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.reactive import reactive
+from textual.containers import Container, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Label, Static
-from textual import events
 
 from agent_knots.events import Event, EventType
 from agent_knots.session.manager import Session, SessionManager
@@ -384,12 +381,10 @@ class ToolsScreen(Screen):
         if row is None:
             return
         name = str(row[0])
-        registry = ToolRegistry()
-        # Try custom first, then built-in.
-        if registry.get_custom(name):
-            registry.toggle_custom(name)
-        else:
-            registry.toggle_builtin(name)
+        try:
+            ToolRegistry().toggle(name)
+        except ValueError:
+            return
         self._refresh()
 
     def action_delete_tool(self) -> None:

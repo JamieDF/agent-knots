@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Card, Chip } from './primitives'
+import { Card, Chip, Field, inputStyle } from './primitives'
 import { fetchSettings, saveSettings, type SettingsResponse } from '../lib/api'
 import { PROVIDER_PRESETS } from '../lib/providerPresets'
 import { useTheme } from '../theme/ThemeContext'
@@ -137,20 +137,6 @@ function SetupWizard({ onComplete, onSkip }: Props) {
       </Card>
     </div>
   )
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-      <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--mut)' }}>{label}</label>
-      {children}
-    </div>
-  )
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--line2)',
-  background: 'var(--card2)', color: 'var(--ink)', fontSize: 13, outline: 'none', fontFamily: 'inherit',
 }
 
 export default SetupWizard

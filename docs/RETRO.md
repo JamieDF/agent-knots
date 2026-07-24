@@ -204,23 +204,28 @@ documented tradeoffs (1, 4, 6) or partially mitigated (3).
   never fetches single-tool detail).
 - **`GET /api/health`** — still unused by the frontend; fine to leave
   orphaned from the UI, presumably meant for external monitoring.
-- **`ToolManager.tsx` is still a genuine orphaned duplicate.** `Settings.
-  tsx`'s Tools section and `/tools` (`ToolManager.tsx`) both manage tools;
-  `/tools` has no nav link anywhere in `Topbar.tsx`'s `NAV_ITEMS` — only
-  reachable by typing the URL. Confirmed still true, not touched by the
-  redesign. Worth consolidating (delete `ToolManager.tsx`, keep Settings'
-  version) rather than carrying the duplicate forward again.
-- **`SubprocessRuntime` is currently broken, found but not fixed this
-  cycle.** `session/worker.py`'s `_read_events` (and `runtime.py`'s
-  `SubprocessRuntime._read_events`) still reference `session._events.put(
-  ...)` — an attribute `Session` no longer has, since the SSE fan-out fix
-  (see "What's solid" #6) replaced the single `_events` queue with
-  `_subscribers`/`_history`/`_broadcast()`. Would raise `AttributeError`
-  the moment a subprocess-runtime session tried to emit an event. Not
-  caught by any test because the default runtime is `inprocess` and
-  nothing in this cycle's work exercised `runtime=subprocess` with an
-  actual running turn. `docs/architecture.md` currently describes both
-  runtimes as equally real — that's now inaccurate for this one path.
+- ~~`ToolManager.tsx` was a genuine orphaned duplicate~~ — fixed. Deleted
+  along with its `/tools` route (redirects to `/settings#tools` now,
+  matching the `/vault` -> `/settings#vault` pattern) as part of the full
+  codebase review — see `docs/CODE_REVIEW.md`.
+- ~~`SubprocessRuntime` was broken~~ — deleted rather than fixed.
+  `session/worker.py`'s `_read_events` (and `runtime.py`'s
+  `SubprocessRuntime._read_events`) still referenced `session._events.put(
+  ...)`, an attribute `Session` no longer has since the SSE fan-out fix
+  replaced the single `_events` queue with `_subscribers`/`_history`/
+  `_broadcast()` — would have raised `AttributeError` the moment a
+  subprocess-runtime session tried to emit an event, uncaught by any test
+  since the default runtime is `inprocess`. Its own event-chunk parser had
+  also independently drifted from the fixed one in `session/manager.py`.
+  Fixing both bugs and then maintaining two parsers in sync going forward,
+  for a mode nothing selected by default and that never worked when
+  selected, wasn't worth it — deleted `session/worker.py` and
+  `SubprocessRuntime` entirely; `create_runtime()`/`set_runtime_type()`
+  now silently fall back to in-process for any unrecognized runtime value
+  (including a pre-existing "subprocess" saved before the removal), so
+  upgrading doesn't break an existing workspace/settings file. Real
+  process isolation is still wanted — see the container-runtime roadmap
+  item — just not this implementation.
 
 ---
 
@@ -274,18 +279,25 @@ same documentation pass:
 
 ## If I were prioritizing the next two weeks
 
-1. **Fix `SubprocessRuntime`'s stale `_events` reference** — see "Wired in
-   but never called" above. Currently broken for anyone who actually
-   selects the subprocess runtime, silent until a session tries to emit
-   its first event.
-2. **Consolidate `ToolManager.tsx`** into `Settings.tsx`'s Tools section
-   and delete the orphaned route — the one concrete duplicate left over
-   from the redesign.
-3. **Container runtime** — still the biggest real security gap (#1 above),
-   and it's already on the roadmap.
-4. **Fill in `default_mode`** in the Settings UI, or explicitly document
+Both items that topped this list in the previous pass — the
+`SubprocessRuntime` bug and the `ToolManager.tsx` duplicate — are fixed
+now (deleted, in both cases; see above). Also fixed since: a real bug
+found by the same review, where the mode-gating intervention handler
+used method names that don't match the Strands SDK's base class, so it
+was never actually registered — see `docs/CODE_REVIEW.md` for the fix
+and the wider cleanup pass it kicked off (dead code removed, several
+smaller real bugs fixed, `intervention.py` now has dedicated tests).
+
+1. **Container runtime** — still the biggest real security gap (#1
+   above), and it's already on the roadmap. With `SubprocessRuntime`
+   gone, this would be the first real *process*-isolated runtime rather
+   than a second implementation to keep in sync with the first.
+2. **Fill in `default_mode`** in the Settings UI, or explicitly document
    it as YAML-only if that's the intended long-term answer.
-5. **Consider a couple of targeted unit tests** for `hooks.py` and
-   `intervention.py` specifically — they're exercised indirectly today,
-   but a dedicated test would pin their behavior independent of whatever
-   `SessionManager.start()`'s integration tests happen to cover.
+3. **Consider a targeted unit test** for `hooks.py` specifically — still
+   exercised only indirectly today (via `SessionManager.start()`'s
+   integration tests), unlike `intervention.py` which now has its own.
+4. **File splits flagged by the review** (`server.py`, `AgentThread.tsx`,
+   `Settings.tsx`, `cli/main.py`) — real maintainability value, sized as
+   dedicated work rather than a drive-by; see `docs/CODE_REVIEW.md` for
+   the concrete boundaries proposed for each.

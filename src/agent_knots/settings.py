@@ -8,11 +8,9 @@ setup wizard writes directly to this file.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from pathlib import Path
-
-import yaml
 
 from agent_knots.config import settings_file
+from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
 
 
 @dataclass
@@ -21,7 +19,7 @@ class AgentSettings:
     api_key: str = ""
     base_url: str = ""
     default_mode: str = "agent"
-    runtime: str = "inprocess"  # "inprocess" or "subprocess"
+    runtime: str = "inprocess"
 
 
 @dataclass
@@ -59,11 +57,7 @@ def load() -> Settings:
     if not path.exists():
         return Settings()
 
-    try:
-        data = yaml.safe_load(path.read_text()) or {}
-    except (yaml.YAMLError, OSError):
-        return Settings()
-
+    data = safe_read_yaml(path) or {}
     if not isinstance(data, dict):
         return Settings()
 
@@ -110,17 +104,9 @@ def save(settings: Settings) -> None:
         "default_provider": settings.default_provider,
         "integrations": asdict(settings.integrations),
     }
-
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(yaml.dump(data, default_flow_style=False))
-    tmp.chmod(0o600)
-    tmp.rename(path)
-
-
-def is_configured() -> bool:
-    """Return True if the user has set up at least an API key."""
-    s = load()
-    return bool(s.agent.api_key)
+    # sort_keys=True (not the atomic_write_yaml default) to preserve this
+    # file's pre-existing on-disk key order.
+    atomic_write_yaml(path, data, sort_keys=True)
 
 
 def mask_key(key: str) -> str:

@@ -12,17 +12,30 @@ import asyncio
 import time
 import uuid
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from agent_knots.events import Event, EventType, ToolCall
+from agent_knots.events import Event, EventType, ToolCall, ToolResult
 from agent_knots.vault.store import VaultStore
+
+
+class CancelKind(Enum):
+    """Session._cancel_kind's three states — collapses what used to be
+    two independent booleans (_cancelled, _interrupt_only) into one
+    tri-state, since "not cancelled" / "cancelled, session ending" /
+    "cancelled, session staying alive" were never actually four
+    independent combinations — _interrupt_only was only ever meaningful
+    when _cancelled was also True."""
+
+    NONE = "none"
+    INTERRUPT = "interrupt"  # current turn only — session stays alive
+    STOP = "stop"  # the whole session is ending
 
 # ── Strands imports ──────────────────────────────────────────────────────────
 
 try:
     from strands import Agent
-    from strands.sandbox import PosixShellSandbox
     HAS_STRANDS = True
 except ImportError:
     HAS_STRANDS = False
@@ -56,12 +69,11 @@ class Session:
     _history_limit: int = field(default=500, repr=False)
     _agent: Any = field(default=None, repr=False)       # strands.Agent
     _task: asyncio.Task[Any] | None = field(default=None, repr=False)
-    _cancelled: bool = field(default=False, repr=False)
-    # Set by cancel(end_session=False) — tells _run_agent's cancellation
-    # handler to report this as an interrupted turn (STATE_CHANGE) rather
-    # than the session ending (ENDED), so the composer stays usable and a
-    # follow-up send() can start a new turn on the same session.
-    _interrupt_only: bool = field(default=False, repr=False)
+    # Set by cancel() — tells _run_agent's cancellation handler whether to
+    # report this as an interrupted turn (STATE_CHANGE, composer stays
+    # usable, a follow-up send() can start a new turn) or the session
+    # actually ending (ENDED).
+    _cancel_kind: CancelKind = field(default=CancelKind.NONE, repr=False)
     # PIDs of background=true shell commands (dev servers, watchers) this
     # session's agent has started — these deliberately outlive any single
     # turn/interrupt, but SessionManager.stop() kills them so they don't
@@ -98,10 +110,9 @@ class Session:
 
         end_session=False is used by SessionManager.interrupt() — the
         current turn is cancelled but the session itself stays alive
-        (see _interrupt_only).
+        (see CancelKind.INTERRUPT).
         """
-        self._cancelled = True
-        self._interrupt_only = not end_session
+        self._cancel_kind = CancelKind.STOP if end_session else CancelKind.INTERRUPT
         if self._agent is not None and hasattr(self._agent, "cancel"):
             try:
                 await self._agent.cancel()
@@ -189,101 +200,24 @@ class SessionManager:
 
         session_id = uuid.uuid4().hex[:12]
 
-        # Resolve task context if a task_id was provided.
-        task_context = ""
-        if task_id:
-            from agent_knots.task.store import TaskStore
-            from agent_knots.task.models import TaskStatus
-            from agent_knots.config import tasks_dir as _tasks_dir
-            store = TaskStore(_tasks_dir())
-            task = store.get(task_id)
-            if task:
-                task_context = _build_task_prompt(task)
-                # Assign the task to this session and move to in_progress.
-                store.assign(task_id, session_id)
-                if task.status.value == "open":
-                    store.set_status(task_id, TaskStatus("in_progress"))
+        task_context = self._resolve_task_context(session_id, task_id)
+        full_prompt = self._build_full_prompt(system_prompt, task_context, mode, task_id)
+        resolved_working_dir = self._resolve_working_dir(working_dir, project_id)
 
-        # Build the full system prompt with task context.
-        full_prompt = _build_system_prompt(system_prompt, task_context, mode)
-
-        # Inject cross-session memory from previous progress.
-        if task_id:
-            from agent_knots.session.features import inject_memory
-            memory_block = inject_memory(task_id)
-            if memory_block:
-                full_prompt = full_prompt + "\n\n" + memory_block
-
-        # Determine working directory: explicit > workspace repo > cwd.
-        resolved_working_dir = working_dir
-        if not resolved_working_dir and project_id:
-            # Look up the workspace's repository path.
-            from agent_knots.project.store import ProjectStore
-            from agent_knots.config import projects_dir as _projects_dir
-            ps = ProjectStore(_projects_dir())
-            proj = ps.get(project_id)
-            if proj and proj.repository:
-                resolved_working_dir = proj.repository
-
-        # Always include default tools + enabled custom tools from registry.
         # Custom (shell-command) tools are bound to resolved_working_dir here
         # since, unlike the built-in shell/editor tools below, they have no
         # separate sandboxed-swap step.
-        from agent_knots.tools.defaults import DEFAULT_TOOLS, auto_approve_tools
-        from agent_knots.tools.registry import ToolRegistry
+        all_tools = self._build_tools(tools, resolved_working_dir, session_id)
+        model_instance = self._build_model_instance(provider)
 
-        auto_approve_tools()
-        registry = ToolRegistry()
-        all_tools = list(tools or []) + registry.list_enabled(cwd=resolved_working_dir)
-
-        # Add delegate_task tool for multi-agent delegation. Must happen
-        # before the Agent is constructed below — Strands reads the tools
-        # list at construction time, so appending afterward has no effect.
-        from agent_knots.session.features import make_delegate_tool
-        all_tools.append(make_delegate_tool(self, session_id))
-
-        # Create the model. Strands expects a model instance, not a config dict.
-        # For OpenAI-compatible providers, use OpenAIModel with client_args.
-        from strands.models.openai import OpenAIModel
-
-        client_args: dict[str, Any] = {}
-        if provider.api_key:
-            client_args["api_key"] = provider.api_key
-        if provider.base_url:
-            client_args["base_url"] = provider.base_url
-
-        model_instance = OpenAIModel(
-            model_id=provider.model,
-            client_args=client_args or None,
-        )
-
-        # Swap in sandboxed shell/editor tools if we have a workspace.
         # background_pids is created here (before the Session below exists)
         # and handed to both the shell tool closure and the Session itself
         # as the same list object, so a background=true shell command's pid
         # lands somewhere SessionManager.stop() can find and clean up later
         # — without this, a dev server an agent starts in the background
         # would outlive the session indefinitely.
-        ws_sandbox = None
-        background_pids: list[int] = []
-        if resolved_working_dir:
-            from agent_knots.isolation import create_sandbox
-            ws_sandbox = create_sandbox(str(resolved_working_dir))
-
-        if ws_sandbox and ws_sandbox.exists:
-            from agent_knots.sandbox_tools import make_sandboxed_shell, make_sandboxed_editor
-            ws = ws_sandbox.workspace_dir
-            sb_shell = make_sandboxed_shell(
-                ws, max_output=ws_sandbox.max_output,
-                session_id=session_id, background_pids=background_pids,
-            )
-            sb_editor = make_sandboxed_editor(ws, max_file_size=ws_sandbox.max_file_size)
-            all_tools = [
-                sb_shell if getattr(t, '__name__', '') == 'shell'
-                else sb_editor if getattr(t, '__name__', '') == 'editor'
-                else t
-                for t in all_tools
-            ]
+        ws_sandbox, background_pids = self._maybe_create_sandbox(resolved_working_dir)
+        all_tools = self._swap_sandboxed_tools(all_tools, ws_sandbox, session_id, background_pids)
 
         # Create the agent with mode-aware intervention handler.
         from agent_knots.intervention import ModeInterventionHandler
@@ -313,27 +247,9 @@ class SessionManager:
         )
         self._sessions[session_id] = session
 
-        # Register hooks for cost tracking + auto progress logging.
-        from agent_knots.hooks import register_session_hooks
-        register_session_hooks(agent, session)
+        self._register_hooks(agent, session, task_id)
 
-        # Register steering hook for criteria validation.
-        if task_id:
-            from agent_knots.session.features import register_steering_hook
-            register_steering_hook(agent, task_id, session)
-
-        # Resolve runtime: explicit > workspace setting > global setting.
-        runtime_type = runtime_override  # explicit override from caller
-        if not runtime_type and project_id:
-            from agent_knots.project.store import ProjectStore
-            from agent_knots.config import projects_dir as _projects_dir
-            ps = ProjectStore(_projects_dir())
-            proj = ps.get(project_id)
-            if proj and proj.runtime:
-                runtime_type = proj.runtime
-        if not runtime_type:
-            from agent_knots.session.runtime import get_runtime_type
-            runtime_type = get_runtime_type()
+        runtime_type = self._resolve_runtime_type(runtime_override, project_id)
 
         # A session started with no explicit prompt but a bound task still
         # needs its first turn kicked off — the task's full context is
@@ -539,7 +455,7 @@ class SessionManager:
             chunk_state: dict[str, Any] = {}
 
             async for chunk in agent.stream_async(prompt):
-                if session._cancelled:
+                if session._cancel_kind is not CancelKind.NONE:
                     break
 
                 result = self._chunk_to_event(session.id, chunk, chunk_state)
@@ -547,7 +463,7 @@ class SessionManager:
                     for event in (result if isinstance(result, list) else [result]):
                         session._broadcast(event)
 
-            if not session._cancelled:
+            if session._cancel_kind is CancelKind.NONE:
                 finished = True
                 # A turn finishing is NOT the session ending — send() can
                 # still start another turn afterward (multi-turn chat).
@@ -562,7 +478,7 @@ class SessionManager:
 
         except asyncio.CancelledError:
             if not finished:
-                if session._interrupt_only:
+                if session._cancel_kind is CancelKind.INTERRUPT:
                     session._broadcast(Event(
                         type=EventType.STATE_CHANGE,
                         session_id=session.id,
@@ -582,8 +498,7 @@ class SessionManager:
                 message=f"Agent error: {exc}",
             ))
         finally:
-            session._cancelled = False
-            session._interrupt_only = False
+            session._cancel_kind = CancelKind.NONE
 
     @staticmethod
     def _chunk_to_event(
@@ -710,11 +625,27 @@ class SessionManager:
                             result_text = ' '.join(
                                 ct.get('text', '') for ct in tr['content'] if isinstance(ct, dict)
                             )
+                        # Strands' own ToolResult.status ("success"/"error")
+                        # is a tool-agnostic success signal — works for the
+                        # shell tool's exit_code as much as the editor,
+                        # calculator, or any task tool, none of which have
+                        # a real exit code. Previously this went unset
+                        # entirely, so the frontend had no way to tell a
+                        # failed tool call from a successful one and
+                        # rendered every result identically.
+                        failed = tr.get('status') == 'error'
                         return Event(
                             type=EventType.TOOL_RESULT,
                             session_id=session_id,
                             message=result_text,
                             data=tr,
+                            tool_result=ToolResult(
+                                tool_call_id=tr.get('toolUseId', ''),
+                                stdout='' if failed else result_text,
+                                stderr=result_text if failed else '',
+                                exit_code=1 if failed else 0,
+                                error=result_text if failed else '',
+                            ),
                             timestamp=now,
                         )
                 # Regular content blocks — extract text.
@@ -768,6 +699,152 @@ class SessionManager:
                 )
 
         return None
+
+    # ── start() helpers ──────────────────────────────────────────────────
+    # Extracted from start(), which used to do all of this inline as one
+    # ~10-job function (task lookup/assignment, prompt assembly, working-
+    # dir resolution, tool assembly, model construction, sandboxing,
+    # runtime resolution). Each helper below is a self-contained,
+    # pure(-ish) step with no dependency on Agent/Session construction
+    # order — that part stays inline in start() itself, since the
+    # intervention handler's `lambda: session.mode` relies on Python's
+    # late-binding closures to read `session` before it's actually
+    # assigned (Agent must be built first, since Session's constructor
+    # takes the already-built Agent as `_agent`), which is exactly the
+    # kind of ordering-sensitive code not worth pulling into a helper
+    # that could accidentally reorder it.
+
+    def _resolve_task_context(self, session_id: str, task_id: str | None) -> str:
+        """Fetch the task's prompt context and, if found, assign it to
+        this session and auto-transition it out of 'open' — a task
+        should never sit assigned-to-a-session but still 'open'."""
+        if not task_id:
+            return ""
+        from agent_knots.task.store import TaskStore
+        from agent_knots.task.models import TaskStatus
+        from agent_knots.config import tasks_dir as _tasks_dir
+
+        store = TaskStore(_tasks_dir())
+        task = store.get(task_id)
+        if not task:
+            return ""
+        store.assign(task_id, session_id)
+        if task.status.value == "open":
+            store.set_status(task_id, TaskStatus("in_progress"))
+        return _build_task_prompt(task)
+
+    @staticmethod
+    def _build_full_prompt(system_prompt: str, task_context: str, mode: str, task_id: str | None) -> str:
+        """Assemble the system prompt, then inject cross-session memory
+        from the task's own prior progress log, if there is one."""
+        full_prompt = _build_system_prompt(system_prompt, task_context, mode)
+        if task_id:
+            from agent_knots.session.features import inject_memory
+            memory_block = inject_memory(task_id)
+            if memory_block:
+                full_prompt = full_prompt + "\n\n" + memory_block
+        return full_prompt
+
+    @staticmethod
+    def _resolve_working_dir(working_dir: str | None, project_id: str | None) -> str | None:
+        """explicit > workspace repo > None (caller's own cwd)."""
+        if working_dir:
+            return working_dir
+        if not project_id:
+            return None
+        from agent_knots.project.store import ProjectStore
+        from agent_knots.config import projects_dir as _projects_dir
+
+        proj = ProjectStore(_projects_dir()).get(project_id)
+        return proj.repository if proj and proj.repository else None
+
+    def _build_tools(self, tools: list[Any] | None, resolved_working_dir: str | None, session_id: str) -> list[Any]:
+        """Default tools + enabled custom tools from the registry, plus
+        the delegate_task tool for multi-agent delegation. Must run
+        before the Agent is constructed — Strands reads the tools list
+        at construction time, so appending afterward has no effect."""
+        from agent_knots.tools.defaults import auto_approve_tools
+        from agent_knots.tools.registry import ToolRegistry
+
+        auto_approve_tools()
+        registry = ToolRegistry()
+        all_tools = list(tools or []) + registry.list_enabled(cwd=resolved_working_dir)
+
+        from agent_knots.session.features import make_delegate_tool
+        all_tools.append(make_delegate_tool(self, session_id))
+        return all_tools
+
+    @staticmethod
+    def _build_model_instance(provider: Any) -> Any:
+        """Strands expects a model instance, not a config dict — for
+        OpenAI-compatible providers, that's OpenAIModel with client_args."""
+        from strands.models.openai import OpenAIModel
+
+        client_args: dict[str, Any] = {}
+        if provider.api_key:
+            client_args["api_key"] = provider.api_key
+        if provider.base_url:
+            client_args["base_url"] = provider.base_url
+
+        return OpenAIModel(model_id=provider.model, client_args=client_args or None)
+
+    @staticmethod
+    def _maybe_create_sandbox(resolved_working_dir: str | None) -> tuple[Any, list[int]]:
+        """Returns (sandbox-or-None, a fresh background_pids list) — the
+        list is always created here (even with no sandbox) since the
+        caller hands it to both the shell tool closure and the Session
+        as the same object regardless."""
+        background_pids: list[int] = []
+        if not resolved_working_dir:
+            return None, background_pids
+        from agent_knots.isolation import create_sandbox
+        return create_sandbox(str(resolved_working_dir)), background_pids
+
+    @staticmethod
+    def _swap_sandboxed_tools(all_tools: list[Any], ws_sandbox: Any, session_id: str, background_pids: list[int]) -> list[Any]:
+        """Swap in sandboxed shell/editor tools if we have a workspace."""
+        if not (ws_sandbox and ws_sandbox.exists):
+            return all_tools
+        from agent_knots.sandbox_tools import make_sandboxed_shell, make_sandboxed_editor
+
+        ws = ws_sandbox.workspace_dir
+        sb_shell = make_sandboxed_shell(
+            ws, max_output=ws_sandbox.max_output,
+            session_id=session_id, background_pids=background_pids,
+        )
+        sb_editor = make_sandboxed_editor(ws, max_file_size=ws_sandbox.max_file_size)
+        return [
+            sb_shell if getattr(t, '__name__', '') == 'shell'
+            else sb_editor if getattr(t, '__name__', '') == 'editor'
+            else t
+            for t in all_tools
+        ]
+
+    @staticmethod
+    def _register_hooks(agent: Agent, session: Session, task_id: str | None) -> None:
+        """Cost tracking + auto progress logging, plus the steering hook
+        for criteria validation if this session is task-attached."""
+        from agent_knots.hooks import register_session_hooks
+        register_session_hooks(agent, session)
+
+        if task_id:
+            from agent_knots.session.features import register_steering_hook
+            register_steering_hook(agent, task_id, session)
+
+    @staticmethod
+    def _resolve_runtime_type(runtime_override: str, project_id: str | None) -> str:
+        """explicit override > workspace setting > global setting."""
+        if runtime_override:
+            return runtime_override
+        if project_id:
+            from agent_knots.project.store import ProjectStore
+            from agent_knots.config import projects_dir as _projects_dir
+
+            proj = ProjectStore(_projects_dir()).get(project_id)
+            if proj and proj.runtime:
+                return proj.runtime
+        from agent_knots.session.runtime import get_runtime_type
+        return get_runtime_type()
 
 
 def _parse_tool_input(raw: str) -> dict:

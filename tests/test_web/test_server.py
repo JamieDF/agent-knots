@@ -338,6 +338,33 @@ class TestTaskAPI:
         assert resp.json()["review_gate"] == "auto"
 
     @pytest.mark.asyncio
+    async def test_patch_title_and_assign_together_both_persist(self, authed_client):
+        """Regression guard for a redundant-writes cleanup: update_task()
+        now batches the plain content fields (title, description, tags,
+        etc.) into a single store.update() instead of one write per
+        field, but TaskStore.assign() re-fetches the task from disk
+        itself rather than taking the in-memory object — so if the batch
+        write isn't flushed before assign() runs, assign's fresh
+        re-fetch would silently lose whatever the batch write hadn't
+        persisted yet. Both must survive in the same PATCH."""
+        created = await authed_client.post("/api/tasks", json={"title": "Old title"})
+        task_id = created.json()["id"]
+
+        resp = await authed_client.patch(f"/api/tasks/{task_id}", json={
+            "title": "New title", "assign": "agent-42",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["title"] == "New title"
+        assert body["assigned_to"] == "agent-42"
+
+        # Re-fetch independently to prove it's really on disk, not just
+        # in the response from the same request.
+        refetched = await authed_client.get(f"/api/tasks/{task_id}")
+        assert refetched.json()["title"] == "New title"
+        assert refetched.json()["assigned_to"] == "agent-42"
+
+    @pytest.mark.asyncio
     async def test_patch_updates_description_tags_criteria_steps(self, authed_client):
         """Regression: UpdateTaskRequest used to be missing these fields
         entirely, so PATCH silently dropped description/tags/criteria/
@@ -716,26 +743,26 @@ class TestExtractJsonObject:
     completion text has to be parsed leniently instead."""
 
     def test_plain_json(self):
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         assert _extract_json_object('{"a": 1}') == {"a": 1}
 
     def test_markdown_code_fence(self):
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         text = '```json\n{"a": 1}\n```'
         assert _extract_json_object(text) == {"a": 1}
 
     def test_plain_code_fence_no_language(self):
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         text = '```\n{"a": 1}\n```'
         assert _extract_json_object(text) == {"a": 1}
 
     def test_stray_commentary_around_json(self):
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         text = 'Sure, here you go:\n{"a": 1}\nHope that helps!'
         assert _extract_json_object(text) == {"a": 1}
 
     def test_no_json_raises(self):
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         with pytest.raises(Exception):
             _extract_json_object("no json here at all")
 
@@ -743,7 +770,7 @@ class TestExtractJsonObject:
         """MiniMax M2.7 (a reasoning model) inlines a <think>...</think>
         block directly into a plain completion's message.content — there's
         no separate reasoning field to read instead."""
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         text = '<think>Let me plan this out...</think>\n{"a": 1}'
         assert _extract_json_object(text) == {"a": 1}
 
@@ -753,7 +780,7 @@ class TestExtractJsonObject:
         code or gives JSON examples) instead of the real object, producing
         text that isn't valid JSON at all and a cryptic raw json.JSONDecodeError
         ("Expecting value: line 1 column 1 (char 0)") instead of a clear one."""
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         text = (
             '<think>Something like {"example": "not the real answer"} maybe? '
             'Let me reconsider.</think>\n'
@@ -765,7 +792,7 @@ class TestExtractJsonObject:
         """Even after stripping think-blocks/fences, genuinely broken JSON
         must raise a ValueError with an actionable message — not let a raw
         json.JSONDecodeError bubble up uncaught."""
-        from agent_knots.cockpit.web.server import _extract_json_object
+        from agent_knots.cockpit.web.jsonutil import _extract_json_object
         with pytest.raises(ValueError, match="No valid JSON object found"):
             _extract_json_object('<think>{unbalanced</think>{"a": broken}')
 
@@ -822,6 +849,22 @@ class TestWorkspaceAPI:
         resp = await authed_client.post("/api/workspaces", json={"name": "Dupe"})
         assert resp.status_code == 200
         assert resp.json()["id"] == "dupe-2"
+
+    @pytest.mark.asyncio
+    async def test_get_single_workspace(self, authed_client):
+        await authed_client.post("/api/workspaces", json={"id": "ws-single", "name": "Single WS", "repository": "/tmp/x"})
+        resp = await authed_client.get("/api/workspaces/ws-single")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "id": "ws-single", "name": "Single WS", "description": "", "repository": "/tmp/x",
+            "runtime": "", "tags": [], "auto_assign": False, "max_concurrent": 2, "archived": False,
+            "created_at": resp.json()["created_at"],
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_single_workspace_not_found_404s(self, authed_client):
+        resp = await authed_client.get("/api/workspaces/nonexistent")
+        assert resp.status_code == 404
 
 
 class TestFilesystemBrowseAPI:
@@ -1309,6 +1352,19 @@ class TestMcpServersAPI:
         await authed_client.post("/api/mcp", json={"name": "filesystem"})
         resp = await authed_client.post("/api/mcp", json={"name": "filesystem"})
         assert resp.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_get_single_server(self, authed_client):
+        await authed_client.post("/api/mcp", json={"name": "filesystem", "url": "stdio://fs"})
+        resp = await authed_client.get("/api/mcp/filesystem")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "filesystem"
+        assert resp.json()["url"] == "stdio://fs"
+
+    @pytest.mark.asyncio
+    async def test_get_single_server_not_found_404s(self, authed_client):
+        resp = await authed_client.get("/api/mcp/nonexistent")
+        assert resp.status_code == 404
 
 
 class TestProvidersAndIntegrationsAPI:

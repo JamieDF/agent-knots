@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_knots.task.tools import create_task, update_task, validate_task_output
+from agent_knots.task.tools import create_task, log_progress, update_task, update_task_status, validate_task_output
 
 
 @pytest.fixture(autouse=True)
@@ -81,3 +81,31 @@ class TestUpdateTaskValidation:
     def test_missing_task_returns_error(self):
         result = update_task("nonexistent-task-id", title="New title")
         assert "error" in result
+
+
+class TestStatusValidation:
+    """update_task_status and log_progress both accept a raw status
+    string. update_task_status already converted it to TaskStatus(...)
+    inside its own try/except, so it never actually crashed — but
+    log_progress built its ProgressEntry (and so called TaskStatus(...))
+    *before* its try/except, so an invalid status raised an uncaught
+    ValueError instead of the structured {"error": ...} every other
+    tool returns. Both now validate through validate_task_output()
+    first, closing that gap and making status validation consistent
+    with how title/priority are already checked."""
+
+    def test_update_task_status_invalid_status_returns_error(self):
+        created = create_task(title="Task", priority="medium")
+        result = update_task_status(created["id"], status="not-a-real-status")
+        assert "error" in result
+
+    def test_log_progress_invalid_status_returns_error_not_exception(self):
+        created = create_task(title="Task", priority="medium")
+        result = log_progress(created["id"], entry="did stuff", status="not-a-real-status")
+        assert "error" in result
+
+    def test_log_progress_valid_status_succeeds(self):
+        created = create_task(title="Task", priority="medium")
+        result = log_progress(created["id"], entry="did stuff", status="in_progress")
+        assert "error" not in result
+        assert result["progress_entries"] == 1

@@ -233,6 +233,42 @@ class TestChunkToEvent:
         assert "actual answer" in evt.message
         assert "reasoning" not in evt.message  # thinking stripped
 
+    def test_tool_result_success_populates_tool_result(self):
+        """Regression: Event.tool_result used to be left unset entirely
+        for every TOOL_RESULT event, so the frontend had no reliable way
+        to tell a failed tool call from a successful one and rendered
+        both identically. Strands' own status field ("success"/"error")
+        is tool-agnostic — works for the shell tool's exit code as much
+        as the editor/calculator/task tools, none of which have one."""
+        evt = SessionManager._chunk_to_event("sid", {
+            "message": {"role": "user", "content": [{"toolResult": {
+                "toolUseId": "tool-1",
+                "status": "success",
+                "content": [{"text": "done"}],
+            }}]},
+        })
+        assert evt is not None
+        assert evt.type == EventType.TOOL_RESULT
+        assert evt.tool_result is not None
+        assert evt.tool_result.tool_call_id == "tool-1"
+        assert evt.tool_result.exit_code == 0
+        assert evt.tool_result.error == ""
+        assert evt.tool_result.stdout == "done"
+
+    def test_tool_result_error_populates_tool_result(self):
+        evt = SessionManager._chunk_to_event("sid", {
+            "message": {"role": "user", "content": [{"toolResult": {
+                "toolUseId": "tool-2",
+                "status": "error",
+                "content": [{"text": "command not found"}],
+            }}]},
+        })
+        assert evt is not None
+        assert evt.tool_result is not None
+        assert evt.tool_result.exit_code == 1
+        assert evt.tool_result.error == "command not found"
+        assert evt.tool_result.stdout == ""
+
     def test_result_chunk_skipped(self):
         """Real Strands chunk: result. _run_agent already broadcasts its
         own "Agent finished." once the stream loop ends — this chunk

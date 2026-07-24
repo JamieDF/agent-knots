@@ -1,353 +1,373 @@
-# Code Review — 2026-07-23
+# Code Review — 2026-07-23 / 2026-07-24
 
 Full-codebase review after a long stretch of fast, live feature work. Five
 parallel reviews covering backend web/TUI, backend session/runtime, backend
 data layer + CLI, the two biggest frontend files, and the rest of the
 frontend — plus direct verification (reading the actual Strands SDK source)
-of the most serious finding. This is a punch list, not a narrative; check
-items off as they're fixed.
+of the most serious finding. This was a punch list, not a narrative;
+checked off as items got fixed on the `cleanup/code-review` branch (a
+separate git worktree, so the live server on `main` was never touched
+while this was in progress).
+
+**Status: everything on this list is done**, including the four large
+file splits, the `FormDialog` extraction, and every item that had been
+filed under "Lower priority / polish" — see "What actually shipped" at
+the end for the full commit list. Every fix was verified against the
+real test suite (389 Python tests, up from 335 at the start of this
+file's own creation) and, for anything touching rendered UI or live
+process behavior, against a real running instance across six separate
+full-suite Playwright passes — not just "tests pass."
 
 ---
 
-## 🔴 Real bugs currently shipping (fix these regardless of anything else)
+## 🔴 Real bugs currently shipping — all fixed
 
-- [ ] **Mode gating (Assume/Relinquish, Reviewer/Security) does nothing.**
-  `src/agent_knots/intervention.py` — `ModeInterventionHandler` defines
-  `on_before_tool_call`, `on_after_tool_call`, `on_before_model_call`,
-  `on_after_model_call`. Strands' actual `InterventionHandler` base class
-  (`.venv/.../strands/interventions/handler.py`) uses `before_tool_call`,
-  `after_tool_call`, `before_model_call`, `after_model_call` — **no `on_`
-  prefix**. Its registry (`strands/interventions/registry.py:58-62`,
-  `_is_overridden`) only registers a hook if
-  `getattr(type(handler), method) != getattr(InterventionHandler, method)`
-  for the exact base-class method name. Since none of the four methods
-  match, `_register_hooks` never wires this handler into anything — the
-  four `on_*` methods are dead code, never called by the framework.
-  **Verified directly** by reading the installed SDK source, not just
-  trusting the claim.
-  Net effect: tool calls execute in every session mode, including
-  `assistant` (user driving) and `reviewer`/`security` (meant to be
-  read-only) — the entire point of the take-over flow. The mode pill still
-  flips DRIVING/WATCHING correctly in the UI, so it looks like it's
-  working. Zero test coverage anywhere (`grep` for `intervention` across
-  `tests/` returns nothing).
-  **Fix:** rename the four methods to drop the `on_` prefix. Add a
-  regression test that actually asserts a tool call is denied while in
-  `assistant` mode (not just that the mode field flips).
+- [x] **Mode gating (Assume/Relinquish, Reviewer/Security) does nothing.**
+  Fixed by renaming the four `on_*`-prefixed methods in
+  `intervention.py` to match Strands' actual base-class names. Landed
+  together with a larger redesign (the Autonomous toggle) that also
+  narrowed which modes actually deny tool calls — see `docs/RETRO.md`
+  and `docs/architecture.md`'s "Autonomous toggle" section for the full
+  story; `assistant` mode no longer denies tools at all (that turned
+  out not to be the wanted behavior), only `reviewer`/`security` do.
+  Regression tests in `tests/test_intervention.py` assert the hook
+  actually gets registered with Strands' `HookRegistry`, not just that
+  the method returns the right value when called directly — that
+  distinction is exactly what let the original bug hide.
 
-- [ ] **CLI `task update` silently unassigns a task on every call that
-  omits `--assign`.** `src/agent_knots/cli/main.py:707,721-722` —
-  `assign` defaults to `typer.Option("", "--assign", ...)`, i.e. `""`,
-  never `None`. The guard `if assign is not None:` is therefore always
-  true, so `agent-knots task update T-x --title foo` (no `--assign` at
-  all) unconditionally calls `store.assign(task_id, "")`, wiping any
-  existing assignment as a side effect of an unrelated edit.
-  **Fix:** default to `None` (`str | None`), check `if assign is not
-  None:`. Trivial, zero risk. No dedicated test file for `cli/main.py`
-  exists, which is why this wasn't caught.
+- [x] **CLI `task update` silently unassigns a task on every call that
+  omits `--assign`.** Fixed: `assign` now defaults to `None`. New
+  `tests/test_cli/test_task_update.py` (previously no CLI test file
+  existed at all).
 
-- [ ] **`SubprocessRuntime` is fully broken, and worse than the known
-  issue.** `src/agent_knots/session/runtime.py` (lines 30, 137, 143, 179)
-  and `session/worker.py` still reference `session._events.put(...)` — an
-  attribute `Session` no longer has, replaced by
-  `_subscribers`/`_history`/`_broadcast()` when the SSE fan-out fix
-  landed (see `docs/RETRO.md`). First real event in a subprocess-runtime
-  session raises `AttributeError`. Beyond that already-known issue:
-  `worker.py`'s own `_chunk_to_event` (`worker.py:184-225`) is a second,
-  independently-drifted copy of `manager.py`'s `_chunk_to_event`
-  (`manager.py:553-735`) — the in-process version was patched to dedupe
-  streamed-vs-final message chunks and to correctly split `<think>` tags
-  that straddle a delta boundary; `worker.py`'s copy has neither fix. So
-  patching the `_events` crash alone would still leave subprocess-mode
-  sessions double-emitting responses and mis-splitting thinking blocks.
-  Zero test coverage for `SubprocessRuntime.start/_read_events/send/
-  set_mode` (`test_session/test_runtime.py` only exercises
-  `InProcessRuntime`).
-  **Recommendation:** delete `SubprocessRuntime` + `session/worker.py`
-  entirely rather than fix-and-maintain two independently-drifting
-  chunk-parsers — nothing currently sets `runtime=subprocess` in practice
-  (default is `inprocess`), and the stated focus right now is the web
-  cockpit, not runtime isolation.
+- [x] **`SubprocessRuntime` was fully broken.** Deleted rather than
+  fixed. `session/worker.py` and the `SubprocessRuntime` class are gone;
+  `create_runtime()`/`set_runtime_type()` silently fall back to
+  in-process for any unrecognized runtime value (including a
+  pre-existing `"subprocess"` saved before the removal), verified live
+  that a workspace with that value still starts a working session
+  instead of crashing. The "Subprocess" option was also removed from
+  the workspace runtime dropdown — it was a real, selectable, broken UI
+  choice.
 
-- [ ] **Delegated sub-agent threads have the same event-fragmenting bug
-  already fixed for the main thread.** `frontend/src/views/
-  AgentThread.tsx:685-707` (`DelegateSubThread`) subscribes to its own SSE
-  stream and just does `[...prev.slice(-100), {...evt, id}]` — none of
-  the dedup/merge/accumulate logic the main thread's SSE handler
-  (`AgentThread.tsx:86-139`) got in commits 9f49e88/a7261e8 (tool-call
-  update-in-place, tool-result-by-adjacency merge, consecutive message/
-  thinking delta accumulation into one growing bubble). A sub-agent's
-  nested thread will render as dozens of tiny fragment bubbles and
-  duplicate tool-call cards — exactly the bug those commits fixed
-  elsewhere, unfixed here.
-  **Fix:** extract the accumulation/merge logic from the main SSE
-  effect into a shared `reduceEvent(prev, evt)` helper, use it in both
-  places.
+- [x] **Delegated sub-agent threads had the same event-fragmenting bug
+  already fixed for the main thread.** Fixed: extracted the
+  dedup/merge/accumulate logic into a shared `reduceEvent()` used by
+  both the top-level thread and `DelegateSubThread`.
 
-- [ ] **Tool-call results always render green, regardless of success or
-  failure.** `frontend/src/views/AgentThread.tsx:588` — `evt.result` is a
-  full `SSEEvent` with a structured `tool_result` (`stdout`/`stderr`/
-  `exit_code`/`error`), but only `evt.result.message` is read, always
-  styled `color: 'var(--ok)'`. A failed shell command (non-zero exit)
-  renders identically to a successful one.
-  **Fix:** branch on `evt.result.tool_result?.exit_code`/`error` to pick
-  an err/ok color.
+- [x] **Tool-call results always rendered green, regardless of success or
+  failure.** Fixed one level deeper than it first looked: the backend
+  never actually populated `Event.tool_result` for `TOOL_RESULT` events
+  in the first place (only the free-text `message`), so there was no
+  `exit_code`/`error` for the frontend to branch on. Now populated from
+  Strands' own tool-agnostic `status` field ("success"/"error") — works
+  for the shell tool's exit code as much as the editor/calculator/task
+  tools, none of which have a real exit code.
 
 ---
 
-## Dead code (safe, mechanical deletions)
+## Dead code — all resolved
 
-- [ ] `frontend/src/views/ToolManager.tsx` (whole file, ~143 lines) + its
-  `/tools` route in `main.tsx:44` — confirmed exact functional duplicate
-  of `Settings.tsx`'s `ToolsCard`/`CustomToolDialog`, against the same
-  API. No nav link points at `/tools` anywhere. Nothing needs porting
-  first; Settings' version is actually the more consistent one (uses
-  shared primitives, `ToolManager.tsx` hand-rolls its own overlay).
-- [ ] `frontend/src/lib/api.ts:154` — `updateTool()` has zero call sites
-  anywhere (checked `.ts`/`.tsx` and `cockpit.spec.ts`).
-- [ ] `frontend/src/components/primitives/StatusDot.tsx` and
-  `PriorityLabel.tsx` — exported from the barrel, zero import sites.
-  `Board.tsx`, `List.tsx`, `TaskDetail.tsx`, `Dashboard.tsx` all still
-  hand-roll their own inline status dots/priority spans instead — a
-  half-migration. Either delete the two primitives or (better) actually
-  switch those four call sites over to them.
-- [ ] Dead Python imports: `Depends` (`cockpit/web/server.py:21`),
-  `LockState` (`server.py:55`), `PosixShellSandbox`
-  (`session/manager.py:25`), `os`/`subprocess`/`Path`
-  (`session/runtime.py:12,13,18`), `import sys` (`cli/main.py:11`),
-  `import time` (`session/worker.py:33`), `DEFAULT_TOOLS` imported but
-  unused in both `manager.py:232` and `worker.py:72`.
-- [ ] `settings.py:120-123` — `is_configured()` is a dead duplicate; every
-  real check goes through `ProviderConfig.is_configured` in
-  `provider.py`.
-- [ ] `workflows/store.py:103-104` — `RolesStore.get()` has no call site
-  (its siblings `list`/`save`/`update`/`enabled_for_trigger` are all
-  used).
-- [ ] `tools/registry.py:31-33` — `ToolInfo.id` property never read
-  anywhere (server code reads `.name`/`.description` directly).
-- [ ] `events.py:20-21` — `EventType.PROGRESS` and `EventType.BLOCKER` are
-  never emitted by anything. `BLOCKER` is defensively pattern-matched in
-  `cockpit/tui/app.py:59` but that branch can never fire. Delete, or note
-  in the enum that they're reserved for a future feature.
-- [ ] `session/manager.py:124-126` — `SessionManager.__init__`'s
-  `sessions_dir`/`vault` fields are assigned and never read again
-  anywhere; `SessionManager` is always constructed with just
-  `sessions_dir()`, `vault` is never passed. Either wire them in
-  (vault-backed secret injection was presumably the intent) or drop the
-  params.
-- [ ] Dead SSE "close" handling — `AgentThread.tsx:146-152` and
-  `lib/sse.ts`'s `onClose`/`'close'` listener. The backend's
-  `/api/agent/{id}/events` never emits a named `close` event; the real
-  end-of-session signal is a normal `type: "ended"` event, already
-  handled by the generic event-append path. The `onClose` callback
-  fabricates a redundant second `ended` event — unreachable in practice,
-  likely a leftover from before the "dup finish event" fix (a7261e8).
+- [x] `views/ToolManager.tsx` + its `/tools` route — deleted. `/tools`
+  now redirects to `/settings#tools`, matching the existing `/vault` ->
+  `/settings#vault` pattern.
+- [x] `api.ts`'s `updateTool()` — deleted.
+- [x] `primitives/StatusDot.tsx`/`PriorityLabel.tsx` — deleted.
+- [x] Unused Python imports across `server.py`, `session/manager.py`,
+  `cli/main.py`, `settings.py` — removed. Also ran `ruff check --select
+  F401` across the *whole* `src/` tree (not just the files the original
+  review covered) and cleaned up what it found beyond that scope too:
+  `cockpit/tui/app.py`, `hooks.py` (also fixed a stale unresolvable
+  `"Session"` string type-hint while there), `policies/models.py`.
+- [x] `settings.py`'s `is_configured()` — deleted (dead duplicate of
+  `provider.py`'s `ProviderConfig.is_configured`).
+- [x] `RolesStore.get()` — **not deleted.** Re-verified before acting on
+  the finding and it turned out to have real, dedicated test coverage
+  (`tests/test_workflows/test_store.py`) — a good example of why "no
+  call site in production code" isn't the same as "no call site
+  anywhere" for a review finding. Left alone.
+- [x] `ToolInfo.id` — deleted (pure alias for `.name`, never read).
+- [x] `EventType.PROGRESS` — deleted (genuinely zero producers or
+  consumers). `EventType.BLOCKER` — **kept, not deleted.** It has real,
+  working consumers already (the frontend's `blocker`/`ask` event-row
+  branch, the TUI's pattern-match) waiting on a producer that was never
+  built — that's a half-built feature, not dead code, and deleting it
+  would have thrown away working rendering code for no reason. Added a
+  comment on the enum member explaining its state.
+- [x] `SessionManager.__init__`'s `sessions_dir`/`vault` fields —
+  **left alone**, deliberately. They're genuinely unused, but dropping
+  the constructor params touches every `SessionManager(...)` call site
+  (including throughout the test suite) for zero behavior change — not
+  worth the diff size/risk for this specific item.
+- [x] Dead SSE `onClose`/`'close'` handling — removed from `sse.ts` and
+  `AgentThread.tsx`. The backend never emitted a named `close` event;
+  the real end-of-session signal (a `type: "ended"` event) was already
+  handled through the normal path.
 
 ---
 
-## Redundancy worth extracting
+## Redundancy — all extracted
 
-**Backend:**
-- ~17 near-identical `try: store.thing() except ValueError as e: raise
-  HTTPException(status_code=NNN, detail=str(e))` blocks in `server.py`
-  (lines 517, 527, 544, 673, 687, 697, 705, 739, 747, 946, 998, 1055,
-  1108, 1134, 1253, 1271, 1286) — one `_http_errors()` context manager or
-  `raise_as_http()` helper would remove all of them, mechanically.
-- Duplicated agent-serialization dict: `list_agents` (`server.py:283-297`)
-  and `get_agent` (`server.py:357-366`) build the identical 8-field
-  session dict inline — every other domain already has an
-  `_x_to_response()` helper, agents/sessions is the one missing it.
-- Atomic YAML write/read boilerplate ("write dict → yaml.dump → tmp file
-  → optional chmod(0o600) → rename", plus `yaml.safe_load` wrapped in
-  try/except) reimplemented independently in `task/store.py:370-384`,
-  `project/store.py:59-98`, `vault/store.py:506-519` (JSON variant),
-  `settings.py:102-117`, `tools/registry.py:232-266` (×2), and
-  `workflows/store.py:63-101` (×2) — the single biggest source of
-  backend duplication found. A small `agent_knots/yamlfile.py` with
-  `atomic_write_yaml(path, data)` / `safe_read_yaml(path, default)` would
-  cut ~120-150 lines and centralize chmod-0600 hygiene that's currently
-  applied inconsistently (task/project stores never chmod; vault/
-  settings/tools do).
-- `update_task` (`server.py:929-987`) calls `TaskStore.update()`
-  separately per changed field — a PATCH touching several fields does
-  several redundant full-file disk writes and bumps `updated_at`
-  repeatedly instead of once. Mutate the in-memory task across all the
-  `if` blocks, call `store.update()` once at the end.
-- Cross-file duplicate "try custom tool, else built-in" toggle logic:
-  `server.py:1141-1150` and `cockpit/tui/app.py:388-392` re-implement the
-  identical branching — belongs on `ToolRegistry` as a `.toggle(name)`
-  method.
-- `task/store.py` vs `project/store.py` share near-identical CRUD
-  boilerplate (create/get/list/update/delete/_path/_save/_load) — a thin
-  shared `YamlIdStore[T]` base for just the CRUD skeleton would cut ~50
-  lines; `TaskStore`'s substantial domain logic on top (transitions,
-  dependencies, criteria) means full unification isn't clearly worth it,
-  lower priority than the yamlfile.py extraction above.
+**Backend — done:**
+- [x] The ~17 (turned out to be ~14 once the multi-exception/mixed-logic
+  handlers were correctly excluded) near-identical
+  `try/except ValueError -> HTTPException` blocks in `server.py` — new
+  `@raises_as(status_code)` route decorator (now in `cockpit/web/
+  decorators.py`). Verified against a real FastAPI app first that
+  `functools.wraps` preserves the signature FastAPI needs for parameter
+  injection (`inspect.signature()` follows `__wrapped__`) before
+  applying it broadly. The handlers with real multi-step logic (`POST
+  /api/sessions`, `PATCH /api/tasks/{id}`'s status branch) were left as
+  plain `try/except` — they don't fit the "whole handler is one risky
+  call" shape the decorator is for.
+- [x] Duplicated agent-serialization dict (`list_agents`/`get_agent`) —
+  new `_agent_to_response()` helper (now in `routes/agents.py`),
+  matching every other domain's existing `_x_to_response()` pattern.
+- [x] Atomic YAML write/read boilerplate — new `yamlfile.py`
+  (`atomic_write_yaml()`/`safe_read_yaml()`), adopted by `task/store.py`,
+  `project/store.py`, `settings.py`, `tools/registry.py`,
+  `workflows/store.py`. Also centralizes chmod(0o600), previously
+  applied inconsistently. `vault/store.py` **deliberately left alone**
+  — it's JSON, not YAML, and the single most security-sensitive store
+  in the codebase; not worth generalizing the helper into a
+  format-agnostic one just to shave a few lines off the highest-risk
+  file.
+- [x] `update_task`'s per-field redundant writes — now mutates the
+  in-memory task across all the plain content-field checks and writes
+  once at the end. `status` and `assign` stay their own store calls
+  (both `TaskStore.set_status()`/`.assign()` re-fetch from disk
+  themselves) — kept first and last respectively so each still sees
+  whatever the other has already persisted. Regression test locks this
+  in, verified live with curl against a running server too.
+- [x] Cross-file duplicate tool-toggle branching (`server.py` /
+  `cockpit/tui/app.py`) — new `ToolRegistry.toggle()`. Along the way,
+  fixed a latent TUI-only bug: its copy of the branching didn't check
+  built-in membership before assuming a name was one, so toggling a
+  genuinely nonexistent tool there silently no-opped instead of
+  raising like the web route did — both now share the web route's
+  stricter, correct behavior.
+- [x] `task/store.py` vs `project/store.py`'s shared CRUD boilerplate —
+  **evaluated, deliberately left alone.** Re-read both stores in full:
+  the actual overlap is a thin ~25-line skeleton (`__init__`/`_path`/
+  `create`/`get`/`delete`, the "check exists, else raise ValueError"
+  pattern). Everything else genuinely differs — `TaskStore.list()` has
+  real filtering/sorting business logic with a different signature
+  than `ProjectStore`'s trivial no-args list; `_save`/`_load` are
+  irreducibly different serialization; and the ~300 lines of
+  `TaskStore`'s actual domain logic (`set_status` + its
+  `_validate_transition` state machine, `log_progress`, `assign`,
+  `mark_criterion_met`, `unmet_dependencies`, `add_step`, `_must_get`)
+  has zero counterpart in `ProjectStore` at all. A generic base class
+  would save ~25 lines at the cost of a shared abstraction for exactly
+  two consumers, one of which barely uses it beyond create/get/delete
+  anyway — a premature-abstraction trade, not a genuine simplification.
 
-**Frontend:**
-- `Field` component + `inputStyle` const duplicated byte-for-byte across
-  `TaskDialog.tsx`, `NewSessionDialog.tsx`, `WorkspaceDialog.tsx`,
-  `SetupWizard.tsx`, `Workflows.tsx`, `Settings.tsx` (the last one even
-  under a `// ── shared ───` comment that never got followed through).
-  `FolderPicker.tsx` has its own near-identical `inputStyle` too. Add
-  `primitives/Field.tsx` + export `inputStyle`, mechanical replace across
-  6 files.
-- Relative-time formatter (`timeAgo`/`rel`) duplicated 3× with near-
-  identical logic: `TaskDetail.tsx:21-27`, `NotificationBell.tsx:7-13`,
-  `Settings.tsx:580-587`. `lib/priorityColors.ts`/`statusColors.ts`
-  already went through this exact consolidation — this is the one that
-  got missed. Extract to `lib/format.ts: timeAgo(ts, opts?)`.
-- Three near-identical "form dialog" implementations —
-  `AddProviderDialog` (`Settings.tsx:306-361`), `CustomToolDialog`
-  (`Settings.tsx:392-439`), `AddCredentialDialog` (`Settings.tsx:751-797`)
-  — same per-field `useState` + error + saving + reset + try/catch/finally
-  + identical Cancel/Save footer shape every time. Extract a shared
-  `FormDialog` wrapper or at least the footer component.
-- `Workflows.tsx`'s `RoleConfigDialog` (lines 162-192) hand-rolls its own
-  `position: fixed` overlay + backdrop-click instead of using
-  `primitives/Dialog.tsx` — whose own doc comment explicitly lists "role
-  config" as one of the dialogs it's meant to back. Swap in `<Dialog>`;
-  loses nothing (Dialog already handles Escape, which the hand-rolled
-  version doesn't).
-- Repeated inline styles in `Settings.tsx`: the delete-button style
-  `{ color: 'var(--err)', fontSize: 14 }` copy-pasted 6× (lines 297, 384,
-  508, 719, 838, 851), the "+ Add X" header-button style 4×+ (lines 281,
-  376, 518, 825). `AgentThread.tsx` already extracted an equivalent
-  `pillBtn` helper for the same problem — Settings never got the same
-  treatment, an inconsistency between the two files.
-- Right-rail panel headers/empty-states duplicated verbatim across
-  `TerminalPanel`/`FilesPanel`/`CommandLogPanel` in `AgentThread.tsx`
-  (lines ~818, ~853, ~894 and ~854, ~895) — a shared `PanelHeader`/
-  `PanelEmptyState` component would cover all three (and adapt for
-  Browser's icon variant).
-- `WorkspaceSwitcher.tsx` and `NotificationBell.tsx` both hand-roll the
-  same click-outside-closes-dropdown `useRef` + `mousedown` listener —
-  only two occurrences, low urgency, but a `useClickOutside(ref, onOutside)`
-  hook would remove both.
-- `Board.tsx`/`List.tsx` share `PRIORITY_ORDER`, an identical `load`
-  callback shape, and an identical `reloadSignal` effect — genuinely
-  different views otherwise; only worth a shared `useTaskList()` hook if
-  touched again for other reasons.
-- `api.ts`'s ~50 fetch wrappers have 3 inconsistent error-handling
-  variants (plain `HTTP ${status}`, empty-string `Error` — a minor latent
-  bug since callers get nothing to show — and `err.detail` JSON parsing).
-  An `apiFetch<T>(path, opts?)` helper would unify this and fix the
-  swallowed-message cases; wide-touching change, lower priority than the
-  above.
-
----
-
-## Oversized files worth splitting
-
-- **`src/agent_knots/cockpit/web/server.py`** (1813 lines, 65 route
-  declarations across ~10 separable domains, all as closures inside one
-  `create_app()`). Concrete split, by current line ranges:
-  `cockpit/web/routes/agents.py` (277-551, 765-828),
-  `tasks.py` (830-1057), `workspaces.py` (1154-1255),
-  `settings.py` (555-655, 658-660), `vault.py` (709-761),
-  `mcp.py` (676-708), `tools.py` (1059-1150), `workflows.py` (1257-1288),
-  `review.py` (1289-1346), `fs.py` (1348-1393 + health). `server.py`
-  itself would shrink to ~300-400 lines: app factory, auth middleware,
-  login, SPA shell/fallback, static mounting, shared serialization
-  helpers. Each router built by a small factory function taking
-  `session_manager`/`vault` — matches the current closure style, no need
-  to introduce FastAPI `Depends`-based DI just for this. Mechanical,
-  low-risk if done one domain at a time with a smoke test after each, but
-  a genuinely large diff — treat as dedicated work, not a drive-by.
-
-- **`frontend/src/views/AgentThread.tsx`** (1042 lines). Split into:
-  `views/AgentThread/index.tsx` (header, goal rail, event list, composer,
-  resize handle), `EventRow.tsx` (`EventRow`, `Bubble`,
-  `DelegateSubThread`, `truncate`), `TerminalPanel.tsx`,
-  `FilesPanel.tsx` (+ `recordFileTouch`), `CommandLogPanel.tsx`
-  (+ `recordCommand`), `BrowserPanel.tsx` (+ tab-management helpers),
-  `types.ts` (`EventItem`, `Tab`, `FileChange`, `CommandEntry`). Each
-  panel is already independently complex (websocket+xterm lifecycle, a
-  file-content cache, tab-management state) and talks to the parent only
-  through plain props — no shared closures needed, so this is close to
-  copy-paste-and-import.
-
-- **`frontend/src/views/Settings.tsx`** (894 lines). Lower-risk than
-  AgentThread since the section cards share almost no state — each
-  fetches its own data on mount. One file per card
-  (`settings/UsageCard.tsx`, `AccessibilityCard.tsx`, `ProvidersCard.tsx`,
-  `ToolsCard.tsx`, `PoliciesCard.tsx`, `McpServersCard.tsx`,
-  `IntegrationsCard.tsx`, `VaultCard.tsx`, `WorkspacesCard.tsx`), plus
-  `settings/shared.tsx` for `Field`/`inputStyle`/`Section`, `Settings.tsx`
-  left as the thin orchestrator (SECTIONS array, side nav, scroll-spy).
-
-- **`src/agent_knots/cli/main.py`** (759 lines). Already internally
-  organized as six clearly delimited sections (session/cockpit/vault+
-  templates/project/task/settings), each with its own `typer.Typer()`
-  sub-app and its own module-level singleton getter — i.e. already
-  structured like six files welded together with comment banners.
-  Splitting into `cli/vault.py`, `cli/project.py`, `cli/task.py`,
-  `cli/session.py`, `cli/cockpit.py`, each exporting its `Typer` instance
-  for `main.py` to `add_typer()`, is the standard Typer sub-app-per-noun
-  layout and would take `main.py` itself down to ~60-80 lines of pure
-  registration. Real value, not busywork: the documented CLI/web parity
-  gaps (no `--description`/`--criteria`/`--tag` on `task update`, no CLI
-  workspace archive) are exactly the kind of change that's easy to get
-  right in an isolated ~140-line `task.py` and easy to half-do in a
-  759-line file with six unrelated concerns and no dedicated tests — the
-  `--assign` bug above is a direct symptom of that.
-
-- `vault/store.py` (535 lines) mixes four distinct jobs (crypto
-  orchestration/lock-unlock, credential CRUD, template CRUD, audit log)
-  in one class. Splitting `AuditLog` and/or `TemplateStore` out as
-  composed classes would bring each file under ~200 lines. Medium risk
-  (touches a public API used by both CLI and web) — do only if actively
-  working in vault code, not as a standalone cleanup.
+**Frontend — done:**
+- [x] `Field`/`inputStyle` duplicated across 6 files — new
+  `primitives/Field.tsx`, adopted by all 6. `FolderPicker.tsx`'s own
+  `inputStyle` deliberately left alone — different layout context and
+  font, not just a copy-paste duplicate.
+- [x] `timeAgo`/`rel` duplicated 3× — new `lib/format.ts`.
+- [x] `Workflows.tsx`'s hand-rolled dialog overlay — now uses
+  `primitives/Dialog`. Verified live it gained Escape-to-close for free
+  (the hand-rolled version never had that).
+- [x] Repeated delete-button/add-button inline styles in Settings — new
+  `deleteBtnStyle`/`accentTextBtnStyle()`, now in `views/Settings/
+  shared.tsx`.
+- [x] Right-rail panel header/empty-state duplication in the agent
+  thread — new `PanelHeader`/`PanelEmptyState` (now in `views/
+  AgentThread/shared.tsx`), adopted by `FilesPanel`/`CommandLogPanel`.
+  `TerminalPanel`'s own header has a genuinely different padding value
+  (4px vs 6px vertical) and was left as its own bespoke bar rather than
+  forced into the shared component for a difference that wasn't
+  actually duplication.
+- [x] Three near-identical "form dialog" implementations
+  (`AddProviderDialog`/`CustomToolDialog`/`AddCredentialDialog`) — new
+  `FormDialog` wrapper (`views/Settings/shared.tsx`) sharing the title/
+  Field-stack/error-slot/Cancel-Save-footer chrome. Each dialog still
+  owns its own field state, validation, and save logic — only the
+  wrapper is shared. `AddProviderDialog`'s preset-chips row (the one
+  piece of markup that didn't fit the other two) is passed through a
+  `headerExtra` slot rather than forced into the shared shape.
+- [x] `WorkspaceSwitcher.tsx`/`NotificationBell.tsx`'s duplicated
+  click-outside listener — new `lib/useClickOutside.ts`.
+- [x] `Board.tsx`/`List.tsx`'s shared task-fetching/polling/sorting
+  boilerplate (including a duplicated `PRIORITY_ORDER` constant) — new
+  `lib/useTaskList.ts`. `Board`'s per-stage filter no longer re-sorts,
+  since the hook already returns priority-sorted tasks.
+- [x] `api.ts`'s three inconsistent error-handling variants (`throw new
+  Error(\`HTTP ${status}\`)`, `throw new Error('')` with a blank
+  message, and an unguarded `res.json()` that itself threw a confusing
+  parse error on a non-JSON failure body) — new `apiFetch<T>()` helper
+  used by every exported function. Also surfaced a 4th, worse variant
+  along the way: several mutating calls (`setAutonomous`, `sendMessage`,
+  `deleteAgent`, `lockVault`, etc.) never checked `res.ok` at all,
+  silently "succeeding" on a failed request — now consistent with
+  everything else.
 
 ---
 
-## Lower priority / polish
+## Oversized files worth splitting — all four done
 
-- `SessionManager.start()` (`manager.py:136-359`) does ~10 distinct jobs
-  in one ~220-line function. Natural extraction points: task-context
-  resolution, working-dir resolution, tool assembly, sandboxed-tool
-  wiring, runtime-type resolution — each already has an implicit single
-  responsibility, so this is mechanical, no behavior change, low risk.
-- `Session._cancelled`/`_interrupt_only` are really one tri-state concept
-  split across two booleans, always set together, only ever read
-  together. Collapsing into one `_cancel_mode: Literal["interrupt",
-  "end"] | None` removes a field but isn't urgent — `_background_pids` is
-  unrelated and not actually confused with the other two.
-- `hooks.py:17` type-hints `session: "Session"` as an unresolvable
-  string forward-ref (no import, not even under `TYPE_CHECKING`) —
-  harmless at runtime, breaks IDE/type-checker resolution.
-- `task/tools.py` has two different validation mechanisms for the same
-  intent (`validate_task_output()` pre-validates status/priority in some
-  call paths; `update_task_status`/`log_progress` construct
-  `TaskStatus(status)` directly with their own try/except elsewhere) —
-  not true duplication since the store itself does no field validation,
-  but inconsistent if this file is touched again.
-- `tools/registry.py`'s `list_all()`/`list_enabled()` each independently
-  reload `disabled_tools.yaml` from disk — wasteful, not wrong, only
-  worth fixing if this path gets hot.
-- `ProvidersCard.handleDelete` (`Settings.tsx:275`) silently swallows all
-  delete errors (intentional per its own comment, for a synthetic legacy
-  row) — worth a `console.warn` so a genuine server error isn't
-  indistinguishable from the expected no-op.
-- No `GET /api/workspaces/{id}` or `GET /api/mcp/{name}` singular routes,
-  unlike tasks/tools which have both list and get-by-id — inconsistent
-  API surface, only worth fixing if the frontend actually needs it.
+- [x] **`src/agent_knots/cockpit/web/server.py`** (was ~1830 lines) —
+  split into `cockpit/web/routes/{agents,tasks,workspaces,settings,
+  vault,mcp,tools,workflows,review,fs}.py`, each an `APIRouter` built
+  by a `create_router(...)` factory taking whatever dependencies its
+  domain needs (`session_manager`, `vault`, `auth`). Also extracted
+  `decorators.py` (`raises_as`), `models.py` (all Pydantic request
+  bodies — several, like `ToggleRequest`, are shared across more than
+  one router), `jsonutil.py` (`_extract_json_object`, used by the
+  task-draft endpoint and imported directly by tests),
+  `gitutil.py` (shared by `review.py`/`fs.py`), and `htmltemplates.py`
+  (the `LOGIN_HTML`/`SPA_SHELL_HTML` string constants). `server.py`
+  itself is now just the composition root: auth middleware, login, the
+  SPA shell/fallback, and `app.include_router(...)` for each domain —
+  the SPA fallback route is still registered dead last, same as
+  before, so it can't shadow `/api/*` or `/assets/*`.
+- [x] **`frontend/src/views/AgentThread.tsx`** (was ~1075 lines) — split
+  into `views/AgentThread/{index,EventRow,TerminalPanel,FilesPanel,
+  CommandLogPanel,BrowserPanel,types,shared}.tsx`. `types.ts` holds the
+  shared `reduceEvent()` reducer (used by both the top-level thread and
+  the delegate sub-thread) plus the SSE-side-effect helpers
+  (`recordFileTouch`/`recordCommand`); `shared.tsx` holds
+  `PanelHeader`/`PanelEmptyState`; `EventRow.tsx` includes
+  `DelegateSubThread` since it's the only thing that opens one.
+  `main.tsx`'s `import AgentThread from './views/AgentThread'` needed
+  no change — resolves to the directory's `index.tsx` automatically.
+- [x] **`frontend/src/views/Settings.tsx`** (was ~910 lines) — split
+  into `views/Settings/{index,UsageCard,AccessibilityCard,
+  ProvidersCard,ToolsCard,PoliciesCard,McpServersCard,IntegrationsCard,
+  VaultCard,WorkspacesCard,shared}.tsx`, same pattern as the
+  `AgentThread` split. `shared.tsx` holds `deleteBtnStyle`/
+  `accentTextBtnStyle`/`FormDialog`.
+- [x] **`src/agent_knots/cli/main.py`** (was 759 lines) — split into
+  `cli/{session,cockpit,vault,project,task,settings}.py`, each owning
+  its own Typer sub-app, plus `cli/_format.py` for the one genuinely
+  shared helper (`format_ts`, used identically by `vault audit` and
+  `task show`'s progress log). `main.py` is now just the root Typer
+  `app` plus `app.add_typer(...)` wiring. Entry point
+  (`agent_knots.cli.main:app` in `pyproject.toml`) needed no change.
+
+All four were verified with a full backend pytest run and/or a full
+Playwright pass against a live isolated instance (see "What actually
+shipped" below for exact numbers) before committing — none were treated
+as "just moving code" without re-proving the app still works end to end.
 
 ---
 
-## Suggested order
+## Lower priority / polish — all resolved
 
-1. Fix the two real bugs (mode-gating rename, CLI `--assign` default) —
-   small, safe, high value.
-2. Delete confirmed-dead code (ToolManager.tsx, updateTool, unused
-   imports/fields/enum members, dead SSE close handler) — batchable,
-   essentially risk-free.
-3. Decide on `SubprocessRuntime`: delete, or fix + de-duplicate the
-   chunk-parser.
-4. Extract the shared helpers (yamlfile.py, HTTP-error helper,
-   agent-response helper, Field/inputStyle, timeAgo) — mechanical,
-   moderate value.
-5. File splits (server.py, AgentThread.tsx, Settings.tsx, cli/main.py) —
-   biggest diffs, do one at a time, each independently valuable and each
-   independently low-risk if done carefully with tests passing after
-   each step.
+Everything that was previously filed here is done, in a third pass on
+this branch after the first two (findings + fixes, then the four large
+file splits):
+
+- [x] `SessionManager.start()` did ~10 distinct jobs inline in one
+  function — extracted into named private helpers
+  (`_resolve_task_context`, `_build_full_prompt`, `_resolve_working_dir`,
+  `_build_tools`, `_build_model_instance`, `_maybe_create_sandbox`,
+  `_swap_sandboxed_tools`, `_register_hooks`, `_resolve_runtime_type`),
+  leaving `start()` as an orchestrator. The Agent/Session/intervention-
+  handler construction block deliberately stays inline —
+  `ModeInterventionHandler`'s `lambda: session.mode` relies on Python's
+  late-binding closures to read `session` before it's actually assigned
+  (Agent must be built first, since `Session`'s constructor takes the
+  already-built Agent), and that ordering subtlety wasn't worth risking
+  by pulling into a helper.
+- [x] `Session._cancelled`/`_interrupt_only` were two independent
+  booleans for one tri-state concept (not cancelled / cancelled-and-
+  ending / cancelled-but-session-stays-alive) — `_interrupt_only` was
+  only ever meaningful when `_cancelled` was also true. Collapsed into
+  a single `CancelKind` enum (`NONE`/`INTERRUPT`/`STOP`) on
+  `Session._cancel_kind`.
+- [x] `task/tools.py`'s two validation mechanisms turned out to be a
+  real bug, not just style drift: `validate_task_output()` pre-checks
+  title/priority/status format, but was only ever wired into
+  `create_task`/`update_task` (title/priority) — no tool actually
+  routed `status` through it, even though the function already had a
+  tested status branch ready to use. `update_task_status` happened to
+  be safe anyway (its `TaskStatus(status)` conversion lived inside its
+  own try/except), but `log_progress` built its `ProgressEntry` — and
+  so called `TaskStatus(status)` — *before* its try/except, so an
+  agent passing a malformed status there raised an **uncaught
+  ValueError** instead of the structured `{"error": ...}` every other
+  tool returns. Confirmed live before fixing. Both tools now validate
+  through `validate_task_output()` first; 3 new regression tests.
+- [x] `tools/registry.py` re-read `disabled_tools.yaml` from disk on
+  every `list_builtin()` call, and `toggle_builtin()` read it again
+  independently — a single `toggle()` on a built-in tool hit disk
+  twice. Now read once in `__init__` into `self._disabled_builtins`,
+  mirroring the existing `_custom` dict pattern (loaded once, mutated
+  in memory, persisted on write). Safe since `ToolRegistry` is
+  instantiated fresh per request.
+- [x] `ProvidersCard.handleDelete` silently swallowed delete failures
+  with a bare `catch {}` — now logs via `console.warn` (the synthetic-
+  legacy-row 404 is expected and still non-fatal, but a real failure
+  looked identical to it before).
+- [x] Missing `GET /api/workspaces/{id}`/`GET /api/mcp/{name}` singular
+  routes — added both, plus `McpServerStore.get(name)` (the store had
+  no single-item lookup at all before this) and a shared
+  `_workspace_to_response()` helper. 4 new tests.
+- [x] `task/store.py` vs `project/store.py`'s CRUD boilerplate, and the
+  three frontend dedup items — see their entries under "Redundancy"
+  above (the store one was evaluated and deliberately left alone; the
+  three frontend ones were all extracted).
+
+---
+
+## What actually shipped
+
+23 commits on `cleanup/code-review` (a separate git worktree — `main`
+and the live server were never touched):
+
+1. `fix: task update --assign silently unassigning on unrelated edits`
+2. `fix: delegate sub-threads keep fragmenting, tool results always
+   render green`
+3. `chore: delete confirmed-dead code from the review`
+4. `refactor: delete SubprocessRuntime, remove it from every runtime
+   picker`
+5. `refactor: extract shared atomic-YAML read/write helper`
+6. `refactor: dedupe HTTP error handling, agent response, tool toggle in
+   server.py`
+7. `refactor: extract shared timeAgo() helper`
+8. `refactor: dedupe repeated button styles, adopt Dialog primitive in
+   Workflows`
+9. `refactor: extract shared Field/inputStyle primitive`
+10. `refactor: extract shared PanelHeader/PanelEmptyState in
+    AgentThread.tsx`
+11. `docs: mark code review findings complete, document deferred items`
+12. `refactor: split cli/main.py into per-domain command modules`
+13. `refactor: extract shared FormDialog wrapper in Settings.tsx`
+14. `refactor: split server.py into per-domain route modules`
+15. `refactor: split AgentThread.tsx into per-concern files`
+16. `refactor: split Settings.tsx into one file per section card`
+17. `docs: mark all deferred code review items complete`
+18. `refactor: unify api.ts error handling, dedupe click-outside/
+    task-list hooks`
+19. `refactor: extract SessionManager.start() helpers, collapse cancel
+    booleans`
+20. `fix: log_progress crashes uncaught on an invalid status string`
+21. `refactor: cache disabled_tools.yaml read once per ToolRegistry
+    instance`
+22. `feat: add missing singular GET /api/workspaces/{id}, GET
+    /api/mcp/{name}`
+23. `docs: mark all "lower priority / polish" items complete`
+
+(Plus the Autonomous-toggle feature and the mode-gating fix, committed
+to `main` directly before this branch was created, since that was
+already a complete, tested, user-requested feature rather than part of
+the cleanup pass itself.)
+
+Every commit: full backend test suite green (389/389 by the end, up
+from 335 at the start of the original review), `tsc --noEmit` +
+production build clean where frontend was touched, ruff clean, and —
+for anything touching rendered UI, live process behavior, or
+request/response shape — verified against a real running instance
+before committing, not just "tests pass." Six separate full Playwright
+regression runs across this branch's lifetime (one per large split,
+one after the frontend polish batch, one final consolidated pass) all
+landed at the identical 63/75 passing, the same 12 pre-existing
+failures every time (all need a real LLM completion to actually run an
+agent turn — multi-turn conversation, mode switching live, tool-use
+flows — unrelated to any of these changes), which is strong evidence
+none of this branch's changes altered any observable behavior outside
+what was specifically intended to change.

@@ -33,7 +33,6 @@ export interface SSEEvent {
 export function subscribeToAgent(
   agentId: string,
   onEvent: (event: SSEEvent) => void,
-  onClose?: () => void,
 ): EventSource {
   const es = new EventSource(`/api/agent/${agentId}/events`)
 
@@ -46,10 +45,13 @@ export function subscribeToAgent(
     }
   }
 
-  es.addEventListener('close', () => {
-    onClose?.()
-    es.close()
-  })
+  // The backend never emits a named "close" SSE event (only plain data:
+  // messages plus a "connected" event on open) — a real end-of-session
+  // signal is a normal event with type "ended", already handled via
+  // onEvent like any other event. A previous version of this listened
+  // for 'close' anyway and fabricated a second, synthetic "ended" event
+  // when it (never) fired — dead code, removed rather than kept as a
+  // trap for the next person who assumes it does something.
 
   es.onerror = () => {
     // EventSource auto-reconnects. If it can't, we'll get repeated errors.

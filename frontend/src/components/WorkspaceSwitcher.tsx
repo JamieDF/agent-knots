@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchWorkspaces, type Workspace } from '../lib/api'
+import { useClickOutside } from '../lib/useClickOutside'
 import { useWorkspaceScope } from '../lib/workspaceContext'
 
 /** Workspace scope switcher — a pill button + dropdown, matching the
@@ -19,14 +20,7 @@ function WorkspaceSwitcher() {
     if (open) fetchWorkspaces().then(d => setWorkspaces(d.workspaces)).catch(() => {})
   }, [open])
 
-  useEffect(() => {
-    if (!open) return
-    const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
-  }, [open])
+  useClickOutside(ref, open, () => setOpen(false))
 
   const current = workspaces.find(w => w.id === workspace)
   const label = current ? current.name : 'All workspaces'

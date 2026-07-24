@@ -31,8 +31,8 @@
 
   /* Phase 0 compatibility aliases — the old dark-only token names, used
      throughout views/components not yet migrated to the Atelier
-     primitives (Board, Tasks, TaskDetail, Settings, ToolManager). Drop
-     each alias as its last consumer is rewritten in its own phase. */
+     primitives (Board, Tasks, TaskDetail, Settings). Drop each alias as
+     its last consumer is rewritten in its own phase. */
   --surface: var(--card);
   --surface-raised: var(--card2);
   --surface-hover: var(--line2);

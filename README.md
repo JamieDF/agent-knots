@@ -61,7 +61,7 @@ way, `configured` is true before the wizard would even ask. See
 | **Agent Thread right rail** | ✅ Real interactive terminal (PTY + xterm.js) in the agent's working directory, a Files tab with previews, a Command Log (every shell invocation + timestamp), and a multi-tab Browser (address bar, open/close tabs, chat links open in a new tab) |
 | **Background processes** | ✅ Agents can start a dev server or other long-running process with `background=true` — it isn't killed by the tool's timeout, and is cleaned up automatically when the session ends |
 | **TUI cockpit** | ✅ Textual. Agent list, focus view, tools manager, keyboard shortcuts |
-| **Take-over flow** | ✅ Assume (agent → assistant) / Relinquish (assistant → agent). Mode pill updates live; typing a message while watching assumes control automatically |
+| **Autonomous toggle** | ✅ A single on/off switch on task-attached sessions: on lets the agent self-direct from its task, off interrupts whatever's running and pauses it for back-and-forth (tools still work either way — sending a message while on is itself the "hold up" that pauses it) |
 | **Multi-turn chat** | ✅ Sequential conversation with context retention |
 | **Task system** | ✅ YAML-backed. Draft → Open → In Progress → Review → Done, with an enforced review gate (only a human can pass a task through review — an agent can't self-approve its own work) and task dependencies (blocked from starting until dependencies are done). Progress logs, acceptance criteria (human or agent can mark met), steps |
 | **Kanban board** | ✅ Configurable stages (Workflows screen), drag-and-drop between columns, all task statuses covered |
@@ -69,7 +69,7 @@ way, `configured` is true before the wizard would even ask. See
 | **Agent tools** | ✅ 12 built-in: editor, shell, calculator, think + 8 task tools. Custom tools via settings |
 | **Task tools** | ✅ Agent can create, read, update, log progress, add steps on tasks |
 | **Workspaces** | ✅ Multi-project workspaces. Task filtering, session grouping, path isolation, archive/unarchive |
-| **Runtime modes** | ✅ In-process (fast) + subprocess (isolated) per workspace/session |
+| **Runtime** | ✅ In-process. (A second, subprocess-isolated runtime existed but never actually worked — removed rather than fixed; real process isolation is a container-runtime roadmap item instead) |
 | **Model providers** | ✅ MiniMax, OpenAI, Anthropic, Ollama, custom. Configurable in settings |
 | **Custom tools** | ✅ User-defined shell command tools. Enable/disable per tool |
 | **Accessibility** | ✅ App-wide font size and font family, in Settings |
@@ -124,7 +124,7 @@ agent-knots
 │                    │                              │
 │   ┌────────────────▼───────────────────────────┐ │
 │   │     Session Manager                         │ │
-│   │  InProcessRuntime or SubprocessRuntime      │ │
+│   │  InProcessRuntime                           │ │
 │   │  ┌──────────────────────────────────────┐  │ │
 │   │  │  Strands Agent (MiniMax/OpenAI/...)   │  │ │
 │   │  │  12 tools: editor, shell, task mgmt   │  │ │
@@ -149,7 +149,7 @@ agent-knots/
 │   ├── cockpit/
 │   │   ├── tui/               # Textual TUI (overview, focus, tools)
 │   │   └── web/               # FastAPI server (auth, SSE, REST, SPA shell)
-│   ├── session/               # SessionManager, InProcess/Subprocess runtime, worker
+│   ├── session/                # SessionManager, InProcessRuntime
 │   ├── task/                  # Task models, YAML store, Strands tools for agents
 │   ├── vault/                 # AES-256-GCM crypto + file store
 │   ├── project/               # Workspace models + YAML store

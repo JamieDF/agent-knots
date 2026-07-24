@@ -1,24 +1,32 @@
-"""Session runtimes — in-process vs subprocess.
+"""Session runtimes.
 
-Two implementations:
-- InProcessRuntime: runs the agent in the same Python process (default)
-- SubprocessRuntime: spawns a child process for isolation
+One implementation: InProcessRuntime, which runs the agent in the same
+Python process. A second, SubprocessRuntime (spawning a child process
+for isolation), existed here but was removed — see docs/RETRO.md. It
+referenced a Session API (session._events) that stopped existing when
+the SSE fan-out fix replaced the single queue with
+_subscribers/_history/_broadcast(), so it crashed on the first event any
+subprocess-runtime session tried to emit, and had zero test coverage
+catching that. Its own event-chunk parser had also independently
+drifted from the (fixed) one in session/manager.py, so restoring it
+would have meant fixing two bugs and then keeping two parsers in sync
+going forward for a mode nothing currently selects by default and that
+never worked when selected. Real process-level isolation is still a
+real, wanted feature — see the container runtime item on the roadmap —
+just not this implementation.
+
+The abstraction is kept as a single-member setup (rather than inlining
+InProcessRuntime directly into SessionManager) specifically so a real
+isolated runtime — container-backed, most likely — can be added later
+without changing SessionManager's own code, only create_runtime().
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
-import os
-import subprocess
-import sys
-import time
-import uuid
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Any
 
-from agent_knots.events import Event, EventType, ToolCall
 from agent_knots.session.manager import Session
 
 
@@ -70,162 +78,19 @@ class InProcessRuntime(SessionRuntime):
         await self._mgr.set_mode(session.id, mode)
 
 
-class SubprocessRuntime(SessionRuntime):
-    """Spawns a child process for agent isolation.
-
-    The child runs `agent_knots.session.worker` which communicates via
-    JSONL over stdin/stdout. Events are forwarded to the session's
-    event queue.
-    """
-
-    def __init__(self) -> None:
-        self._processes: dict[str, asyncio.subprocess.Process] = {}
-        self._readers: dict[str, asyncio.Task] = {}
-
-    async def start(self, session: Session, config: dict) -> None:
-        """Spawn the worker subprocess and start streaming events."""
-        # Build the config to send.
-        worker_config = {
-            "type": "config",
-            "model": config.get("model", "minimax-m2.7"),
-            "api_key": config.get("api_key", ""),
-            "base_url": config.get("base_url", ""),
-            "workspace_dir": config.get("workspace_dir", ""),
-            "system_prompt": config.get("system_prompt", ""),
-            "task_description": config.get("task_description", ""),
-        }
-
-        # The worker module path.
-        worker_module = "agent_knots.session.worker"
-
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-u", "-m", worker_module,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=config.get("workspace_dir") or None,
-        )
-
-        self._processes[session.id] = proc
-
-        # Send config.
-        proc.stdin.write((json.dumps(worker_config) + "\n").encode())
-        await proc.stdin.drain()
-
-        # Start reading events from stdout.
-        self._readers[session.id] = asyncio.create_task(
-            self._read_events(session, proc)
-        )
-
-    async def _read_events(self, session: Session, proc: asyncio.subprocess.Process) -> None:
-        """Read JSONL events from the subprocess stdout."""
-        try:
-            while True:
-                line = await proc.stdout.readline()
-                if not line:
-                    break
-
-                try:
-                    data = json.loads(line.decode().strip())
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    continue
-
-                msg_type = data.get("type", "")
-                if msg_type == "event":
-                    event = self._parse_event(session.id, data)
-                    if event:
-                        await session._events.put(event)
-                elif msg_type == "done":
-                    break
-        except Exception:
-            pass
-        finally:
-            await session._events.put(Event(
-                type=EventType.STATE_CHANGE,
-                session_id=session.id,
-                message="Session ended.",
-            ))
-
-    async def stop(self, session: Session) -> None:
-        proc = self._processes.pop(session.id, None)
-        reader = self._readers.pop(session.id, None)
-
-        if proc and proc.returncode is None:
-            try:
-                proc.stdin.write(b'{"type":"stop"}\n')
-                await proc.stdin.drain()
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
-            except (asyncio.TimeoutError, Exception):
-                proc.kill()
-                await proc.wait()
-
-        if reader and not reader.done():
-            reader.cancel()
-
-    async def send(self, session: Session, message: str) -> None:
-        proc = self._processes.get(session.id)
-        if proc and proc.returncode is None:
-            msg = json.dumps({"type": "send", "message": message}) + "\n"
-            proc.stdin.write(msg.encode())
-            await proc.stdin.drain()
-
-    async def set_mode(self, session: Session, mode: str) -> None:
-        proc = self._processes.get(session.id)
-        if proc and proc.returncode is None:
-            msg = json.dumps({"type": "set-mode", "mode": mode}) + "\n"
-            proc.stdin.write(msg.encode())
-            await proc.stdin.drain()
-        session.mode = mode
-        await session._events.put(Event(
-            type=EventType.STATE_CHANGE,
-            session_id=session.id,
-            message=f"Mode changed to {mode}",
-        ))
-
-    @staticmethod
-    def _parse_event(session_id: str, data: dict) -> Event | None:
-        """Parse a subprocess event dict into an Event object."""
-        event_type = data.get("event_type", "")
-        now = time.time()
-
-        mapping = {
-            "message": EventType.MESSAGE,
-            "thinking": EventType.THINKING,
-            "tool_call": EventType.TOOL_CALL,
-            "tool_result": EventType.TOOL_RESULT,
-            "error": EventType.ERROR,
-            "state_change": EventType.STATE_CHANGE,
-        }
-
-        etype = mapping.get(event_type, EventType.MESSAGE)
-
-        tool_call = None
-        if etype == EventType.TOOL_CALL:
-            tool_call = ToolCall(
-                id=str(uuid.uuid4())[:8],
-                name=data.get("tool_name", ""),
-                args=data.get("args", {}),
-            )
-
-        return Event(
-            type=etype,
-            session_id=session_id,
-            timestamp=now,
-            message=data.get("message", ""),
-            error=data.get("error", ""),
-            tool_call=tool_call,
-        )
-
-
 # ── runtime factory ──────────────────────────────────────────────────────────
 
-_RUNTIME_TYPE = "inprocess"  # "inprocess" or "subprocess"
+_RUNTIME_TYPE = "inprocess"
 
 
 def set_runtime_type(runtime_type: str) -> None:
-    """Set the global runtime type ('inprocess' or 'subprocess')."""
+    """Set the global runtime type. Only "inprocess" is real; anything
+    else (including "subprocess", still accepted from settings/project
+    files saved before it was removed) is silently treated as
+    "inprocess" by create_runtime() below rather than rejected — an
+    old saved value shouldn't suddenly break sessions on upgrade."""
     global _RUNTIME_TYPE
-    if runtime_type in ("inprocess", "subprocess"):
+    if runtime_type == "inprocess":
         _RUNTIME_TYPE = runtime_type
 
 
@@ -240,8 +105,10 @@ def create_runtime(session_manager: Any = None, runtime_type: str | None = None)
     override) should pass it explicitly rather than relying on the global —
     the global reflects only the last call to set_runtime_type() and can be
     stale relative to a per-session/per-project resolution.
+
+    Only "inprocess" is implemented — any other value (including the
+    removed "subprocess") falls back to it rather than raising, so a
+    pre-existing settings.yaml/project.yaml with an old runtime value
+    keeps working instead of crashing session start.
     """
-    rt = runtime_type or _RUNTIME_TYPE
-    if rt == "subprocess":
-        return SubprocessRuntime()
     return InProcessRuntime(session_manager)

@@ -17,8 +17,11 @@ class EventType(StrEnum):
     THINKING = "thinking"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
+    # No backend code broadcasts this yet — the frontend (AgentThread's
+    # EventRow "blocker"/"ask" branch) and the TUI (app.py) both already
+    # have real, working rendering for it, waiting on a producer that was
+    # never built. Not dead code — a half-built feature. See docs/RETRO.md.
     BLOCKER = "blocker"
-    PROGRESS = "progress"
     STATE_CHANGE = "state_change"
     ERROR = "error"
     # Atelier event kinds — see events.py's serialize_event() for the wire

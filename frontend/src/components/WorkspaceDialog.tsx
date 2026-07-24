@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Dialog } from './primitives'
+import { Dialog, Field, inputStyle } from './primitives'
 import FolderPicker from './FolderPicker'
 import { createWorkspace, updateWorkspace, fetchGitInfo, type Workspace } from '../lib/api'
 
@@ -72,10 +72,12 @@ function WorkspaceDialog({ workspace, onClose, onSaved }: Props) {
           )}
         </Field>
         <Field label="Runtime">
+          {/* Subprocess used to be a second option here — removed along
+              with SubprocessRuntime, which never actually worked (see
+              docs/RETRO.md). In-process is the only real runtime today. */}
           <select aria-label="Runtime" value={runtime} onChange={e => setRuntime(e.target.value)} style={inputStyle}>
             <option value="">(use global)</option>
             <option value="inprocess">In-process</option>
-            <option value="subprocess">Subprocess</option>
           </select>
         </Field>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
@@ -94,20 +96,6 @@ function WorkspaceDialog({ workspace, onClose, onSaved }: Props) {
       />
     </Dialog>
   )
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-      <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--mut)' }}>{label}</label>
-      {children}
-    </div>
-  )
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--line2)',
-  background: 'var(--card2)', color: 'var(--ink)', fontSize: 13, outline: 'none', fontFamily: 'inherit',
 }
 
 const browseBtnStyle: React.CSSProperties = {

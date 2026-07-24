@@ -7,6 +7,7 @@ import {
 import { useWorkspaceScope } from '../lib/workspaceContext'
 import { statusStyle } from '../lib/statusColors'
 import { priorityColor } from '../lib/priorityColors'
+import { timeAgo } from '../lib/format'
 import { Card, Chip, SectionLabel } from '../components/primitives'
 import DeskLayout from '../components/DeskLayout'
 import TaskDialog from '../components/TaskDialog'
@@ -18,12 +19,6 @@ const REVIEW_GATE_LABELS: Record<string, string> = {
   none: 'no review gate',
 }
 
-function rel(e: number) {
-  const d = Date.now() - e * 1000; const m = Math.floor(d / 60000)
-  if (m < 1) return 'just now'; if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`
-  return `${Math.floor(h / 24)}d ago`
-}
 function ts(e: number) { return new Date(e * 1000).toLocaleString() }
 
 function TaskDetail() {
@@ -267,7 +262,7 @@ function TaskDetail() {
                     <Card key={i} style={blocked ? { border: '1px solid var(--warn)' } : {}}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: blocked ? 'var(--warn-ink)' : 'var(--mut)' }}>{p.status.replace('_', ' ')}</span>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--mut)' }}>{rel(p.timestamp)}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--mut)' }}>{timeAgo(p.timestamp)}</span>
                       </div>
                       <div style={{ fontSize: 13, color: 'var(--ink2)', lineHeight: 1.5 }}>{p.entry}</div>
                       {p.blocker?.question && (
@@ -321,7 +316,7 @@ function TaskDetail() {
           )}
           <SideBlock label="Metadata">
             <Row l="Created" v={ts(task.created_at)} />
-            <Row l="Updated" v={rel(task.updated_at)} />
+            <Row l="Updated" v={timeAgo(task.updated_at)} />
           </SideBlock>
         </div>
       </div>
