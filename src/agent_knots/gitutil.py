@@ -1,4 +1,10 @@
-"""Git helpers shared by the review and filesystem-browse routers."""
+"""Git helpers shared by the review/filesystem-browse routers and the
+session manager's per-session branch handling.
+
+Lives at the package root rather than under cockpit/web/ because
+session/manager.py needs it too, and importing from the web layer into
+the session layer would invert the dependency direction.
+"""
 
 import re
 import subprocess

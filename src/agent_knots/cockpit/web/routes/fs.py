@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
-from agent_knots.cockpit.web.gitutil import _github_url_from_remote, _run_git
+from agent_knots.gitutil import _github_url_from_remote, _run_git
 
 
 def create_router() -> APIRouter:

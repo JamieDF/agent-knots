@@ -14,9 +14,9 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
-from agent_knots.cockpit.web.gitutil import _git_diff_for_file, _git_diff_stat, _run_git
 from agent_knots.cockpit.web.models import ReviewActionRequest
 from agent_knots.config import projects_dir as _projects_dir
+from agent_knots.gitutil import _git_diff_for_file, _git_diff_stat, _run_git
 from agent_knots.project.store import ProjectStore
 
 
