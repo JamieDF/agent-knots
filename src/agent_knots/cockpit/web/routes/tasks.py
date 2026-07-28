@@ -12,13 +12,12 @@ from agent_knots.cockpit.web.jsonutil import _extract_json_object
 from agent_knots.cockpit.web.models import (
     CreateTaskRequest, DraftTaskRequest, ToggleCriterionRequest, UpdateTaskRequest,
 )
-from agent_knots.config import roles_file, stages_file, tasks_dir
+from agent_knots.config import tasks_dir
 from agent_knots import provider as provider_module
 from agent_knots.session.manager import SessionManager
+from agent_knots.task.lifecycle import maybe_auto_stop_finished_sessions, maybe_fire_role_triggers
 from agent_knots.task.models import Priority, ReviewGate, Step, Task, TaskStatus, new_task_id
 from agent_knots.task.store import TaskStore
-from agent_knots.workflows.models import Trigger, stage_for_status
-from agent_knots.workflows.store import RolesStore, StagesStore
 
 
 def _task_to_response(task: Task, store: TaskStore | None = None) -> dict:
@@ -157,79 +156,23 @@ def create_router(session_manager: SessionManager) -> APIRouter:
         return _task_to_response(task, store)
 
     async def _maybe_auto_stop_finished_sessions(new_status: str, task: Task) -> None:
-        """Stop every session working this task once it reaches a status
-        that means this round of work is over — review, done, or
-        abandoned. Otherwise a finished task's sessions (and whatever git
-        branch / auto-provisioned workdir they hold onto) just sit there
-        forever, since nothing else ever stops them automatically.
+        """Runs before _maybe_fire_role_triggers, not after — a
+        transition into review that also fires a new advisory reviewer
+        must stop the *old* writer first, without racing the reviewer
+        session that's about to be created (it doesn't exist yet at
+        this point, since role triggers haven't fired).
 
-        Runs before _maybe_fire_role_triggers, not after — a transition
-        into review that also fires a new advisory reviewer must stop
-        the *old* writer first, without racing the reviewer session
-        that's about to be created (it doesn't exist yet at this point,
-        since role triggers haven't fired).
-
-        Same disclosed limitation as _maybe_fire_role_triggers: only
-        wired at this API-layer PATCH, not the agent-tool status-change
-        path (task/tools.py has no SessionManager reference).
+        Shared with the agent-tool status-change path — see
+        task/lifecycle.py and task/tools.py's
+        make_session_aware_status_tools.
         """
-        if new_status not in ("review", "done", "abandoned"):
-            return
-        for session in [s for s in session_manager.active if s.task_id == task.id]:
-            await session_manager.stop(session.id)
+        await maybe_auto_stop_finished_sessions(session_manager, new_status, task)
 
     def _maybe_fire_role_triggers(old_status: str, new_status: str, task: Task) -> None:
-        """Auto-start a session for any enabled default-agent role whose
-        trigger matches this status transition (Workflows screen).
-
-        Only wired at this API layer — a status change driven by an
-        agent tool (task/tools.py's update_task_status/log_progress)
-        does not fire triggers yet. Disclosed limitation, not silently
-        incomplete: covering the agent-tool path would need threading
-        SessionManager into the task-tools module, a bigger change
-        deferred past this phase.
-        """
-        import asyncio
-
-        stages = StagesStore(stages_file()).list()
-        old_stage = stage_for_status(stages, old_status)
-        new_stage = stage_for_status(stages, new_status)
-        if old_stage is None or new_stage is None or old_stage.key == new_stage.key:
-            return
-
-        # Independent checks, not if/elif — tasks now start in Draft by
-        # default, so a single PATCH can jump straight from draft to
-        # in_progress (skipping Open entirely) and should fire *both*
-        # the leaves-draft and is-started triggers, not just one.
-        triggers: list[Trigger] = []
-        if old_stage.key == "draft" and new_stage.key != "draft":
-            triggers.append(Trigger.LEAVES_DRAFT)
-        if new_stage.key == "in_progress":
-            triggers.append(Trigger.IS_STARTED)
-        if new_stage.key == "review":
-            triggers.append(Trigger.ENTERS_REVIEW)
-
-        for trigger in triggers:
-            for role in RolesStore(roles_file()).enabled_for_trigger(trigger):
-                asyncio.create_task(session_manager.start(
-                    mode="agent",
-                    model=role.model,
-                    system_prompt=role.prompt,
-                    task_id=task.id,
-                    task_description=f"({role.name}) {task.title}",
-                    # task.project is the workspace this task belongs to
-                    # — without it, every role-fired session used to get
-                    # no working directory at all, so a builder role's
-                    # shell/editor tools silently ran against whatever
-                    # cwd agent-knots itself happened to be launched
-                    # from instead of the task's actual repo.
-                    project_id=task.project or None,
-                    advisory=role.advisory,
-                    # Only an advisory role is tool-restricted — the
-                    # writer keeps the full default tool set.
-                    allowed_tools=role.tools if role.advisory else None,
-                    role=role.key,
-                ))
+        """Shared with the agent-tool status-change path — see
+        task/lifecycle.py and task/tools.py's
+        make_session_aware_status_tools."""
+        maybe_fire_role_triggers(session_manager, old_status, new_status, task)
 
     @router.patch("/api/tasks/{task_id}")
     async def update_task(task_id: str, body: UpdateTaskRequest):

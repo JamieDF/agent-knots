@@ -1182,6 +1182,16 @@ class SessionManager:
         registry = ToolRegistry()
         all_tools = list(tools or []) + registry.list_enabled(cwd=resolved_working_dir)
 
+        # update_task_status/log_progress, if enabled, get swapped for
+        # session-aware versions — same by-name-swap technique as the
+        # sandboxed shell/editor tools below, so a status change made
+        # through them can trigger the same auto-stop / role-trigger
+        # side effects the web PATCH route already gets. Without this,
+        # an agent marking its own task done never triggered either.
+        from agent_knots.task.tools import make_session_aware_status_tools
+        session_aware = {t.__name__: t for t in make_session_aware_status_tools(self)}
+        all_tools = [session_aware.get(getattr(t, "__name__", ""), t) for t in all_tools]
+
         from agent_knots.session.features import make_delegate_tool, make_ask_user_tool
         all_tools.append(make_delegate_tool(self, session_id))
         all_tools.append(make_ask_user_tool(self, session_id))

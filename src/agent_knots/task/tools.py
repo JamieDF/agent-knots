@@ -11,6 +11,9 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
+from typing import Any
+
 from strands.tools import tool
 
 from agent_knots.config import tasks_dir
@@ -160,20 +163,18 @@ def list_tasks(status: str = "") -> dict:
     }
 
 
-@tool(description="Update a task's status. Use this to move tasks through the workflow. Moving to 'done' requires every acceptance criterion to already be marked met via mark_criterion_met, AND (unless the task's review_gate is 'none') the task must already be in 'review' status — go in_progress -> review -> done, not straight to done. Even from 'review', you (the agent) cannot complete the done transition yourself when review_gate isn't 'none' — that requires a human to actually review and close it out. Move the task to 'review' and stop there; a human (or a separate reviewer session) finishes it.")
-def update_task_status(task_id: str, status: str) -> dict:
-    """Update a task's status.
+_UPDATE_STATUS_DESCRIPTION = (
+    "Update a task's status. Use this to move tasks through the workflow. Moving to 'done' "
+    "requires every acceptance criterion to already be marked met via mark_criterion_met, AND "
+    "(unless the task's review_gate is 'none') the task must already be in 'review' status — go "
+    "in_progress -> review -> done, not straight to done. Even from 'review', you (the agent) "
+    "cannot complete the done transition yourself when review_gate isn't 'none' — that requires "
+    "a human to actually review and close it out. Move the task to 'review' and stop there; a "
+    "human (or a separate reviewer session) finishes it."
+)
 
-    Args:
-        task_id: The task ID.
-        status: New status. One of 'draft', 'open', 'planned',
-                'in_progress', 'blocked', 'review', 'done', 'abandoned'.
 
-    Returns:
-        Updated task details, or an error if the status is malformed or
-        the transition isn't allowed (e.g. unmet acceptance criteria for
-        'done').
-    """
+def _update_task_status_impl(task_id: str, status: str) -> dict:
     validation = validate_task_output({"status": status})
     if not validation["valid"]:
         return {"error": "; ".join(validation["errors"])}
@@ -188,6 +189,23 @@ def update_task_status(task_id: str, status: str) -> dict:
         "title": task.title,
         "status": task.status.value,
     }
+
+
+@tool(description=_UPDATE_STATUS_DESCRIPTION)
+def update_task_status(task_id: str, status: str) -> dict:
+    """Update a task's status.
+
+    Args:
+        task_id: The task ID.
+        status: New status. One of 'draft', 'open', 'planned',
+                'in_progress', 'blocked', 'review', 'done', 'abandoned'.
+
+    Returns:
+        Updated task details, or an error if the status is malformed or
+        the transition isn't allowed (e.g. unmet acceptance criteria for
+        'done').
+    """
+    return _update_task_status_impl(task_id, status)
 
 
 @tool(description="Update a task's details — title, description, priority, or acceptance criteria. Only pass the fields you want to change.")
@@ -247,7 +265,44 @@ def update_task(
     }
 
 
-@tool(description="Log progress on a task. Call this after every meaningful action so progress survives context loss. The status field can also move the task forward, subject to the same rules as update_task_status (e.g. 'done' needs all acceptance criteria met, the task already in 'review' unless review_gate is 'none', and even then a human — not you — has to be the one to actually complete the done transition when review_gate isn't 'none').")
+_LOG_PROGRESS_DESCRIPTION = (
+    "Log progress on a task. Call this after every meaningful action so progress survives "
+    "context loss. The status field can also move the task forward, subject to the same rules "
+    "as update_task_status (e.g. 'done' needs all acceptance criteria met, the task already in "
+    "'review' unless review_gate is 'none', and even then a human — not you — has to be the one "
+    "to actually complete the done transition when review_gate isn't 'none')."
+)
+
+
+def _log_progress_impl(
+    task_id: str, entry: str, status: str = "in_progress",
+    next_step: str = "", resolution: str = "",
+) -> dict:
+    validation = validate_task_output({"status": status})
+    if not validation["valid"]:
+        return {"error": "; ".join(validation["errors"])}
+
+    store = _store()
+    pe = ProgressEntry(
+        entry=entry,
+        status=TaskStatus(status),
+        next_step=next_step,
+        resolution=resolution,
+        caller="agent",
+    )
+    try:
+        task = store.log_progress(task_id, pe)
+    except ValueError as e:
+        return {"error": str(e)}
+    return {
+        "id": task.id,
+        "title": task.title,
+        "status": task.status.value,
+        "progress_entries": len(task.progress),
+    }
+
+
+@tool(description=_LOG_PROGRESS_DESCRIPTION)
 def log_progress(
     task_id: str,
     entry: str,
@@ -273,28 +328,7 @@ def log_progress(
         status is malformed or the status change isn't allowed (e.g.
         unmet acceptance criteria).
     """
-    validation = validate_task_output({"status": status})
-    if not validation["valid"]:
-        return {"error": "; ".join(validation["errors"])}
-
-    store = _store()
-    pe = ProgressEntry(
-        entry=entry,
-        status=TaskStatus(status),
-        next_step=next_step,
-        resolution=resolution,
-        caller="agent",
-    )
-    try:
-        task = store.log_progress(task_id, pe)
-    except ValueError as e:
-        return {"error": str(e)}
-    return {
-        "id": task.id,
-        "title": task.title,
-        "status": task.status.value,
-        "progress_entries": len(task.progress),
-    }
+    return _log_progress_impl(task_id, entry, status, next_step, resolution)
 
 
 @tool(description="Mark one acceptance criterion of a task as satisfied. All criteria must be marked met before the task can be moved to 'done' — update_task_status/log_progress will refuse a 'done' transition otherwise. Only mark a criterion met once you've actually verified it (e.g. ran the test, confirmed the behavior) — don't mark it met just because you attempted it.")
@@ -344,6 +378,106 @@ def add_step(task_id: str, step_title: str) -> dict:
         "step_title": step.title,
         "total_steps": len(task.steps),
     }
+
+
+# ── session-aware status tools ──────────────────────────────────────────────
+#
+# update_task_status and log_progress above have no SessionManager
+# reference and call TaskStore directly — an agent using them to move
+# its own task into review/done/abandoned (the normal way an autonomous
+# builder finishes) never triggered the same auto-stop / role-trigger
+# side effects a human changing status through the web PATCH already
+# gets. make_session_aware_status_tools produces session-bound versions
+# that do, swapped in by SessionManager._build_tools the same way the
+# sandboxed shell/editor tools are (see session/manager.py).
+
+
+async def _deferred_status_side_effects(
+    session_manager: Any, old_status: str, new_status: str, task_id: str,
+) -> None:
+    """Runs the same side effects the web PATCH route triggers — never
+    awaited directly from the tool call that changed the status.
+
+    That matters: the calling session can itself be among the ones
+    maybe_auto_stop_finished_sessions stops (an agent marking its own
+    task done is the whole point of this). SessionManager.stop()
+    cancels session._task and awaits it — a task cannot cancel-and-await
+    itself, so that call has to happen from a *different* asyncio Task
+    than the one running the tool call. Scheduling this whole function
+    (rather than awaiting it inline) is what provides that separation;
+    the ordering inside it (stop before firing new role-triggered
+    sessions) is preserved exactly as the web route's version has it,
+    since both steps run in this one task.
+    """
+    from agent_knots.task.lifecycle import (
+        maybe_auto_stop_finished_sessions,
+        maybe_fire_role_triggers,
+    )
+
+    store = _store()
+    task = store.get(task_id)
+    if task is None:
+        return
+    await maybe_auto_stop_finished_sessions(session_manager, new_status, task)
+    maybe_fire_role_triggers(session_manager, old_status, new_status, task)
+
+
+def _schedule_side_effects_if_status_changed(
+    loop: asyncio.AbstractEventLoop, session_manager: Any, task_id: str,
+    old_status: str, result: dict,
+) -> None:
+    """asyncio.create_task() would silently do nothing here — Strands
+    runs synchronous tool functions (this one included) via
+    asyncio.to_thread, so there is no running event loop in the thread
+    this executes on, and create_task() needs one in the *current*
+    thread. run_coroutine_threadsafe schedules onto `loop` (the main
+    loop, captured back when this session started, on the thread that
+    actually runs it) regardless of which thread calls it from — the
+    only thing that reliably works whether Strands is executing this
+    inline or off-thread, since we don't get to assume which. Confirmed
+    live: create_task() here produced 'coroutine was never awaited'
+    with no side effect ever running, silently.
+    """
+    new_status = result.get("status")
+    if "error" in result or not new_status or new_status == old_status:
+        return
+    asyncio.run_coroutine_threadsafe(
+        _deferred_status_side_effects(session_manager, old_status, new_status, task_id),
+        loop,
+    )
+
+
+def make_session_aware_status_tools(session_manager: Any) -> list:
+    """update_task_status and log_progress, bound to a SessionManager so
+    a status change they make can trigger auto-stop / role-trigger side
+    effects — see the module note above.
+
+    Must be called from the session's own async start() (i.e. on the
+    main event loop) so asyncio.get_running_loop() below captures the
+    right loop — see _schedule_side_effects_if_status_changed.
+    """
+    loop = asyncio.get_running_loop()
+
+    @tool(description=_UPDATE_STATUS_DESCRIPTION)
+    def update_task_status(task_id: str, status: str) -> dict:
+        before = _store().get(task_id)
+        old_status = before.status.value if before else ""
+        result = _update_task_status_impl(task_id, status)
+        _schedule_side_effects_if_status_changed(loop, session_manager, task_id, old_status, result)
+        return result
+
+    @tool(description=_LOG_PROGRESS_DESCRIPTION)
+    def log_progress(
+        task_id: str, entry: str, status: str = "in_progress",
+        next_step: str = "", resolution: str = "",
+    ) -> dict:
+        before = _store().get(task_id)
+        old_status = before.status.value if before else ""
+        result = _log_progress_impl(task_id, entry, status, next_step, resolution)
+        _schedule_side_effects_if_status_changed(loop, session_manager, task_id, old_status, result)
+        return result
+
+    return [update_task_status, log_progress]
 
 
 # Export list of all task tools for easy passing to Agent.

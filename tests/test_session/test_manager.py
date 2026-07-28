@@ -1007,3 +1007,267 @@ class TestVaultCredentialInjection:
 
         assert "Unavailable credentials" not in session._agent.system_prompt
         await mgr.stop(session.id)
+
+
+async def _wait_until(condition, timeout=2.0):
+    """Poll condition() until it's true, yielding to the event loop
+    between checks — needed throughout this class since the whole point
+    of the deferred-side-effects design is that they run on a *later*
+    event loop iteration, not synchronously within the tool call."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        if condition():
+            return True
+        await asyncio.sleep(0.02)
+    return False
+
+
+class TestAgentToolTriggeredLifecycle:
+    """update_task_status/log_progress, called by the agent itself, must
+    trigger the same auto-stop / role-trigger side effects a human
+    changing status via the web PATCH already gets — see
+    task/tools.py's make_session_aware_status_tools and
+    task/lifecycle.py. Two things had to be gotten right, both only
+    caught by testing against a real model (see
+    test_status_change_side_effects_work_when_tool_runs_off_thread
+    below for the second one, reproduced without needing a real model):
+
+    1. A session marking its *own* task done must be able to stop
+       itself without deadlocking (a task cannot cancel-and-await
+       itself) — the whole side-effect runs as a separate scheduled
+       coroutine rather than being awaited inline from the tool call.
+    2. Strands runs synchronous tool functions via asyncio.to_thread —
+       a worker thread with no running event loop of its own — so
+       asyncio.create_task() from inside the tool call silently does
+       nothing. Scheduling has to go through
+       asyncio.run_coroutine_threadsafe(coro, loop) with a loop
+       captured back when the session started, on the main thread.
+    """
+
+    @pytest.mark.asyncio
+    async def test_marking_own_task_done_via_tool_stops_the_session(
+        self, sessions_dir, agent_knots_home,
+    ):
+        from agent_knots.config import tasks_dir
+        from agent_knots.task.models import ReviewGate, Task, new_task_id
+        from agent_knots.task.store import TaskStore
+
+        task = TaskStore(tasks_dir()).create(Task(
+            id=new_task_id(), title="Self-stop test", review_gate=ReviewGate.NONE,
+        ))
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            task_id=task.id, runtime_override="inprocess",
+        )
+        session_id = session.id
+
+        tool_func = session._agent.tool_registry.registry["update_task_status"]._tool_func
+        # The tool call itself must return normally — not hang, not raise —
+        # even though it's about to trigger its own session's shutdown.
+        result = tool_func(task_id=task.id, status="done")
+        assert result["status"] == "done"
+
+        stopped = await _wait_until(lambda: mgr.get(session_id) is None)
+        assert stopped, "session should have been auto-stopped shortly after"
+
+    @pytest.mark.asyncio
+    async def test_status_change_side_effects_work_when_tool_runs_off_thread(
+        self, sessions_dir, agent_knots_home,
+    ):
+        """Regression test for a real bug, only caught by testing against
+        a real model: asyncio.create_task() from inside a tool call
+        silently did nothing (logged as "coroutine was never awaited",
+        no exception, no side effect), because Strands actually executes
+        synchronous tool functions via asyncio.to_thread — a worker
+        thread with no running event loop of its own. Calling the tool
+        directly from this test coroutine (which has its own running
+        loop) would mask that entirely, exactly like the test above did
+        before this was found — so this one reproduces the same
+        off-thread execution context Strands actually uses.
+        """
+        from agent_knots.config import tasks_dir
+        from agent_knots.task.models import ReviewGate, Task, new_task_id
+        from agent_knots.task.store import TaskStore
+
+        task = TaskStore(tasks_dir()).create(Task(
+            id=new_task_id(), title="Off-thread self-stop", review_gate=ReviewGate.NONE,
+        ))
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            task_id=task.id, runtime_override="inprocess",
+        )
+        session_id = session.id
+
+        tool_func = session._agent.tool_registry.registry["update_task_status"]._tool_func
+        result = await asyncio.to_thread(tool_func, task_id=task.id, status="done")
+        assert result["status"] == "done"
+
+        stopped = await _wait_until(lambda: mgr.get(session_id) is None)
+        assert stopped, "auto-stop must fire even when the tool call itself ran off-thread"
+
+    @pytest.mark.asyncio
+    async def test_log_progress_status_change_also_triggers_auto_stop(
+        self, sessions_dir, agent_knots_home,
+    ):
+        from agent_knots.config import tasks_dir
+        from agent_knots.task.models import ReviewGate, Task, new_task_id
+        from agent_knots.task.store import TaskStore
+
+        task = TaskStore(tasks_dir()).create(Task(
+            id=new_task_id(), title="Log-progress self-stop", review_gate=ReviewGate.NONE,
+        ))
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            task_id=task.id, runtime_override="inprocess",
+        )
+        session_id = session.id
+
+        tool_func = session._agent.tool_registry.registry["log_progress"]._tool_func
+        result = tool_func(task_id=task.id, entry="Finished the work.", status="done")
+        assert result["status"] == "done"
+
+        stopped = await _wait_until(lambda: mgr.get(session_id) is None)
+        assert stopped
+
+    @pytest.mark.asyncio
+    async def test_non_terminal_status_does_not_stop_the_session(
+        self, sessions_dir, agent_knots_home,
+    ):
+        from agent_knots.config import tasks_dir
+        from agent_knots.task.models import Task, new_task_id
+        from agent_knots.task.store import TaskStore
+
+        task = TaskStore(tasks_dir()).create(Task(id=new_task_id(), title="Still going"))
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            task_id=task.id, runtime_override="inprocess",
+        )
+        session_id = session.id
+
+        tool_func = session._agent.tool_registry.registry["update_task_status"]._tool_func
+        tool_func(task_id=task.id, status="blocked")
+
+        # Give any (wrongly) scheduled side effect a chance to run, then
+        # confirm it didn't.
+        await asyncio.sleep(0.1)
+        assert mgr.get(session_id) is not None
+        await mgr.stop(session_id)
+
+    @pytest.mark.asyncio
+    async def test_refused_transition_does_not_schedule_anything(
+        self, sessions_dir, agent_knots_home,
+    ):
+        """An error result (e.g. 'done' refused for unmet criteria) must
+        not schedule side effects for a status change that never
+        actually happened."""
+        from agent_knots.config import tasks_dir
+        from agent_knots.task.models import Task, new_task_id
+        from agent_knots.task.store import TaskStore
+
+        task = TaskStore(tasks_dir()).create(Task(
+            id=new_task_id(), title="Has unmet criteria",
+            acceptance_criteria=["Must actually work"],
+        ))
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            task_id=task.id, runtime_override="inprocess",
+        )
+        session_id = session.id
+
+        tool_func = session._agent.tool_registry.registry["update_task_status"]._tool_func
+        result = tool_func(task_id=task.id, status="done")
+        assert "error" in result
+
+        await asyncio.sleep(0.1)
+        assert mgr.get(session_id) is not None
+        await mgr.stop(session_id)
+
+    @pytest.mark.asyncio
+    async def test_setting_the_same_status_does_not_schedule_anything(
+        self, sessions_dir, agent_knots_home,
+    ):
+        from agent_knots.config import tasks_dir
+        from agent_knots.task.models import Task, new_task_id
+        from agent_knots.task.store import TaskStore
+
+        task = TaskStore(tasks_dir()).create(Task(id=new_task_id(), title="No-op status set"))
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            task_id=task.id, runtime_override="inprocess",
+        )
+        session_id = session.id
+
+        tool_func = session._agent.tool_registry.registry["update_task_status"]._tool_func
+        # Task was auto-assigned to in_progress on session start — setting
+        # the same status again should be a no-op for side effects too.
+        result = tool_func(task_id=task.id, status="in_progress")
+        assert result["status"] == "in_progress"
+
+        await asyncio.sleep(0.1)
+        assert mgr.get(session_id) is not None
+        await mgr.stop(session_id)
+
+    @pytest.mark.asyncio
+    async def test_tool_triggered_status_change_fires_role_triggers(
+        self, sessions_dir, agent_knots_home, git_repo, monkeypatch,
+    ):
+        """The same tool call that stops the writer must also be able to
+        fire a newly-enabled advisory role — matching the HTTP PATCH
+        path's behavior exactly."""
+        from agent_knots.config import roles_file, tasks_dir
+        from agent_knots.task.models import Task, new_task_id
+        from agent_knots.task.store import TaskStore
+        from agent_knots.workflows.store import RolesStore
+
+        # The role-fired session resolves its own provider config from
+        # scratch (it isn't handed the writer's start() kwargs) — needs
+        # env vars, same as the equivalent HTTP-path tests.
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        RolesStore(roles_file()).update("reviewer", enabled=True)
+
+        task = TaskStore(tasks_dir()).create(Task(id=new_task_id(), title="Needs review"))
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            task_id=task.id, working_dir=str(git_repo), runtime_override="inprocess",
+        )
+
+        tool_func = session._agent.tool_registry.registry["update_task_status"]._tool_func
+        tool_func(task_id=task.id, status="review")
+
+        fired = await _wait_until(
+            lambda: any(
+                s.task_id == task.id and s.advisory for s in mgr.active
+            )
+        )
+        assert fired, "the reviewer role should have fired from the tool-triggered transition"
+
+        for s in list(mgr.active):
+            await mgr.stop(s.id)
+
+    @pytest.mark.asyncio
+    async def test_plain_module_level_tools_are_unaffected(self, sessions_dir, agent_knots_home):
+        """The original, session-agnostic update_task_status/log_progress
+        must keep working exactly as before for any caller that isn't
+        going through a session (e.g. tests, or a disabled-tool
+        fallback) — the refactor only added a session-aware wrapper
+        around them, it didn't change their own behavior."""
+        from agent_knots.config import tasks_dir
+        from agent_knots.task.models import Task, new_task_id
+        from agent_knots.task.store import TaskStore
+        from agent_knots.task.tools import _log_progress_impl, _update_task_status_impl
+
+        task = TaskStore(tasks_dir()).create(Task(id=new_task_id(), title="Direct call"))
+        result = _update_task_status_impl(task.id, "blocked")
+        assert result["status"] == "blocked"
+        result2 = _log_progress_impl(task.id, "did a thing", status="in_progress")
+        assert result2["status"] == "in_progress"

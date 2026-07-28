@@ -62,6 +62,17 @@ def make_delegate_tool(session_manager: Any, parent_session_id: str) -> Any:
     subscription to the sub-session, not by nesting the child's events
     inside the parent's stream.
     """
+    # Captured here, not inside delegate_task below: this factory runs
+    # on the main event loop (called synchronously from within the
+    # parent session's own async start()), but delegate_task itself
+    # gets called later by Strands via asyncio.to_thread — a worker
+    # thread with no running loop of its own. asyncio.create_task()
+    # from in there silently does nothing (confirmed live: "coroutine
+    # was never awaited", no sub-session ever created).
+    # run_coroutine_threadsafe(coro, loop) is what actually schedules
+    # onto the right loop regardless of which thread calls it from.
+    import asyncio
+    loop = asyncio.get_running_loop()
 
     @_tool_dec(description="Delegate a sub-task to another agent. Creates a new session to work on it.")
     def delegate_task(
@@ -92,7 +103,6 @@ def make_delegate_tool(session_manager: Any, parent_session_id: str) -> Any:
         ))
 
         # Start a session on this sub-task asynchronously.
-        import asyncio
 
         async def _start_and_link() -> None:
             sub_session = await session_manager.start(
@@ -113,7 +123,7 @@ def make_delegate_tool(session_manager: Any, parent_session_id: str) -> Any:
                     },
                 ))
 
-        asyncio.create_task(_start_and_link())
+        asyncio.run_coroutine_threadsafe(_start_and_link(), loop)
 
         return {
             "task_id": task.id,
