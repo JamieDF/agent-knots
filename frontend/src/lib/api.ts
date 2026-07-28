@@ -252,6 +252,7 @@ export async function updateRole(key: string, data: { model?: string; trigger?: 
 
 export interface ReviewDiff {
   workspace: string; workspace_name: string; file: string; added: number; deleted: number
+  branch: string | null
 }
 
 export async function fetchReviewDiffs(): Promise<{ diffs: ReviewDiff[] }> {
@@ -262,8 +263,8 @@ export async function fetchReviewDiffText(workspace: string, file: string): Prom
   return apiFetch(`/api/review/diff?workspace=${encodeURIComponent(workspace)}&file=${encodeURIComponent(file)}`)
 }
 
-export async function approveReview(workspace: string, file?: string): Promise<void> {
-  await apiFetch('/api/review/approve', jsonInit('POST', { workspace, file }))
+export async function approveReview(workspace: string, file?: string, branch?: string | null): Promise<void> {
+  await apiFetch('/api/review/approve', jsonInit('POST', { workspace, file, branch }))
 }
 
 export async function rejectReview(workspace: string, file?: string): Promise<void> {

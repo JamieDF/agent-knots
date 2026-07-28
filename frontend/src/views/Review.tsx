@@ -13,6 +13,7 @@ function Review() {
   const [statuses, setStatuses] = useState<Record<string, Status>>({})
   const [expanded, setExpanded] = useState<string | null>(null)
   const [diffText, setDiffText] = useState<Record<string, string>>({})
+  const [conflict, setConflict] = useState('')
 
   const key = (d: ReviewDiff) => `${d.workspace}:${d.file}`
 
@@ -34,8 +35,12 @@ function Review() {
   }
 
   const handleApprove = async (d: ReviewDiff) => {
-    await approveReview(d.workspace, d.file)
-    setStatuses(prev => ({ ...prev, [key(d)]: 'committed' }))
+    try {
+      await approveReview(d.workspace, d.file, d.branch)
+      setStatuses(prev => ({ ...prev, [key(d)]: 'committed' }))
+    } catch (e) {
+      setConflict(e instanceof Error ? e.message : 'Approve failed — the workspace may have changed branch. Refresh and retry.')
+    }
   }
 
   const handleReject = async (d: ReviewDiff) => {
@@ -52,12 +57,18 @@ function Review() {
       byWorkspace.set(d.workspace, list)
     }
     for (const [workspace, items] of byWorkspace) {
-      await approveReview(workspace)
-      setStatuses(prev => {
-        const next = { ...prev }
-        for (const d of items) next[key(d)] = 'committed'
-        return next
-      })
+      // Every diff in one workspace's listing shares the same branch —
+      // they all came from the same git-status snapshot of that repo.
+      try {
+        await approveReview(workspace, undefined, items[0]?.branch)
+        setStatuses(prev => {
+          const next = { ...prev }
+          for (const d of items) next[key(d)] = 'committed'
+          return next
+        })
+      } catch (e) {
+        setConflict(e instanceof Error ? e.message : 'Approve failed — the workspace may have changed branch. Refresh and retry.')
+      }
     }
   }
 
@@ -80,9 +91,23 @@ function Review() {
           </div>
         </div>
         <div style={{ fontSize: 12, color: 'var(--mut)', marginTop: 8 }}>
-          Pending diffs are each workspace's current uncommitted git changes. Approve stages and commits the file; reject only acknowledges — it never discards your changes.
+          Pending diffs are each workspace's current uncommitted git changes, on whichever branch is currently checked out there. Approve stages and commits the file; reject only acknowledges — it never discards your changes. If a different session takes over the workspace and switches branches before you approve, you'll be asked to refresh.
         </div>
       </Card>
+
+      {conflict && (
+        <Card style={{ marginBottom: 16, border: '1px solid var(--warn)', background: 'var(--warn-soft)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 12.5, color: 'var(--warn-ink)' }}>⚠ {conflict}</span>
+            <button
+              onClick={() => { setConflict(''); load() }}
+              style={{ fontSize: 11.5, fontWeight: 600, padding: '3px 10px', borderRadius: 6, background: 'var(--warn)', color: 'var(--acc-ink)', whiteSpace: 'nowrap' }}
+            >
+              Refresh
+            </button>
+          </div>
+        </Card>
+      )}
 
       {diffs.length === 0 && (
         <Card><div style={{ textAlign: 'center', padding: 20, color: 'var(--mut)', fontSize: 13 }}>Nothing to review.</div></Card>
@@ -98,6 +123,7 @@ function Review() {
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ok)' }}>+{d.added}</span>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--err)' }}>−{d.deleted}</span>
               <span style={{ fontSize: 11, color: 'var(--mut)' }}>{d.workspace_name}</span>
+              {d.branch && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--mut)', padding: '2px 6px', borderRadius: 5, background: 'var(--card2)' }}>{d.branch}</span>}
               {status === 'committed' && <Chip color="var(--ok)" soft>Approved — committed</Chip>}
               {status === 'rejected' && <Chip color="var(--err)" soft>Rejected — agent notified</Chip>}
               {!status && (

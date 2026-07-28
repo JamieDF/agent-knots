@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from agent_knots.cockpit.web.models import ReviewActionRequest
 from agent_knots.config import projects_dir as _projects_dir
-from agent_knots.gitutil import _git_diff_for_file, _git_diff_stat, _run_git
+from agent_knots.gitutil import _git_diff_for_file, _git_diff_stat, _run_git, current_branch
 from agent_knots.project.store import ProjectStore
 
 
@@ -42,10 +42,12 @@ def create_router() -> APIRouter:
             repo = Path(p.repository)
             if not (repo / ".git").is_dir():
                 continue
+            branch = current_branch(repo)
             for f in _git_diff_stat(repo):
                 items.append({
                     "workspace": p.id, "workspace_name": p.name,
                     "file": f["path"], "added": f["added"], "deleted": f["deleted"],
+                    "branch": branch,
                 })
         return {"diffs": items}
 
@@ -59,6 +61,17 @@ def create_router() -> APIRouter:
     @router.post("/api/review/approve")
     async def approve_review(body: ReviewActionRequest):
         repo = _review_repo_or_404(body.workspace)
+        if body.branch is not None:
+            actual = current_branch(repo)
+            if actual != body.branch:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Repo is now on branch {actual!r}, expected {body.branch!r} — "
+                        "another session likely took over this workspace since the diff "
+                        "was listed. Refresh the Review queue and try again."
+                    ),
+                )
         add_result = _run_git(repo, ["add", "--", body.file] if body.file else ["add", "-A"])
         if add_result.returncode != 0:
             raise HTTPException(status_code=500, detail=f"git add failed: {add_result.stderr.strip()}")

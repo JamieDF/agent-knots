@@ -1262,6 +1262,92 @@ class TestReviewAPI:
         assert len(diffs) == 1
 
     @pytest.mark.asyncio
+    async def test_list_diffs_includes_the_current_branch(self, authed_client, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\n")
+        subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "checkout", "-q", "-b", "knots/some-session"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\ntwo\n")
+
+        await authed_client.post("/api/workspaces", json={"id": "w5", "name": "W5", "repository": str(repo)})
+        diffs = (await authed_client.get("/api/review/diffs")).json()["diffs"]
+        assert len(diffs) == 1
+        assert diffs[0]["branch"] == "knots/some-session"
+
+    @pytest.mark.asyncio
+    async def test_approve_with_matching_branch_succeeds(self, authed_client, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\n")
+        subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "checkout", "-q", "-b", "knots/s1"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\ntwo\n")
+
+        await authed_client.post("/api/workspaces", json={"id": "w6", "name": "W6", "repository": str(repo)})
+        resp = await authed_client.post(
+            "/api/review/approve", json={"workspace": "w6", "file": "a.txt", "branch": "knots/s1"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "committed"
+
+    @pytest.mark.asyncio
+    async def test_approve_with_stale_branch_conflicts_and_does_not_commit(self, authed_client, tmp_path):
+        """Regression guard for the review-queue's blind spot: the working
+        tree is shared across a workspace's sessions, so a diff listed
+        against one branch could belong to a different session's work by
+        the time Approve is clicked, if another session took over the
+        repo and checked out a different branch in between. Approve must
+        refuse rather than commit onto whatever's checked out now."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\n")
+        subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "checkout", "-q", "-b", "knots/s2"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\ntwo\n")
+
+        await authed_client.post("/api/workspaces", json={"id": "w7", "name": "W7", "repository": str(repo)})
+        resp = await authed_client.post(
+            "/api/review/approve", json={"workspace": "w7", "file": "a.txt", "branch": "knots/a-different-session"},
+        )
+        assert resp.status_code == 409
+
+        # Nothing was committed — the diff is still pending.
+        diffs = (await authed_client.get("/api/review/diffs")).json()["diffs"]
+        assert len(diffs) == 1
+
+    @pytest.mark.asyncio
+    async def test_approve_without_branch_skips_the_check(self, authed_client, tmp_path):
+        """Omitting branch entirely (older/non-branch-aware callers) must
+        behave exactly as before this feature — no check, just commit."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\n")
+        subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+        (repo / "a.txt").write_text("one\ntwo\n")
+
+        await authed_client.post("/api/workspaces", json={"id": "w8", "name": "W8", "repository": str(repo)})
+        resp = await authed_client.post("/api/review/approve", json={"workspace": "w8", "file": "a.txt"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "committed"
+
+    @pytest.mark.asyncio
     async def test_approve_unknown_workspace_404s(self, authed_client):
         resp = await authed_client.post("/api/review/approve", json={"workspace": "nonexistent"})
         assert resp.status_code == 404

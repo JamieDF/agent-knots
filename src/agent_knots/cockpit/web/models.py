@@ -82,6 +82,13 @@ class UpdateRoleRequest(BaseModel):
 class ReviewActionRequest(BaseModel):
     workspace: str
     file: Optional[str] = None  # omitted = every pending file in the workspace
+    # The branch the diff being approved was listed against. Approve
+    # checks the repo is still on this branch before committing — the
+    # working tree is shared across a workspace's sessions, so between
+    # listing a diff and clicking Approve, a different session could
+    # have taken over the repo and checked out a different branch.
+    # Omitted = skip the check (back-compat / non-branch-aware callers).
+    branch: str | None = None
 
 
 class UnlockVaultRequest(BaseModel):
