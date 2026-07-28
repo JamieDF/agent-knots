@@ -93,7 +93,7 @@ export function EventRow({ evt, collapsed, onToggleCollapse, delegateOpen, onTog
 
   if (evt.type === 'blocker' || evt.type === 'ask') {
     const options: string[] | undefined = evt.data?.options as string[] | undefined
-    const live = agentId && !sessionEnded
+    const live = !!agentId && !sessionEnded
     return <BlockerCard evt={evt} agentId={agentId} options={options} live={live} tsStr={tsStr} onOpenPreview={onOpenPreview} />
   }
 
