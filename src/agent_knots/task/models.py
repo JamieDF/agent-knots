@@ -86,6 +86,10 @@ class ProgressEntry:
     resolution: str = ""
     next_step: str = ""
     caller: str = "user"
+    # Which Role (e.g. "reviewer") logged this, if any — lets a task's
+    # progress log distinguish the writer's own entries from an advisory
+    # agent's findings once more than one session reports on a task.
+    role: str = ""
 
 
 @dataclass

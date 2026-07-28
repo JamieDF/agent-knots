@@ -51,6 +51,7 @@ def _agent_to_response(session) -> dict:
         "pending_question": pending,
         "branch": session.branch,
         "advisory": session.advisory,
+        "role": session.role,
     }
 
 

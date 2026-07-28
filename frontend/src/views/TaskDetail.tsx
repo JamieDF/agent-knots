@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  fetchTask, updateTask, deleteTask, toggleCriterion, createSession, fetchAgent, answerAgent,
+  fetchTask, updateTask, deleteTask, toggleCriterion, createSession, fetchTaskAgents, answerAgent,
   type TaskDetail as TDetail, type AgentInfo,
 } from '../lib/api'
 import { useWorkspaceScope } from '../lib/workspaceContext'
@@ -28,7 +28,7 @@ function TaskDetail() {
   const [task, setTask] = useState<TDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [showEdit, setShowEdit] = useState(false)
-  const [agent, setAgent] = useState<AgentInfo | null>(null)
+  const [agents, setAgents] = useState<AgentInfo[]>([])
   const [related, setRelated] = useState<TDetail[]>([])
   const [error, setError] = useState('')
 
@@ -37,8 +37,7 @@ function TaskDetail() {
     fetchTask(id).then(t => {
       setTask(t)
       setLoading(false)
-      if (t.assigned_to) fetchAgent(t.assigned_to).then(setAgent).catch(() => setAgent(null))
-      else setAgent(null)
+      fetchTaskAgents(id).then(r => setAgents(r.agents)).catch(() => setAgents([]))
       if (t.dependencies.length > 0) {
         Promise.all(t.dependencies.map(d => fetchTask(d).catch(() => null)))
           .then(rs => setRelated(rs.filter((r): r is TDetail => r !== null)))
@@ -135,8 +134,11 @@ function TaskDetail() {
         </div>
       </div>
 
-      {/* Agent pending question — answerable from here, no need to open the thread */}
-      {agent?.pending_question && <PendingQuestionCard agentId={agent.id} pq={agent.pending_question} onAnswered={load} />}
+      {/* Agent pending question — answerable from here, no need to open the thread.
+          Any agent on the task can block, not just the writer, so this scans all of them. */}
+      {agents.filter(a => a.pending_question).map(a => (
+        <PendingQuestionCard key={a.id} agentId={a.id} pq={a.pending_question!} onAnswered={load} />
+      ))}
 
       {/* Lifecycle strip */}
       <Card style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -284,19 +286,23 @@ function TaskDetail() {
 
         {/* Side blocks */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {agent && (
-            <SideBlock label="Session">
-              <Row l="Mode" v={agent.mode} />
-              <Row l="Tokens" v={agent.tokens_used.toLocaleString()} />
-              <Row l="Cost" v={`$${agent.cost_usd.toFixed(3)}`} />
+          {/* One block per active session on this task — the writer plus
+              any read-only advisory agents (e.g. a reviewer role) sharing
+              its working tree. Writer sorts first. */}
+          {[...agents].sort((a, b) => Number(a.advisory) - Number(b.advisory)).map(a => (
+            <SideBlock key={a.id} label={a.advisory ? `🛡 Advisory · ${a.role || 'agent'}` : 'Session'}>
+              <Row l="Mode" v={a.mode} />
+              {a.branch && <Row l="Branch" v={a.branch} mono />}
+              <Row l="Tokens" v={a.tokens_used.toLocaleString()} />
+              <Row l="Cost" v={`$${a.cost_usd.toFixed(3)}`} />
               <button
-                onClick={() => navigate(`/agent/${agent.id}`)}
+                onClick={() => navigate(`/agent/${a.id}`)}
                 style={{ marginTop: 6, fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}
               >
                 Open thread →
               </button>
             </SideBlock>
-          )}
+          ))}
           <SideBlock label="Tools used">
             {toolCounts(task.progress).length === 0 && <span style={{ fontSize: 12, color: 'var(--mut)' }}>None yet</span>}
             {toolCounts(task.progress).map(([name, count]) => (

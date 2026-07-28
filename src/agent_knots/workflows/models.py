@@ -44,8 +44,17 @@ class Role:
     model: str = ""  # "" = use the global default model
     trigger: Trigger = Trigger.MANUAL
     prompt: str = ""
-    tools: list[str] = field(default_factory=list)  # read-only display
+    # Tool names this role's session is restricted to (see
+    # ModeInterventionHandler / Session.allowed_tools) when advisory is
+    # True. Ignored for a non-advisory role — the writer gets the full
+    # default tool set, unrestricted.
+    tools: list[str] = field(default_factory=list)
     enabled: bool = False
+    # An advisory role shares the task's existing writer session's
+    # working tree read-only rather than getting its own branch —
+    # see SessionManager._ensure_branch and the tool allowlist above,
+    # which together are what make sharing that tree safe.
+    advisory: bool = False
 
 
 DEFAULT_STAGES: list[Stage] = [
@@ -83,6 +92,7 @@ DEFAULT_ROLES: list[Role] = [
                "actually met before marking it, then log your findings. Do not "
                "make changes unless asked.",
         tools=["read_task", "mark_criterion_met", "log_progress"],
+        advisory=True,
     ),
 ]
 

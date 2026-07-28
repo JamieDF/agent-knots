@@ -6,9 +6,16 @@ Atomic writes via write-to-tmp-then-rename.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from pathlib import Path
 from typing import Any
+
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:  # Windows
+    HAS_FCNTL = False
 
 from agent_knots.task.models import (
     Blocker,
@@ -81,6 +88,8 @@ def _progress_to_dict(p: ProgressEntry) -> dict[str, Any]:
         d["resolution"] = p.resolution
     if p.next_step:
         d["next_step"] = p.next_step
+    if p.role:
+        d["role"] = p.role
     return d
 
 
@@ -94,6 +103,7 @@ def _progress_from_dict(d: dict[str, Any]) -> ProgressEntry:
         resolution=d.get("resolution", ""),
         next_step=d.get("next_step", ""),
         caller=d.get("caller", "user"),
+        role=d.get("role", ""),
     )
 
 
@@ -171,6 +181,35 @@ class TaskStore:
     def _path(self, task_id: str) -> Path:
         return self._dir / f"{task_id}.yaml"
 
+    @contextlib.contextmanager
+    def _task_lock(self, task_id: str):
+        """Exclusive lock around a read-modify-write on one task —
+        needed now that more than one session (a writer plus advisory
+        agents reporting on the same task) can call log_progress
+        concurrently; an interleaved read-modify-write would silently
+        drop whichever entry lost the race.
+
+        Locks a *sidecar* file, never the task YAML itself:
+        atomic_write_yaml writes to a .tmp file and renames it over the
+        real path, which swaps the inode out from under any file handle
+        already open on it — a lock held on the old inode would stop
+        protecting anything the moment the first writer saves.
+
+        POSIX-only (fcntl). No lock at all on platforms without it — the
+        codebase doesn't support those yet regardless (sandbox_tools'
+        os.setsid-based process groups have the same assumption).
+        """
+        if not HAS_FCNTL:
+            yield
+            return
+        lock_path = Path(f"{self._path(task_id)}.lock")
+        with open(lock_path, "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+
     # ── CRUD ─────────────────────────────────────────────────────────────
 
     def create(self, task: Task) -> Task:
@@ -241,12 +280,13 @@ class TaskStore:
         _validate_transition's "agent" default rather than taking its own
         actor parameter.
         """
-        task = self._must_get(task_id)
-        if entry.status and entry.status != task.status:
-            self._validate_transition(task, entry.status)
-        task.log_progress(entry)
-        self._save(task)
-        return task
+        with self._task_lock(task_id):
+            task = self._must_get(task_id)
+            if entry.status and entry.status != task.status:
+                self._validate_transition(task, entry.status)
+            task.log_progress(entry)
+            self._save(task)
+            return task
 
     def assign(self, task_id: str, agent_id: str) -> Task:
         """Assign a task to an agent. Pass empty string to unassign."""

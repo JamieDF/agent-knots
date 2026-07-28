@@ -152,6 +152,49 @@ class TestProgress:
         assert task.progress[0].blocker is not None
         assert task.progress[0].blocker.description == "API not ready"
 
+    def test_log_progress_role_round_trips(self, store, sample_task):
+        """role distinguishes an advisory agent's findings from the
+        writer's own progress entries once more than one session
+        reports on a task — must survive a save/reload, not just live
+        on the in-memory object."""
+        store.create(sample_task)
+        store.log_progress(sample_task.id, ProgressEntry(
+            entry="Found an unhandled edge case.", caller="sess-reviewer", role="reviewer",
+        ))
+        reloaded = store.get(sample_task.id)
+        assert reloaded.progress[0].role == "reviewer"
+
+    def test_log_progress_role_defaults_empty(self, store, sample_task):
+        store.create(sample_task)
+        store.log_progress(sample_task.id, ProgressEntry(entry="Did a thing."))
+        reloaded = store.get(sample_task.id)
+        assert reloaded.progress[0].role == ""
+
+    def test_concurrent_log_progress_loses_no_entries(self, store, sample_task):
+        """Regression guard for the race a writer session and N advisory
+        agents reporting on the same task would otherwise hit: log_progress
+        is read-modify-write, so interleaved calls without a lock silently
+        drop whichever entry lost the race."""
+        import threading
+
+        store.create(sample_task)
+        n = 20
+        barrier = threading.Barrier(n)
+
+        def log(i: int) -> None:
+            barrier.wait()
+            store.log_progress(sample_task.id, ProgressEntry(entry=f"entry-{i}", caller=f"s{i}"))
+
+        threads = [threading.Thread(target=log, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        reloaded = store.get(sample_task.id)
+        assert len(reloaded.progress) == n
+        assert {p.entry for p in reloaded.progress} == {f"entry-{i}" for i in range(n)}
+
 
 class TestOperations:
     def test_assign(self, store, sample_task):

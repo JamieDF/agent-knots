@@ -1063,6 +1063,122 @@ class TestRoleTriggers:
         await asyncio.sleep(0.1)
         assert len(session_manager.active) == before
 
+    @pytest.mark.asyncio
+    async def test_role_fired_session_gets_the_tasks_workspace_as_working_dir(
+        self, authed_client, session_manager, tmp_path, monkeypatch,
+    ):
+        """Regression: role-fired sessions used to pass neither project_id
+        nor working_dir, so a builder role's shell/editor tools ran
+        against whatever cwd agent-knots itself started from — not the
+        task's actual repo. task.project is the workspace id; it must
+        reach SessionManager.start() as project_id."""
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        workspace_dir = tmp_path / "ws"
+        workspace_dir.mkdir()
+        await authed_client.post(
+            "/api/workspaces", json={"id": "ws-role", "name": "WS", "repository": str(workspace_dir)},
+        )
+        await authed_client.patch("/api/roles/builder", json={"enabled": True})
+        created = await authed_client.post(
+            "/api/tasks", json={"title": "Needs the right cwd", "project": "ws-role"},
+        )
+        task_id = created.json()["id"]
+
+        before = {s.id for s in session_manager.active}
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "in_progress"})
+        for _ in range(5):
+            await asyncio.sleep(0.05)
+            new = [s for s in session_manager.active if s.id not in before]
+            if new:
+                break
+        assert new
+        assert new[0].working_dir == str(workspace_dir)
+
+    @pytest.mark.asyncio
+    async def test_advisory_role_gets_allowlisted_and_does_not_steal_assignment(
+        self, authed_client, session_manager, monkeypatch,
+    ):
+        """The reviewer role is advisory: it should get Session.
+        allowed_tools from its own tools list, and — since assign() is
+        last-writer-wins — must not overwrite assigned_to and knock the
+        actual writer off the task."""
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        await authed_client.patch("/api/roles/builder", json={"enabled": True})
+        await authed_client.patch("/api/roles/reviewer", json={"enabled": True})
+        created = await authed_client.post("/api/tasks", json={"title": "Review me"})
+        task_id = created.json()["id"]
+
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "in_progress"})
+        for _ in range(5):
+            await asyncio.sleep(0.05)
+            task = (await authed_client.get(f"/api/tasks/{task_id}")).json()
+            if task["assigned_to"]:
+                break
+        writer_id = task["assigned_to"]
+        assert writer_id
+
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "review"})
+        for _ in range(5):
+            await asyncio.sleep(0.05)
+            reviewer_sessions = [
+                s for s in session_manager.active if s.task_id == task_id and s.advisory
+            ]
+            if reviewer_sessions:
+                break
+        assert reviewer_sessions
+        reviewer = reviewer_sessions[0]
+        assert reviewer.allowed_tools == {"read_task", "mark_criterion_met", "log_progress"}
+        assert reviewer.role == "reviewer"
+
+        # The writer must still be the assignee — the advisory session
+        # never should have touched it.
+        task = (await authed_client.get(f"/api/tasks/{task_id}")).json()
+        assert task["assigned_to"] == writer_id
+
+
+class TestTaskAgentsAPI:
+    @pytest.mark.asyncio
+    async def test_lists_only_sessions_for_this_task(self, authed_client, session_manager, monkeypatch):
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        await authed_client.patch("/api/roles/builder", json={"enabled": True})
+        t1 = (await authed_client.post("/api/tasks", json={"title": "T1"})).json()["id"]
+        t2 = (await authed_client.post("/api/tasks", json={"title": "T2"})).json()["id"]
+
+        await authed_client.patch(f"/api/tasks/{t1}", json={"status": "in_progress"})
+        for _ in range(5):
+            await asyncio.sleep(0.05)
+            if any(s.task_id == t1 for s in session_manager.active):
+                break
+
+        resp = await authed_client.get(f"/api/tasks/{t1}/agents")
+        assert resp.status_code == 200
+        agents = resp.json()["agents"]
+        assert len(agents) == 1
+        assert agents[0]["task_id"] == t1
+        assert agents[0]["role"] == "builder"
+        assert agents[0]["advisory"] is False
+
+        resp2 = await authed_client.get(f"/api/tasks/{t2}/agents")
+        assert resp2.json()["agents"] == []
+
+    @pytest.mark.asyncio
+    async def test_unknown_task_returns_empty_list_not_404(self, authed_client):
+        """No agents for an unknown task is indistinguishable from no
+        agents for a real-but-idle task — this is a session lookup, not
+        a task lookup, so it never needs to 404."""
+        resp = await authed_client.get("/api/tasks/nonexistent/agents")
+        assert resp.status_code == 200
+        assert resp.json()["agents"] == []
+
 
 class TestReviewAPI:
     @pytest.mark.asyncio

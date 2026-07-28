@@ -30,7 +30,7 @@ def _role_to_dict(r: Role) -> dict[str, Any]:
     return {
         "key": r.key, "name": r.name, "icon": r.icon, "description": r.description,
         "model": r.model, "trigger": r.trigger.value, "prompt": r.prompt,
-        "tools": r.tools, "enabled": r.enabled,
+        "tools": r.tools, "enabled": r.enabled, "advisory": r.advisory,
     }
 
 
@@ -39,6 +39,7 @@ def _role_from_dict(d: dict[str, Any]) -> Role:
         key=d["key"], name=d["name"], icon=d.get("icon", ""), description=d.get("description", ""),
         model=d.get("model", ""), trigger=Trigger(d.get("trigger", "manual")),
         prompt=d.get("prompt", ""), tools=d.get("tools", []), enabled=d.get("enabled", False),
+        advisory=d.get("advisory", False),
     )
 
 

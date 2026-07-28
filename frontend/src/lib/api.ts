@@ -34,6 +34,7 @@ export interface AgentInfo {
   tokens_used: number; cost_usd: number; running: boolean
   model: string; started_at: number
   pending_question: { question: string; options: string[] | null } | null
+  branch: string | null; advisory: boolean; role: string
 }
 
 export interface ProviderInfo {
@@ -133,6 +134,10 @@ export async function fetchTasks(params?: { status?: string; project?: string; l
 
 export async function fetchTask(id: string): Promise<TaskDetail> {
   return apiFetch(`/api/tasks/${id}`)
+}
+
+export async function fetchTaskAgents(id: string): Promise<{ agents: AgentInfo[] }> {
+  return apiFetch(`/api/tasks/${id}/agents`)
 }
 
 export async function createTask(data: {

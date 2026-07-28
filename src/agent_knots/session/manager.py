@@ -121,6 +121,9 @@ class Session:
     # ALWAYS_ALLOWED_WITH_ALLOWLIST) regardless of mode — see
     # ModeInterventionHandler. Set on advisory sessions from Role.tools.
     allowed_tools: set[str] | None = None
+    # Key of the Role (Workflows screen) that auto-fired this session,
+    # if any — "" for a manually-started session. Display-only.
+    role: str = ""
 
     # Internal — not serialised. Multiple SSE subscribers (e.g. two browser
     # tabs open on the same agent) each get their own queue rather than
@@ -238,6 +241,8 @@ class SessionManager:
         tools: list[Any] | None = None,
         runtime_override: str = "",
         advisory: bool = False,
+        allowed_tools: list[str] | None = None,
+        role: str = "",
     ) -> Session:
         """Start a new Strands-powered agent session.
 
@@ -256,6 +261,12 @@ class SessionManager:
             advisory: Read-only observer sharing another session's working
                       tree. Skips branch creation and does not claim the
                       task's assigned_to.
+            allowed_tools: If given, restricts tool calls to exactly these
+                      names (see ModeInterventionHandler) regardless of
+                      mode. Typically a Role's tools list for an
+                      advisory session; None elsewhere.
+            role: Key of the Role that's auto-firing this session, if
+                      any — display-only.
 
         Returns:
             The created Session.
@@ -283,7 +294,7 @@ class SessionManager:
 
         session_id = uuid.uuid4().hex[:12]
 
-        task_context = self._resolve_task_context(session_id, task_id)
+        task_context = self._resolve_task_context(session_id, task_id, advisory)
         full_prompt = self._build_full_prompt(system_prompt, task_context, mode, task_id)
         resolved_working_dir = self._resolve_working_dir(working_dir, project_id)
 
@@ -351,6 +362,8 @@ class SessionManager:
             branch_created=branch_result.created,
             branch_base=branch_result.base,
             advisory=advisory,
+            allowed_tools=set(allowed_tools) if allowed_tools is not None else None,
+            role=role,
             _agent=agent,
             _background_pids=background_pids,
             _base_prompt=system_prompt,
@@ -879,10 +892,18 @@ class SessionManager:
     # kind of ordering-sensitive code not worth pulling into a helper
     # that could accidentally reorder it.
 
-    def _resolve_task_context(self, session_id: str, task_id: str | None) -> str:
+    def _resolve_task_context(
+        self, session_id: str, task_id: str | None, advisory: bool = False,
+    ) -> str:
         """Fetch the task's prompt context and, if found, assign it to
         this session and auto-transition it out of 'open' — a task
-        should never sit assigned-to-a-session but still 'open'."""
+        should never sit assigned-to-a-session but still 'open'.
+
+        An advisory session skips both: assign() is last-writer-wins, so
+        an advisory reviewer claiming assigned_to would knock the actual
+        writer off the task the moment it starts, and it has no business
+        forcing an 'open' task into 'in_progress' just by observing it.
+        """
         if not task_id:
             return ""
         from agent_knots.task.store import TaskStore
@@ -893,9 +914,10 @@ class SessionManager:
         task = store.get(task_id)
         if not task:
             return ""
-        store.assign(task_id, session_id)
-        if task.status.value == "open":
-            store.set_status(task_id, TaskStatus("in_progress"))
+        if not advisory:
+            store.assign(task_id, session_id)
+            if task.status.value == "open":
+                store.set_status(task_id, TaskStatus("in_progress"))
         return _build_task_prompt(task)
 
     @staticmethod

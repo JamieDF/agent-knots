@@ -93,3 +93,29 @@ class TestRolesStore:
         matches = store.enabled_for_trigger(Trigger.IS_STARTED)
         assert len(matches) == 1
         assert matches[0].key == "builder"
+
+    def test_reviewer_is_advisory_by_default(self, roles_path):
+        store = RolesStore(roles_path)
+        reviewer = store.get("reviewer")
+        assert reviewer.advisory is True
+
+    def test_builder_is_not_advisory_by_default(self, roles_path):
+        store = RolesStore(roles_path)
+        builder = store.get("builder")
+        assert builder.advisory is False
+
+    def test_advisory_round_trips_through_save(self, roles_path):
+        """advisory is a real persisted field, not decorative like tools
+        used to be — a save/reload cycle must not silently drop it."""
+        store = RolesStore(roles_path)
+        roles = store.list()
+        for r in roles:
+            if r.key == "planner":
+                r.advisory = True
+        store.save(roles)
+
+        reloaded = RolesStore(roles_path)
+        planner = reloaded.get("planner")
+        assert planner.advisory is True
+        reviewer = reloaded.get("reviewer")
+        assert reviewer.advisory is True

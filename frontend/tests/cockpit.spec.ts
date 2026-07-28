@@ -826,6 +826,99 @@ test.describe('workspaces', () => {
 
 })
 
+// ── advisory agents (reviewer role) ──────────────────────────────────────────
+
+test.describe('advisory agents', () => {
+
+  test.beforeEach(async ({ page }) => {
+    await authPage(page)
+  })
+
+  test('writer branches, advisory reviewer shares the tree, assignment stays with the writer', async ({ page }) => {
+    // The reviewer role is advisory by default (Workflows screen): it
+    // fires read-only, sharing the writer's working tree rather than
+    // getting its own branch — see SessionManager._ensure_branch and
+    // the tool allowlist in intervention.py.
+    const { mkdtempSync, writeFileSync } = await import('fs')
+    const { tmpdir } = await import('os')
+    const { join } = await import('path')
+    const { execSync } = await import('child_process')
+
+    const repo = mkdtempSync(join(tmpdir(), 'advisory-test-'))
+    execSync('git init -q', { cwd: repo })
+    execSync('git config user.email t@example.com', { cwd: repo })
+    execSync('git config user.name T', { cwd: repo })
+    writeFileSync(join(repo, 'a.txt'), 'one\n')
+    execSync('git add a.txt', { cwd: repo })
+    execSync('git commit -q -m init', { cwd: repo })
+
+    await page.request.post(`${BASE}/api/workspaces`, {
+      data: { id: 'advisory-e2e', name: 'Advisory E2E', repository: repo },
+    })
+    await page.request.patch(`${BASE}/api/roles/builder`, { data: { enabled: true } })
+    await page.request.patch(`${BASE}/api/roles/reviewer`, { data: { enabled: true } })
+
+    try {
+      const created = await page.request.post(`${BASE}/api/tasks`, {
+        data: { title: 'Advisory E2E task', project: 'advisory-e2e' },
+      })
+      const task = await created.json()
+
+      // in_progress fires the builder (writer) — real working dir + branch.
+      await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'in_progress' } })
+      let agents: any[] = []
+      for (let i = 0; i < 20; i++) {
+        await page.waitForTimeout(300)
+        agents = (await (await page.request.get(`${BASE}/api/tasks/${task.id}/agents`)).json()).agents
+        if (agents.length >= 1) break
+      }
+      expect(agents.length).toBe(1)
+      const writer = agents[0]
+      expect(writer.advisory).toBe(false)
+      expect(writer.role).toBe('builder')
+      expect(writer.branch).toContain(task.id)
+
+      const afterInProgress = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+      expect(afterInProgress.assigned_to).toBe(writer.id)
+
+      // review fires the reviewer — advisory, no branch of its own.
+      await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'review' } })
+      for (let i = 0; i < 20; i++) {
+        await page.waitForTimeout(300)
+        agents = (await (await page.request.get(`${BASE}/api/tasks/${task.id}/agents`)).json()).agents
+        if (agents.length >= 2) break
+      }
+      expect(agents.length).toBe(2)
+      const reviewer = agents.find((a: any) => a.advisory)
+      expect(reviewer).toBeTruthy()
+      expect(reviewer.role).toBe('reviewer')
+      expect(reviewer.branch).toBeNull()
+
+      // The advisory session must never have taken over assigned_to —
+      // assign() is last-writer-wins, so this is the property that
+      // actually keeps the writer in charge of the task.
+      const afterReview = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+      expect(afterReview.assigned_to).toBe(writer.id)
+
+      // The Task Detail screen renders one block per session, the
+      // advisory one visibly labelled as such.
+      await page.goto(`${BASE}/tasks/${task.id}`)
+      await expect(page.locator('text=Session').first()).toBeVisible({ timeout: 5000 })
+      await expect(page.locator('text=🛡 Advisory · reviewer')).toBeVisible()
+      await expect(page.locator(`text=${writer.branch}`).first()).toBeVisible()
+
+      for (const a of agents) {
+        await page.request.delete(`${BASE}/api/agent/${a.id}`).catch(() => {})
+      }
+    } finally {
+      await page.request.patch(`${BASE}/api/roles/builder`, { data: { enabled: false } })
+      await page.request.patch(`${BASE}/api/roles/reviewer`, { data: { enabled: false } })
+      await page.request.delete(`${BASE}/api/workspaces/advisory-e2e`).catch(() => {})
+    }
+  })
+
+})
+
 test.describe('agent deletion', () => {
 
   test.beforeEach(async ({ page }) => {

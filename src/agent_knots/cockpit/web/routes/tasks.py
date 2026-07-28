@@ -126,6 +126,17 @@ def create_router(session_manager: SessionManager) -> APIRouter:
             raise HTTPException(status_code=404, detail="Task not found")
         return _task_to_response(task, store)
 
+    @router.get("/api/tasks/{task_id}/agents")
+    async def list_task_agents(task_id: str):
+        """All active sessions working this task — the writer plus any
+        advisory agents (see Session.advisory), for the Task Detail
+        screen's multi-agent view. task.assigned_to alone only ever
+        names the writer, since advisory sessions never claim it."""
+        from agent_knots.cockpit.web.routes.agents import _agent_to_response
+
+        sessions = [s for s in session_manager.active if s.task_id == task_id]
+        return {"agents": [_agent_to_response(s) for s in sessions]}
+
     @router.post("/api/tasks")
     async def create_task(body: CreateTaskRequest):
         """Create a new task."""
@@ -184,6 +195,18 @@ def create_router(session_manager: SessionManager) -> APIRouter:
                     system_prompt=role.prompt,
                     task_id=task.id,
                     task_description=f"({role.name}) {task.title}",
+                    # task.project is the workspace this task belongs to
+                    # — without it, every role-fired session used to get
+                    # no working directory at all, so a builder role's
+                    # shell/editor tools silently ran against whatever
+                    # cwd agent-knots itself happened to be launched
+                    # from instead of the task's actual repo.
+                    project_id=task.project or None,
+                    advisory=role.advisory,
+                    # Only an advisory role is tool-restricted — the
+                    # writer keeps the full default tool set.
+                    allowed_tools=role.tools if role.advisory else None,
+                    role=role.key,
                 ))
 
     @router.patch("/api/tasks/{task_id}")
