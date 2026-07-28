@@ -351,3 +351,44 @@ class TestResolveEnv:
         _, problems = unlocked_store.resolve_env(["gh"])
 
         assert "super-secret-value" not in problems[0]
+
+
+class TestCrossProcessRefresh:
+    """Regression coverage for a real bug found testing this live: a
+    VaultStore is long-lived (the web server keeps one for its whole
+    process lifetime), but template management is CLI-only by design —
+    a completely separate process. Without refreshing from disk before
+    each operation, a template added via the CLI while the server was
+    already running was invisible to it until restart: resolve_env kept
+    reporting "no env-mode injection template" even though the template
+    existed on disk, because the server's in-memory copy predated it."""
+
+    def test_template_added_by_a_second_instance_is_visible(self, vault_dir):
+        server_store = VaultStore(vault_dir)
+        server_store.unlock("pass")
+        server_store.add_credential(Credential(id="gh", value="secret-value"))
+
+        # A second VaultStore pointed at the same directory — standing
+        # in for the CLI process that's the only way to add templates.
+        cli_store = VaultStore(vault_dir)
+        cli_store.unlock("pass")
+        cli_store.set_template("gh", InjectionTemplate(name="e", env={"TOK": "$value"}))
+
+        # The first instance never re-constructed — this is the part
+        # that broke: it must still see the template the other process
+        # just wrote.
+        assert server_store.list_templates("gh") != []
+        env, problems = server_store.resolve_env(["gh"])
+        assert env == {"TOK": "secret-value"}
+        assert problems == []
+
+    def test_credential_added_by_a_second_instance_is_visible(self, vault_dir):
+        store_a = VaultStore(vault_dir)
+        store_a.unlock("pass")
+
+        store_b = VaultStore(vault_dir)
+        store_b.unlock("pass")
+        store_b.add_credential(Credential(id="new-cred", value="v"))
+
+        assert store_a.get_credential("new-cred") is not None
+        assert any(c.id == "new-cred" for c in store_a.list_credentials())

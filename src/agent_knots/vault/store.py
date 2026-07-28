@@ -232,6 +232,7 @@ class VaultStore:
         if not passphrase:
             raise ValueError("passphrase is required")
 
+        self._refresh()
         if not self._file.entries and not self._path.exists():
             self._initialise(passphrase)
             return
@@ -258,8 +259,27 @@ class VaultStore:
         self._key = bytearray(key)
         self._unlocked = True
 
+    def _refresh(self) -> None:
+        """Re-read vault.enc from disk before this operation.
+
+        A VaultStore instance is long-lived — the web server keeps one
+        for its entire process lifetime — but the file can be changed
+        by a completely different process, most notably the CLI's
+        `vault template add`, since template management is CLI-only by
+        design (see ADR 0002). Without this, a template added via the
+        CLI while the web server is already running would never be
+        seen by it: the server's in-memory copy would just silently
+        keep reporting "no env-mode injection template" until restart.
+
+        Cheap — _load() only parses the on-disk JSON structure, it
+        doesn't touch the derived key, so this doesn't affect
+        unlocked/locked state or require re-deriving anything.
+        """
+        self._load()
+
     def list_credentials(self) -> list[Credential]:
         """Return all credentials (without values)."""
+        self._refresh()
         return [
             _Entry(**e).to_credential()
             for e in self._file.entries
@@ -268,6 +288,7 @@ class VaultStore:
 
     def get_credential(self, cred_id: str) -> Credential | None:
         """Return credential metadata by ID, or None."""
+        self._refresh()
         entry = self._find_entry(cred_id)
         if entry is None:
             return None
@@ -279,6 +300,7 @@ class VaultStore:
         Raises ValueError if the ID already exists or the vault is locked.
         """
         self._ensure_unlocked()
+        self._refresh()
         if self._find_entry(cred.id) is not None:
             raise ValueError(f"credential {cred.id!r} already exists")
         if not cred.value:
@@ -302,6 +324,7 @@ class VaultStore:
     def remove_credential(self, cred_id: str) -> None:
         """Remove a credential by ID. The vault must be unlocked."""
         self._ensure_unlocked()
+        self._refresh()
         for i, e in enumerate(self._file.entries):
             if e.get("id") == cred_id:
                 self._file.entries.pop(i)
@@ -312,6 +335,7 @@ class VaultStore:
     def update_credential(self, cred: Credential) -> None:
         """Update credential metadata (not the value)."""
         self._ensure_unlocked()
+        self._refresh()
         entry = self._find_entry(cred.id)
         if entry is None:
             raise ValueError(f"credential {cred.id!r} not found")
@@ -322,6 +346,7 @@ class VaultStore:
     def set_template(self, cred_id: str, tmpl: InjectionTemplate) -> None:
         """Add or replace a template on a credential."""
         self._ensure_unlocked()
+        self._refresh()
         entry = self._find_entry(cred_id)
         if entry is None:
             raise ValueError(f"credential {cred_id!r} not found")
@@ -337,6 +362,7 @@ class VaultStore:
 
     def get_template(self, cred_id: str, name: str) -> InjectionTemplate | None:
         """Get a specific template from a credential."""
+        self._refresh()
         entry = self._find_entry(cred_id)
         if entry is None:
             return None
@@ -347,6 +373,7 @@ class VaultStore:
 
     def list_templates(self, cred_id: str) -> list[InjectionTemplate]:
         """List all templates for a credential."""
+        self._refresh()
         entry = self._find_entry(cred_id)
         if entry is None:
             return []
@@ -355,6 +382,7 @@ class VaultStore:
     def remove_template(self, cred_id: str, name: str) -> None:
         """Remove a template from a credential."""
         self._ensure_unlocked()
+        self._refresh()
         entry = self._find_entry(cred_id)
         if entry is None:
             raise ValueError(f"credential {cred_id!r} not found")
@@ -379,6 +407,7 @@ class VaultStore:
         """
         started = time.time()
         self._ensure_unlocked()
+        self._refresh()
         entry = self._find_entry(cred_id)
         if entry is None:
             raise ValueError(f"credential {cred_id!r} not found")
