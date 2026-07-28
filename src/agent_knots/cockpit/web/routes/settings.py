@@ -77,6 +77,9 @@ def create_router() -> APIRouter:
                 "github_pr_on_review": s.integrations.github_pr_on_review,
                 "phone_push": s.integrations.phone_push,
             },
+            "wastebin": {
+                "retention_days": s.wastebin.retention_days,
+            },
         }
 
     @router.put("/api/settings")
@@ -96,6 +99,9 @@ def create_router() -> APIRouter:
         # Only update API key if a real value was provided (not masked).
         if body.api_key and "..." not in body.api_key and not body.api_key.startswith("****"):
             s.agent.api_key = body.api_key
+
+        if body.wastebin_retention_days is not None:
+            s.wastebin.retention_days = body.wastebin_retention_days
 
         settings.save(s)
         return {"status": "ok", "configured": provider_module.resolve_provider().is_configured}

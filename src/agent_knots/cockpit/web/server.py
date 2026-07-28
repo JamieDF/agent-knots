@@ -24,7 +24,7 @@ from agent_knots.cockpit.web.auth import Auth, COOKIE_NAME, verify_token
 from agent_knots.cockpit.web.htmltemplates import LOGIN_HTML, SPA_SHELL_HTML
 from agent_knots.cockpit.web.routes import (
     agents, fs, mcp, review, settings as settings_routes, tasks, tools, vault as vault_routes,
-    workflows, workspaces,
+    wastebin, workflows, workspaces,
 )
 from agent_knots.config import cockpit_token_file, vault_dir
 from agent_knots.session.manager import SessionManager
@@ -142,6 +142,7 @@ def create_app(
     app.include_router(workflows.create_router())
     app.include_router(review.create_router())
     app.include_router(fs.create_router())
+    app.include_router(wastebin.create_router(session_manager))
 
     @app.get("/api/health")
     async def health():

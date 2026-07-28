@@ -9,6 +9,7 @@ import { ProvidersCard } from './ProvidersCard'
 import { ToolsCard } from './ToolsCard'
 import { UsageCard } from './UsageCard'
 import { VaultCard } from './VaultCard'
+import { WastebinCard } from './WastebinCard'
 import { WorkspacesCard } from './WorkspacesCard'
 
 const SECTIONS = [
@@ -21,6 +22,7 @@ const SECTIONS = [
   { id: 'integrations', label: 'Integrations' },
   { id: 'vault', label: 'Vault' },
   { id: 'workspaces', label: 'Workspaces' },
+  { id: 'wastebin', label: 'Wastebin' },
 ]
 
 /** Settings screen — a scrolling column of cards (one per SECTIONS
@@ -111,7 +113,8 @@ function SettingsPage() {
           <Section id="mcp"><McpServersCard /></Section>
           <Section id="integrations"><IntegrationsCard /></Section>
           <Section id="vault"><VaultCard /></Section>
-          <Section id="workspaces" last><WorkspacesCard /></Section>
+          <Section id="workspaces"><WorkspacesCard /></Section>
+          <Section id="wastebin" last><WastebinCard /></Section>
           {/* Without trailing space, a short last section (or two) can
               never scroll flush to the container's top — there just isn't
               enough content below it to push it up that far. That leaves

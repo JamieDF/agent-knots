@@ -156,6 +156,28 @@ def create_router(session_manager: SessionManager) -> APIRouter:
         store.create(task)
         return _task_to_response(task, store)
 
+    async def _maybe_auto_stop_finished_sessions(new_status: str, task: Task) -> None:
+        """Stop every session working this task once it reaches a status
+        that means this round of work is over — review, done, or
+        abandoned. Otherwise a finished task's sessions (and whatever git
+        branch / auto-provisioned workdir they hold onto) just sit there
+        forever, since nothing else ever stops them automatically.
+
+        Runs before _maybe_fire_role_triggers, not after — a transition
+        into review that also fires a new advisory reviewer must stop
+        the *old* writer first, without racing the reviewer session
+        that's about to be created (it doesn't exist yet at this point,
+        since role triggers haven't fired).
+
+        Same disclosed limitation as _maybe_fire_role_triggers: only
+        wired at this API-layer PATCH, not the agent-tool status-change
+        path (task/tools.py has no SessionManager reference).
+        """
+        if new_status not in ("review", "done", "abandoned"):
+            return
+        for session in [s for s in session_manager.active if s.task_id == task.id]:
+            await session_manager.stop(session.id)
+
     def _maybe_fire_role_triggers(old_status: str, new_status: str, task: Task) -> None:
         """Auto-start a session for any enabled default-agent role whose
         trigger matches this status transition (Workflows screen).
@@ -239,6 +261,7 @@ def create_router(session_manager: SessionManager) -> APIRouter:
                 task = store.set_status(task_id, TaskStatus(body.status), actor="human")
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
+            await _maybe_auto_stop_finished_sessions(task.status.value, task)
             _maybe_fire_role_triggers(old_status, task.status.value, task)
 
         dirty = False

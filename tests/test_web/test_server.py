@@ -219,6 +219,33 @@ class TestSettingsAPI:
         assert resp.json()["configured"] is True
 
     @pytest.mark.asyncio
+    async def test_wastebin_retention_defaults_to_30_days(self, authed_client):
+        resp = await authed_client.get("/api/settings")
+        assert resp.json()["wastebin"]["retention_days"] == 30
+
+    @pytest.mark.asyncio
+    async def test_wastebin_retention_round_trips(self, authed_client):
+        await authed_client.put("/api/settings", json={"wastebin_retention_days": 7})
+        resp = await authed_client.get("/api/settings")
+        assert resp.json()["wastebin"]["retention_days"] == 7
+
+    @pytest.mark.asyncio
+    async def test_wastebin_retention_zero_is_a_real_value_not_ignored(self, authed_client):
+        """0 means 'never auto-purge' — a meaningful setting, not the
+        empty-string-means-preserve convention the string fields use."""
+        await authed_client.put("/api/settings", json={"wastebin_retention_days": 7})
+        await authed_client.put("/api/settings", json={"wastebin_retention_days": 0})
+        resp = await authed_client.get("/api/settings")
+        assert resp.json()["wastebin"]["retention_days"] == 0
+
+    @pytest.mark.asyncio
+    async def test_wastebin_retention_omitted_preserves_existing(self, authed_client):
+        await authed_client.put("/api/settings", json={"wastebin_retention_days": 14})
+        await authed_client.put("/api/settings", json={"default_model": "gpt-4o"})
+        resp = await authed_client.get("/api/settings")
+        assert resp.json()["wastebin"]["retention_days"] == 14
+
+    @pytest.mark.asyncio
     async def test_configured_via_env_var_without_settings_file(self, authed_client, monkeypatch):
         """Regression: this used to only check the settings file, so an
         env-var-only setup (common for containers/CI) left the GUI
@@ -1142,6 +1169,113 @@ class TestRoleTriggers:
         assert task["assigned_to"] == writer_id
 
 
+class TestAutoStopOnTerminalStatus:
+    """A task's session(s) must stop automatically once the task reaches
+    review/done/abandoned — otherwise nothing ever stops a finished
+    session, and its branch/workdir sit around forever. See
+    _maybe_auto_stop_finished_sessions in routes/tasks.py."""
+
+    @pytest.mark.asyncio
+    async def test_reaching_done_stops_the_session(self, authed_client, session_manager, monkeypatch):
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        created = await authed_client.post(
+            "/api/tasks", json={"title": "Auto-stop on done", "review_gate": "none"},
+        )
+        task_id = created.json()["id"]
+        session = await authed_client.post(
+            "/api/sessions", json={"prompt": "", "mode": "agent", "task_id": task_id},
+        )
+        session_id = session.json()["id"]
+        assert session_manager.get(session_id) is not None
+
+        resp = await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "done"})
+        assert resp.status_code == 200
+        assert session_manager.get(session_id) is None
+
+    @pytest.mark.asyncio
+    async def test_reaching_review_stops_the_session(self, authed_client, session_manager, monkeypatch):
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        created = await authed_client.post("/api/tasks", json={"title": "Auto-stop on review"})
+        task_id = created.json()["id"]
+        session = await authed_client.post(
+            "/api/sessions", json={"prompt": "", "mode": "agent", "task_id": task_id},
+        )
+        session_id = session.json()["id"]
+
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "review"})
+        assert session_manager.get(session_id) is None
+
+    @pytest.mark.asyncio
+    async def test_reaching_abandoned_stops_the_session(self, authed_client, session_manager, monkeypatch):
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        created = await authed_client.post("/api/tasks", json={"title": "Auto-stop on abandon"})
+        task_id = created.json()["id"]
+        session = await authed_client.post(
+            "/api/sessions", json={"prompt": "", "mode": "agent", "task_id": task_id},
+        )
+        session_id = session.json()["id"]
+
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "abandoned"})
+        assert session_manager.get(session_id) is None
+
+    @pytest.mark.asyncio
+    async def test_non_terminal_transition_does_not_stop_the_session(
+        self, authed_client, session_manager, monkeypatch,
+    ):
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        created = await authed_client.post("/api/tasks", json={"title": "Still working"})
+        task_id = created.json()["id"]
+        session = await authed_client.post(
+            "/api/sessions", json={"prompt": "", "mode": "agent", "task_id": task_id},
+        )
+        session_id = session.json()["id"]
+
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "blocked"})
+        assert session_manager.get(session_id) is not None
+
+    @pytest.mark.asyncio
+    async def test_auto_stop_does_not_kill_the_new_reviewer_it_just_fired(
+        self, authed_client, session_manager, monkeypatch,
+    ):
+        """The transition into 'review' both stops the old writer AND (if
+        the reviewer role is enabled) fires a brand new advisory
+        session. Ordering matters: auto-stop must run before the new
+        session exists, or it could catch and immediately kill it."""
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        await authed_client.patch("/api/roles/reviewer", json={"enabled": True})
+        created = await authed_client.post("/api/tasks", json={"title": "Review with auto-stop"})
+        task_id = created.json()["id"]
+        writer = await authed_client.post(
+            "/api/sessions", json={"prompt": "", "mode": "agent", "task_id": task_id},
+        )
+        writer_id = writer.json()["id"]
+
+        await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "review"})
+
+        assert session_manager.get(writer_id) is None
+        for _ in range(10):
+            await asyncio.sleep(0.05)
+            reviewers = [s for s in session_manager.active if s.task_id == task_id and s.advisory]
+            if reviewers:
+                break
+        assert reviewers, "the new advisory reviewer session must survive the same auto-stop call"
+
+
 class TestTaskAgentsAPI:
     @pytest.mark.asyncio
     async def test_lists_only_sessions_for_this_task(self, authed_client, session_manager, monkeypatch):
@@ -1692,3 +1826,121 @@ class TestSpaFallbackServesRootStaticFiles:
     async def test_path_traversal_does_not_escape_static_dir(self, static_client):
         resp = await static_client.get("/../secret.txt")
         assert "should never be served" not in resp.text
+
+
+class TestWastebinAPI:
+    @pytest.mark.asyncio
+    async def test_empty_wastebin(self, authed_client):
+        resp = await authed_client.get("/api/wastebin")
+        assert resp.status_code == 200
+        assert resp.json()["entries"] == []
+
+    @pytest.mark.asyncio
+    async def test_stopped_session_appears_as_a_tombstone(
+        self, authed_client, session_manager, monkeypatch,
+    ):
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        created = await authed_client.post("/api/tasks", json={"title": "Wastebin test"})
+        task_id = created.json()["id"]
+        session = await authed_client.post(
+            "/api/sessions", json={"prompt": "", "mode": "agent", "task_id": task_id},
+        )
+        session_id = session.json()["id"]
+
+        await authed_client.delete(f"/api/agent/{session_id}")
+
+        resp = await authed_client.get("/api/wastebin")
+        entries = resp.json()["entries"]
+        assert any(e["session_id"] == session_id for e in entries)
+        entry = next(e for e in entries if e["session_id"] == session_id)
+        assert entry["task_id"] == task_id
+        assert entry["task_title"] == "Wastebin test"
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_the_entry(self, authed_client, session_manager, monkeypatch):
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        session = await authed_client.post("/api/sessions", json={"prompt": "", "mode": "agent"})
+        session_id = session.json()["id"]
+        await authed_client.delete(f"/api/agent/{session_id}")
+
+        resp = await authed_client.delete(f"/api/wastebin/{session_id}")
+        assert resp.status_code == 200
+
+        entries = (await authed_client.get("/api/wastebin")).json()["entries"]
+        assert not any(e["session_id"] == session_id for e in entries)
+
+    @pytest.mark.asyncio
+    async def test_delete_unknown_entry_404s(self, authed_client):
+        resp = await authed_client.delete("/api/wastebin/nonexistent")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_force_deletes_a_surviving_branch(
+        self, authed_client, session_manager, tmp_path, monkeypatch,
+    ):
+        import subprocess
+
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        (repo / "a.txt").write_text("one\n")
+        subprocess.run(["git", "add", "a.txt"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+        await authed_client.post(
+            "/api/workspaces", json={"id": "wb-repo", "name": "WB", "repository": str(repo)},
+        )
+        created = await authed_client.post(
+            "/api/tasks", json={"title": "Branch to delete", "project": "wb-repo"},
+        )
+        task_id = created.json()["id"]
+        session = await authed_client.post(
+            "/api/sessions",
+            json={"prompt": "", "mode": "agent", "task_id": task_id, "project_id": "wb-repo"},
+        )
+        session_id = session.json()["id"]
+        session_obj = session_manager.get(session_id)
+        branch = session_obj.branch
+        assert branch
+
+        # Make the working tree dirty so the branch survives stop()
+        # (see the dirty-tree fix — otherwise it'd already be gone).
+        (repo / "a.txt").write_text("one\ntwo\n")
+
+        await authed_client.delete(f"/api/agent/{session_id}")
+        result = subprocess.run(
+            ["git", "branch", "--list", branch], cwd=repo, capture_output=True, text=True,
+        )
+        assert branch in result.stdout  # survived stop() — dirty tree
+
+        await authed_client.delete(f"/api/wastebin/{session_id}")
+        result = subprocess.run(
+            ["git", "branch", "--list", branch], cwd=repo, capture_output=True, text=True,
+        )
+        assert branch not in result.stdout  # force-deleted by the wastebin
+
+    @pytest.mark.asyncio
+    async def test_retention_zero_never_purges(self, authed_client, session_manager, monkeypatch):
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        await authed_client.put("/api/settings", json={"wastebin_retention_days": 0})
+        session = await authed_client.post("/api/sessions", json={"prompt": "", "mode": "agent"})
+        session_id = session.json()["id"]
+        await authed_client.delete(f"/api/agent/{session_id}")
+
+        entries = (await authed_client.get("/api/wastebin")).json()["entries"]
+        assert any(e["session_id"] == session_id for e in entries)

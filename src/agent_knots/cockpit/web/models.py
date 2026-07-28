@@ -17,6 +17,10 @@ class SaveSettingsRequest(BaseModel):
     base_url: str = ""
     default_mode: str = ""
     runtime: str = ""
+    # None = preserve existing value. Unlike the string fields above,
+    # 0 is a meaningful real value here (never auto-purge), so the
+    # empty-string-means-preserve convention doesn't fit.
+    wastebin_retention_days: int | None = None
 
 
 class CreateSessionRequest(BaseModel):

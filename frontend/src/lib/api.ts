@@ -51,6 +51,14 @@ export interface SettingsResponse {
   providers: ProviderInfo[]
   default_provider: string
   integrations: IntegrationsInfo
+  wastebin: { retention_days: number }
+}
+
+export interface WastebinEntry {
+  session_id: string; task_id: string | null; task_title: string; project_id: string | null
+  branch: string | null; working_dir: string; is_auto_workdir: boolean
+  role: string; advisory: boolean; model: string
+  tokens_used: number; cost_usd: number; started_at: number; stopped_at: number
 }
 
 export interface TaskSummary {
@@ -115,7 +123,7 @@ export async function fetchPendingQuestions(): Promise<{ questions: PendingQuest
 export async function fetchSettings(): Promise<SettingsResponse> {
   return apiFetch('/api/settings')
 }
-export async function saveSettings(s: { default_model: string; api_key: string; base_url: string; default_mode: string }) {
+export async function saveSettings(s: { default_model: string; api_key: string; base_url: string; default_mode: string; wastebin_retention_days?: number }) {
   return apiFetch<any>('/api/settings', jsonInit('PUT', s))
 }
 export async function createSession(body: { prompt: string; mode?: string; project_id?: string; task_id?: string }) {
@@ -269,6 +277,15 @@ export async function approveReview(workspace: string, file?: string, branch?: s
 
 export async function rejectReview(workspace: string, file?: string): Promise<void> {
   await apiFetch('/api/review/reject', jsonInit('POST', { workspace, file }))
+}
+
+// ── wastebin ────────────────────────────────────────────────────────────────
+
+export async function fetchWastebin(): Promise<{ entries: WastebinEntry[] }> {
+  return apiFetch('/api/wastebin')
+}
+export async function deleteWastebinEntry(sessionId: string): Promise<void> {
+  await apiFetch(`/api/wastebin/${sessionId}`, { method: 'DELETE' })
 }
 
 // ── providers + integrations ─────────────────────────────────────────────────

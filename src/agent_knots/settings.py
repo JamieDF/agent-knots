@@ -44,11 +44,20 @@ class IntegrationsSettings:
 
 
 @dataclass
+class WastebinSettings:
+    """0 = keep stopped-session tombstones (and their leftover
+    branches/workdirs) forever; otherwise WastebinStore.list() purges
+    anything older than this on every read."""
+    retention_days: int = 30
+
+
+@dataclass
 class Settings:
     agent: AgentSettings = field(default_factory=AgentSettings)
     providers: list[ProviderProfile] = field(default_factory=list)
     default_provider: str = ""
     integrations: IntegrationsSettings = field(default_factory=IntegrationsSettings)
+    wastebin: WastebinSettings = field(default_factory=WastebinSettings)
 
 
 def load() -> Settings:
@@ -85,11 +94,17 @@ def load() -> Settings:
         phone_push=integrations_data.get("phone_push", False),
     )
 
+    wastebin_data = data.get("wastebin", {})
+    wastebin = WastebinSettings(
+        retention_days=wastebin_data.get("retention_days", WastebinSettings.retention_days),
+    )
+
     return Settings(
         agent=agent,
         providers=providers,
         default_provider=data.get("default_provider", ""),
         integrations=integrations,
+        wastebin=wastebin,
     )
 
 
@@ -103,6 +118,7 @@ def save(settings: Settings) -> None:
         "providers": [asdict(p) for p in settings.providers],
         "default_provider": settings.default_provider,
         "integrations": asdict(settings.integrations),
+        "wastebin": asdict(settings.wastebin),
     }
     # sort_keys=True (not the atomic_write_yaml default) to preserve this
     # file's pre-existing on-disk key order.
