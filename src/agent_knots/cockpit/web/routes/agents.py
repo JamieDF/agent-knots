@@ -49,6 +49,8 @@ def _agent_to_response(session) -> dict:
         "model": session.model,
         "started_at": session.started_at,
         "pending_question": pending,
+        "branch": session.branch,
+        "advisory": session.advisory,
     }
 
 

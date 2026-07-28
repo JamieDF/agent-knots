@@ -624,3 +624,184 @@ class TestSessionManagerStart:
         )
         assert session._task is not None
         await mgr.stop(session.id)
+
+
+@pytest.fixture
+def git_repo(tmp_path):
+    """A git repo with one commit on 'main'."""
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=str(repo), capture_output=True, check=True)
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    (repo / "README.md").write_text("hello\n")
+    git("add", "README.md")
+    git("commit", "-qm", "initial")
+    return repo
+
+
+class TestSessionBranches:
+    """Per-session git branches — see gitutil.ensure_session_branch."""
+
+    @pytest.mark.asyncio
+    async def test_creates_branch_for_a_repo_working_dir(self, sessions_dir, git_repo):
+        from agent_knots.gitutil import current_branch
+
+        mgr = SessionManager(sessions_dir)
+        result = await mgr._ensure_branch(str(git_repo), None, "tsk-1", "sess1", False)
+
+        assert result.skipped_reason is None
+        assert result.name == "knots/tsk-1-sess1"
+        assert result.created is True
+        assert current_branch(git_repo) == "knots/tsk-1-sess1"
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_working_dir(self, sessions_dir):
+        mgr = SessionManager(sessions_dir)
+        result = await mgr._ensure_branch(None, None, "tsk-1", "sess1", False)
+
+        assert result.name is None
+        assert result.skipped_reason == "no working directory"
+
+    @pytest.mark.asyncio
+    async def test_skips_when_not_a_repo(self, sessions_dir, tmp_path):
+        mgr = SessionManager(sessions_dir)
+        result = await mgr._ensure_branch(str(tmp_path), None, "tsk-1", "sess1", False)
+
+        assert result.name is None
+        assert result.skipped_reason == "not a git repository"
+
+    @pytest.mark.asyncio
+    async def test_advisory_session_never_branches(self, sessions_dir, git_repo):
+        """An advisory agent shares the writer's working tree, and git
+        checkout is process-global — branching would move the writer's
+        files too."""
+        from agent_knots.gitutil import current_branch
+
+        mgr = SessionManager(sessions_dir)
+        result = await mgr._ensure_branch(str(git_repo), None, "tsk-1", "sess1", True)
+
+        assert result.name is None
+        assert "advisory" in result.skipped_reason
+        assert current_branch(git_repo) == "main"
+
+    @pytest.mark.asyncio
+    async def test_second_writer_in_same_repo_skips(self, sessions_dir, git_repo):
+        """Two writers would fight over HEAD; the second leaves the
+        first's checkout alone."""
+        mgr = SessionManager(sessions_dir)
+        first = Session(id="sess1", working_dir=str(git_repo))
+        mgr._sessions["sess1"] = first
+        mgr._repo_writers[str(git_repo)] = "sess1"
+
+        result = await mgr._ensure_branch(str(git_repo), None, "tsk-2", "sess2", False)
+
+        assert result.name is None
+        assert "already checked out by session sess1" in result.skipped_reason
+
+    @pytest.mark.asyncio
+    async def test_existing_branch_is_reused_not_recreated(self, sessions_dir, git_repo):
+        mgr = SessionManager(sessions_dir)
+        await mgr._ensure_branch(str(git_repo), None, "tsk-1", "sess1", False)
+        mgr._repo_writers.clear()
+
+        result = await mgr._ensure_branch(str(git_repo), None, "tsk-1", "sess1", False)
+
+        assert result.created is False
+        assert result.name == "knots/tsk-1-sess1"
+
+    @pytest.mark.asyncio
+    async def test_stop_deletes_branch_with_no_commits(self, sessions_dir, git_repo):
+        from agent_knots.gitutil import branch_exists, current_branch
+
+        mgr = SessionManager(sessions_dir)
+        session = Session(
+            id="sess1", working_dir=str(git_repo),
+            branch="knots/tsk-1-sess1", branch_created=True, branch_base="main",
+        )
+        await mgr._ensure_branch(str(git_repo), None, "tsk-1", "sess1", False)
+        mgr._sessions[session.id] = session
+
+        await mgr.stop(session.id)
+
+        assert branch_exists(git_repo, "knots/tsk-1-sess1") is False
+        assert current_branch(git_repo) == "main"
+
+    @pytest.mark.asyncio
+    async def test_stop_keeps_branch_that_has_commits(self, sessions_dir, git_repo):
+        import subprocess
+
+        from agent_knots.gitutil import branch_exists
+
+        mgr = SessionManager(sessions_dir)
+        await mgr._ensure_branch(str(git_repo), None, "tsk-1", "sess1", False)
+        (git_repo / "work.txt").write_text("real work\n")
+        subprocess.run(["git", "add", "work.txt"], cwd=str(git_repo), check=True,
+                       capture_output=True)
+        subprocess.run(["git", "commit", "-qm", "work"], cwd=str(git_repo), check=True,
+                       capture_output=True)
+
+        session = Session(
+            id="sess1", working_dir=str(git_repo),
+            branch="knots/tsk-1-sess1", branch_created=True, branch_base="main",
+        )
+        mgr._sessions[session.id] = session
+        await mgr.stop(session.id)
+
+        assert branch_exists(git_repo, "knots/tsk-1-sess1") is True
+
+    @pytest.mark.asyncio
+    async def test_stop_releases_the_repo_for_the_next_writer(self, sessions_dir, git_repo):
+        mgr = SessionManager(sessions_dir)
+        session = Session(id="sess1", working_dir=str(git_repo))
+        mgr._sessions[session.id] = session
+        mgr._repo_writers[str(git_repo)] = "sess1"
+
+        await mgr.stop(session.id)
+
+        assert str(git_repo) not in mgr._repo_writers
+
+    @pytest.mark.asyncio
+    async def test_start_records_branch_on_the_session(
+        self, sessions_dir, git_repo, agent_knots_home,
+    ):
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            working_dir=str(git_repo), runtime_override="inprocess",
+        )
+
+        assert session.branch == f"knots/session-{session.id}"
+        assert session.branch_created is True
+        assert session.branch_base == "main"
+        assert mgr._repo_writers[str(git_repo)] == session.id
+        await mgr.stop(session.id)
+
+    @pytest.mark.asyncio
+    async def test_start_logs_the_branch_to_the_task(
+        self, sessions_dir, git_repo, agent_knots_home,
+    ):
+        """The task YAML is the only durable record of which branch a
+        session's work went to — sessions themselves are in-memory."""
+        from agent_knots.config import tasks_dir
+        from agent_knots.task.models import Task, new_task_id
+        from agent_knots.task.store import TaskStore
+
+        store = TaskStore(tasks_dir())
+        task = store.create(Task(id=new_task_id(), title="Branch me"))
+
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            task_id=task.id, working_dir=str(git_repo), runtime_override="inprocess",
+        )
+
+        entries = [p.entry for p in store.get(task.id).progress]
+        assert any(session.branch in e for e in entries)
+        await mgr.stop(session.id)

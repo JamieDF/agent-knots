@@ -17,6 +17,15 @@ from pathlib import Path
 from typing import Any
 
 from agent_knots.events import Event, EventType, ToolCall, ToolResult
+from agent_knots.gitutil import (
+    BranchResult,
+    branch_exists,
+    current_branch,
+    delete_branch_if_empty_async,
+    ensure_session_branch_async,
+    is_repo,
+    session_branch_name,
+)
 from agent_knots.vault.store import VaultStore
 
 
@@ -57,6 +66,21 @@ class Session:
     cost_usd: float = 0.0
     model: str = ""
     started_at: float = field(default_factory=time.time)
+
+    # Git branch this session works on. None = no branch (not a repo, no
+    # working dir, advisory session, or git refused — see
+    # SessionManager._ensure_branch). branch_created distinguishes "we
+    # made this" from "it already existed and we checked it out", which
+    # is what stop() keys its cleanup off: we only ever delete branches
+    # we created ourselves.
+    branch: str | None = None
+    branch_created: bool = False
+    branch_base: str = ""
+    # Advisory sessions are read-only observers sharing another session's
+    # working tree (a reviewer role on the same task). They never create
+    # or switch branches — the writer owns HEAD — and never take over the
+    # task's assigned_to.
+    advisory: bool = False
 
     # Internal — not serialised. Multiple SSE subscribers (e.g. two browser
     # tabs open on the same agent) each get their own queue rather than
@@ -145,6 +169,12 @@ class SessionManager:
         self.sessions_dir = Path(sessions_dir)
         self.vault = vault
         self._sessions: dict[str, Session] = {}
+        # repo path -> session id of the writer that owns HEAD there.
+        # git checkout is process-global, so two writer sessions in one
+        # repo would fight over the working tree; the second one skips
+        # branching rather than yanking files out from under the first.
+        # This is the tradeoff worktrees would remove — see roadmap.md.
+        self._repo_writers: dict[str, str] = {}
 
     @property
     def active(self) -> list[Session]:
@@ -167,6 +197,7 @@ class SessionManager:
         project_id: str | None = None,
         tools: list[Any] | None = None,
         runtime_override: str = "",
+        advisory: bool = False,
     ) -> Session:
         """Start a new Strands-powered agent session.
 
@@ -182,6 +213,9 @@ class SessionManager:
                      the system prompt so the agent knows what to work on.
             project_id: Optional project ID reference.
             tools: Optional list of Strands tools. Task tools are always included.
+            advisory: Read-only observer sharing another session's working
+                      tree. Skips branch creation and does not claim the
+                      task's assigned_to.
 
         Returns:
             The created Session.
@@ -212,6 +246,14 @@ class SessionManager:
         task_context = self._resolve_task_context(session_id, task_id)
         full_prompt = self._build_full_prompt(system_prompt, task_context, mode, task_id)
         resolved_working_dir = self._resolve_working_dir(working_dir, project_id)
+
+        # Branch before anything binds to the working tree — the sandbox
+        # and the shell/editor tools below all take resolved_working_dir
+        # as their cwd, and checking out afterwards would swap files
+        # underneath an agent that had already started.
+        branch_result = await self._ensure_branch(
+            resolved_working_dir, project_id, task_id, session_id, advisory,
+        )
 
         # Custom (shell-command) tools are bound to resolved_working_dir here
         # since, unlike the built-in shell/editor tools below, they have no
@@ -251,12 +293,20 @@ class SessionManager:
             project_id=project_id,
             working_dir=resolved_working_dir,
             model=provider.model,
+            branch=branch_result.name,
+            branch_created=branch_result.created,
+            branch_base=branch_result.base,
+            advisory=advisory,
             _agent=agent,
             _background_pids=background_pids,
             _base_prompt=system_prompt,
             _task_context=task_context,
         )
         self._sessions[session_id] = session
+
+        if branch_result.name and resolved_working_dir and not advisory:
+            self._repo_writers[resolved_working_dir] = session_id
+        self._announce_branch(session, branch_result)
 
         self._register_hooks(agent, session, task_id)
 
@@ -300,6 +350,8 @@ class SessionManager:
             for pid in session._background_pids:
                 kill_background_process(pid)
 
+        await self._teardown_branch(session)
+
         session._broadcast(Event(
             type=EventType.ENDED,
             session_id=session_id,
@@ -317,6 +369,35 @@ class SessionManager:
                 tokens=session.tokens_used,
                 cost_usd=session.cost_usd,
             ))
+
+    async def _teardown_branch(self, session: Session) -> None:
+        """Release the session's hold on the repo, deleting its branch
+        only if the session left nothing behind.
+
+        A branch with commits is always kept — that's the work. An empty
+        one is noise from a session that started and did nothing, so it
+        goes. Never raises: teardown failing must not stop a session
+        being stopped.
+        """
+        if session.working_dir:
+            if self._repo_writers.get(session.working_dir) == session.id:
+                del self._repo_writers[session.working_dir]
+
+        if not (session.branch_created and session.working_dir and session.branch_base):
+            return
+        try:
+            deleted = await delete_branch_if_empty_async(
+                Path(session.working_dir), session.branch, session.branch_base,
+            )
+            if deleted:
+                session._broadcast(Event(
+                    type=EventType.STATE_CHANGE,
+                    session_id=session.id,
+                    message=f"Removed empty branch {session.branch}.",
+                    data={"branch": None},
+                ))
+        except Exception:
+            pass
 
     async def send(self, session_id: str, message: str) -> None:
         """Send a follow-up message to an agent session.
@@ -773,6 +854,100 @@ class SessionManager:
             if memory_block:
                 full_prompt = full_prompt + "\n\n" + memory_block
         return full_prompt
+
+    async def _ensure_branch(
+        self,
+        working_dir: str | None,
+        project_id: str | None,
+        task_id: str | None,
+        session_id: str,
+        advisory: bool,
+    ) -> BranchResult:
+        """Put this session on its own git branch, if that's possible here.
+
+        Every "no" is a skip carrying a reason, never an exception — a
+        git problem is not a reason to refuse to start an agent.
+
+        Advisory sessions never branch: they share the writer's working
+        tree, and since `git checkout` is process-global, branching would
+        move the writer's files too.
+        """
+        if advisory:
+            return BranchResult(skipped_reason="advisory session shares the writer's branch")
+        if not working_dir:
+            return BranchResult(skipped_reason="no working directory")
+
+        # A second writer in the same repo would fight the first over
+        # HEAD. Leave it on whatever the first writer checked out.
+        owner = self._repo_writers.get(working_dir)
+        if owner is not None and owner in self._sessions:
+            return BranchResult(
+                skipped_reason=f"repo already checked out by session {owner}",
+            )
+
+        repo = Path(working_dir)
+        # Checked here as well as inside ensure_session_branch so the
+        # skip reason is the accurate one — resolving a base branch in a
+        # non-repo also fails, but "no base branch" would misdescribe why.
+        if not is_repo(repo):
+            return BranchResult(skipped_reason="not a git repository")
+
+        base = self._resolve_base_branch(repo, project_id)
+        if not base:
+            return BranchResult(skipped_reason="no base branch (detached HEAD?)")
+
+        name = session_branch_name(task_id, session_id)
+        return await ensure_session_branch_async(repo, name, base)
+
+    @staticmethod
+    def _resolve_base_branch(repo: Path, project_id: str | None) -> str:
+        """Workspace's configured default_branch > whatever is checked
+        out > "" (caller treats as unbranchable)."""
+        if project_id:
+            from agent_knots.config import projects_dir as _projects_dir
+            from agent_knots.project.store import ProjectStore
+
+            proj = ProjectStore(_projects_dir()).get(project_id)
+            if proj and proj.default_branch and branch_exists(repo, proj.default_branch):
+                return proj.default_branch
+        return current_branch(repo) or ""
+
+    def _announce_branch(self, session: Session, result: BranchResult) -> None:
+        """Surface the branch outcome to the UI and, when there's a task,
+        to its progress log.
+
+        The progress entry is the only durable record of the branch:
+        sessions live in memory and die with the process, but task YAML
+        persists, so this is what tells you later which branch a task's
+        work went to.
+        """
+        if result.name:
+            message = f"Working on branch {result.name} (from {result.base})."
+        else:
+            message = f"No session branch — {result.skipped_reason}."
+
+        session._broadcast(Event(
+            type=EventType.STATE_CHANGE,
+            session_id=session.id,
+            message=message,
+            data={"branch": result.name, "branch_base": result.base},
+        ))
+
+        if not (session.task_id and result.name):
+            return
+        try:
+            from agent_knots.config import tasks_dir as _tasks_dir
+            from agent_knots.task.models import ProgressEntry
+            from agent_knots.task.store import TaskStore
+
+            TaskStore(_tasks_dir()).log_progress(session.task_id, ProgressEntry(
+                entry=f"Branch {result.name} created from {result.base}."
+                      if result.created else f"Resumed on branch {result.name}.",
+                caller=session.id,
+            ))
+        except Exception:
+            # Never let progress bookkeeping stop a session starting.
+            pass
 
     @staticmethod
     def _resolve_working_dir(working_dir: str | None, project_id: str | None) -> str | None:
