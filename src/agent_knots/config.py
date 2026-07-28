@@ -44,6 +44,12 @@ def vault_dir() -> Path:
     return _ensure_dir(_home() / "vault")
 
 
+def wastebin_dir() -> Path:
+    """Directory where stopped-session tombstone records live — see
+    wastebin.py. One YAML file per session, same layout as tasks_dir()."""
+    return _ensure_dir(_home() / "wastebin")
+
+
 def settings_file() -> Path:
     """Path to the YAML settings file."""
     return _home() / "settings.yaml"

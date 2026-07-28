@@ -419,6 +419,7 @@ class SessionManager:
                 kill_background_process(pid)
 
         await self._teardown_branch(session)
+        self._record_wastebin(session)
 
         session._broadcast(Event(
             type=EventType.ENDED,
@@ -437,6 +438,53 @@ class SessionManager:
                 tokens=session.tokens_used,
                 cost_usd=session.cost_usd,
             ))
+
+    def _record_wastebin(self, session: Session) -> None:
+        """Leave a tombstone for this session — otherwise stop() is the
+        last anyone ever hears of it: sessions aren't persisted, so
+        without this there'd be no history and no way to find (let
+        alone clean up) whatever branch or workdir it left behind.
+
+        Every session gets one, even a completely trivial one with no
+        branch and nothing written — that's what makes this double as
+        session history, not just a cleanup queue. Never lets bookkeeping
+        block a session from actually stopping.
+        """
+        try:
+            from agent_knots.config import session_workdir, wastebin_dir
+            from agent_knots.config import tasks_dir as _tasks_dir
+            from agent_knots.task.store import TaskStore
+            from agent_knots.wastebin import WastebinEntry, WastebinStore
+
+            task_title = ""
+            if session.task_id:
+                task = TaskStore(_tasks_dir()).get(session.task_id)
+                if task:
+                    task_title = task.title
+
+            is_auto_workdir = bool(
+                session.working_dir
+                and session.working_dir == str(session_workdir(session.id)),
+            )
+
+            WastebinStore(wastebin_dir()).add(WastebinEntry(
+                session_id=session.id,
+                task_id=session.task_id,
+                task_title=task_title,
+                project_id=session.project_id,
+                branch=session.branch,
+                branch_base=session.branch_base,
+                working_dir=session.working_dir or "",
+                is_auto_workdir=is_auto_workdir,
+                role=session.role,
+                advisory=session.advisory,
+                model=session.model,
+                tokens_used=session.tokens_used,
+                cost_usd=session.cost_usd,
+                started_at=session.started_at,
+            ))
+        except Exception:
+            pass
 
     async def _teardown_branch(self, session: Session) -> None:
         """Release the session's hold on the repo, deleting its branch
@@ -458,10 +506,17 @@ class SessionManager:
                 Path(session.working_dir), session.branch, session.branch_base,
             )
             if deleted:
+                message = f"Removed empty branch {session.branch}."
+                # Reflect reality on the Session object itself, not just
+                # the broadcast event — anything reading session.branch
+                # after teardown (e.g. the wastebin tombstone written
+                # right after this) must see that it's gone, not a name
+                # that no longer exists on disk.
+                session.branch = None
                 session._broadcast(Event(
                     type=EventType.STATE_CHANGE,
                     session_id=session.id,
-                    message=f"Removed empty branch {session.branch}.",
+                    message=message,
                     data={"branch": None},
                 ))
         except Exception:
@@ -973,7 +1028,16 @@ class SessionManager:
         if not base:
             return BranchResult(skipped_reason="no base branch (detached HEAD?)")
 
-        name = session_branch_name(task_id, session_id)
+        task_title = ""
+        if task_id:
+            from agent_knots.config import tasks_dir as _tasks_dir
+            from agent_knots.task.store import TaskStore
+
+            task = TaskStore(_tasks_dir()).get(task_id)
+            if task:
+                task_title = task.title
+
+        name = session_branch_name(task_id, task_title, session_id)
         return await ensure_session_branch_async(repo, name, base)
 
     @staticmethod

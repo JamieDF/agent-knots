@@ -7,6 +7,7 @@ the session layer would invert the dependency direction.
 """
 
 import asyncio
+import hashlib
 import re
 import subprocess
 from dataclasses import dataclass
@@ -116,15 +117,31 @@ def commits_ahead(repo: Path, name: str, base: str) -> int:
         return -1
 
 
-def session_branch_name(task_id: str | None, session_id: str) -> str:
-    """Deterministic branch name for a session.
+def _slugify(text: str, max_len: int = 40) -> str:
+    """Lowercase, punctuation-free, hyphen-separated. Falls back to
+    'task' for a blank/symbols-only title rather than an empty slug."""
+    s = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return s[:max_len].rstrip("-") or "task"
 
-    Deterministic from (task_id, session_id) on purpose — sessions are
-    not persisted anywhere, so the name has to be re-derivable rather
-    than stored, and `git branch --list 'knots/<task_id>-*'` recovers
-    every branch belonging to a task after a restart.
+
+def session_branch_name(task_id: str | None, task_title: str, session_id: str) -> str:
+    """Branch name for a session — task-scoped, not session-scoped.
+
+    Deliberately keyed on the *task*, not the session: sessions aren't
+    persisted anywhere, so resuming a task later means starting a brand
+    new session, and it must land back on the same branch (same
+    uncommitted changes, same history) rather than a fresh one off base
+    that orphans whatever the previous session left behind.
+
+    Derived from the task's title (readable — "knots/fix-login-bug-a1b2c3"
+    beats an opaque id) plus a short hash of the task id for uniqueness,
+    since titles aren't unique (two tasks can share one, or both be
+    blank) but ids always are.
     """
-    return f"knots/{task_id}-{session_id}" if task_id else f"knots/session-{session_id}"
+    if not task_id:
+        return f"knots/session-{session_id}"
+    short_id = hashlib.sha1(task_id.encode()).hexdigest()[:6]
+    return f"knots/{_slugify(task_title)}-{short_id}"
 
 
 @dataclass
@@ -176,7 +193,16 @@ async def ensure_session_branch_async(repo: Path, name: str, base: str) -> Branc
 
 
 def delete_branch_if_empty(repo: Path, name: str, base: str) -> bool:
-    """Delete `name` if it has no commits beyond `base`. True if deleted.
+    """Delete `name` if it has no commits beyond `base` AND a clean
+    working tree. True if deleted.
+
+    The dirty-tree check matters: commits currently only happen via the
+    Review screen's Approve action, so a session that's done real,
+    uncommitted work still has zero commits ahead of base. Without also
+    checking is_dirty, this would call the branch "empty", delete it,
+    and checkout base — which carries the uncommitted changes along
+    with it (git's own checkout semantics), landing an unreviewed
+    agent's work on base's working tree instead of keeping it isolated.
 
     Never raises. Uses `branch -d` (safe delete) rather than -D, and
     bails without deleting if the base can't be checked out first —
@@ -185,6 +211,8 @@ def delete_branch_if_empty(repo: Path, name: str, base: str) -> bool:
     """
     try:
         if commits_ahead(repo, name, base) != 0:
+            return False
+        if is_dirty(repo):
             return False
         if _run_git(repo, ["checkout", base], timeout=_BRANCH_TIMEOUT).returncode != 0:
             return False
@@ -195,3 +223,25 @@ def delete_branch_if_empty(repo: Path, name: str, base: str) -> bool:
 
 async def delete_branch_if_empty_async(repo: Path, name: str, base: str) -> bool:
     return await asyncio.to_thread(delete_branch_if_empty, repo, name, base)
+
+
+def delete_branch_force(repo: Path, name: str, base: str) -> bool:
+    """Delete `name` unconditionally — regardless of commits or a dirty
+    tree. True if deleted.
+
+    Unlike delete_branch_if_empty, this is an explicit "yes, really get
+    rid of it" action (wastebin cleanup only) — never called
+    automatically. Still never raises, and still checks out base first
+    for the same reason: leaving HEAD somewhere unexpected is worse
+    than a branch that didn't get deleted.
+    """
+    try:
+        if _run_git(repo, ["checkout", base], timeout=_BRANCH_TIMEOUT).returncode != 0:
+            return False
+        return _run_git(repo, ["branch", "-D", name], timeout=_BRANCH_TIMEOUT).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+async def delete_branch_force_async(repo: Path, name: str, base: str) -> bool:
+    return await asyncio.to_thread(delete_branch_force, repo, name, base)

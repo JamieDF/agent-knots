@@ -81,13 +81,30 @@ class TestQueries:
 
 class TestBranchNaming:
     def test_with_task(self):
-        assert session_branch_name("tsk-1", "abc123") == "knots/tsk-1-abc123"
+        import hashlib
+        short = hashlib.sha1(b"tsk-1").hexdigest()[:6]
+        assert session_branch_name("tsk-1", "Fix login bug", "abc123") == f"knots/fix-login-bug-{short}"
 
     def test_without_task(self):
-        assert session_branch_name(None, "abc123") == "knots/session-abc123"
+        assert session_branch_name(None, "", "abc123") == "knots/session-abc123"
 
     def test_deterministic(self):
-        assert session_branch_name("t", "s") == session_branch_name("t", "s")
+        # Same task -> same branch, regardless of session id — this is
+        # what makes resuming a task land back on the same branch.
+        assert session_branch_name("t", "Some title", "s1") == session_branch_name("t", "Some title", "s2")
+
+    def test_blank_title_falls_back_to_task(self):
+        assert session_branch_name("tsk-1", "", "abc123").startswith("knots/task-")
+
+    def test_title_with_punctuation_is_slugified(self):
+        name = session_branch_name("tsk-1", "feat: New welcome page!", "abc123")
+        assert name.startswith("knots/feat-new-welcome-page-")
+        assert ":" not in name and "!" not in name and " " not in name
+
+    def test_two_tasks_with_the_same_title_get_different_branches(self):
+        a = session_branch_name("tsk-a", "Fix bug", "s1")
+        b = session_branch_name("tsk-b", "Fix bug", "s1")
+        assert a != b
 
 
 class TestEnsureSessionBranch:

@@ -717,13 +717,16 @@ class TestSessionBranches:
     async def test_creates_branch_for_a_repo_working_dir(self, sessions_dir, git_repo):
         from agent_knots.gitutil import current_branch
 
+        # No task attached — exercises the base mechanism without
+        # entangling title-based naming (covered separately below and
+        # in test_gitutil.py).
         mgr = SessionManager(sessions_dir)
-        result = await mgr._ensure_branch(str(git_repo), None, "tsk-1", "sess1", False)
+        result = await mgr._ensure_branch(str(git_repo), None, None, "sess1", False)
 
         assert result.skipped_reason is None
-        assert result.name == "knots/tsk-1-sess1"
+        assert result.name == "knots/session-sess1"
         assert result.created is True
-        assert current_branch(git_repo) == "knots/tsk-1-sess1"
+        assert current_branch(git_repo) == "knots/session-sess1"
 
     @pytest.mark.asyncio
     async def test_skips_when_no_working_dir(self, sessions_dir):
@@ -772,29 +775,55 @@ class TestSessionBranches:
     @pytest.mark.asyncio
     async def test_existing_branch_is_reused_not_recreated(self, sessions_dir, git_repo):
         mgr = SessionManager(sessions_dir)
-        await mgr._ensure_branch(str(git_repo), None, "tsk-1", "sess1", False)
+        await mgr._ensure_branch(str(git_repo), None, None, "sess1", False)
         mgr._repo_writers.clear()
 
-        result = await mgr._ensure_branch(str(git_repo), None, "tsk-1", "sess1", False)
+        result = await mgr._ensure_branch(str(git_repo), None, None, "sess1", False)
 
         assert result.created is False
-        assert result.name == "knots/tsk-1-sess1"
+        assert result.name == "knots/session-sess1"
+
+    @pytest.mark.asyncio
+    async def test_resuming_a_task_reuses_its_branch_across_sessions(
+        self, sessions_dir, git_repo, agent_knots_home,
+    ):
+        """The whole point of task-scoped naming: a second, later session
+        on the same task must check out the SAME branch a first session
+        (now stopped) already left behind — not a fresh one off main
+        that orphans whatever the first session did."""
+        from agent_knots.config import tasks_dir
+        from agent_knots.gitutil import current_branch
+        from agent_knots.task.models import Task, new_task_id
+        from agent_knots.task.store import TaskStore
+
+        task = TaskStore(tasks_dir()).create(Task(id=new_task_id(), title="Resume me"))
+        mgr = SessionManager(sessions_dir)
+
+        first = await mgr._ensure_branch(str(git_repo), None, task.id, "sess1", False)
+        assert first.created is True
+        mgr._repo_writers.clear()  # simulate the first session having stopped
+
+        second = await mgr._ensure_branch(str(git_repo), None, task.id, "sess2", False)
+
+        assert second.created is False
+        assert second.name == first.name
+        assert current_branch(git_repo) == first.name
 
     @pytest.mark.asyncio
     async def test_stop_deletes_branch_with_no_commits(self, sessions_dir, git_repo):
         from agent_knots.gitutil import branch_exists, current_branch
 
         mgr = SessionManager(sessions_dir)
+        await mgr._ensure_branch(str(git_repo), None, None, "sess1", False)
         session = Session(
             id="sess1", working_dir=str(git_repo),
-            branch="knots/tsk-1-sess1", branch_created=True, branch_base="main",
+            branch="knots/session-sess1", branch_created=True, branch_base="main",
         )
-        await mgr._ensure_branch(str(git_repo), None, "tsk-1", "sess1", False)
         mgr._sessions[session.id] = session
 
         await mgr.stop(session.id)
 
-        assert branch_exists(git_repo, "knots/tsk-1-sess1") is False
+        assert branch_exists(git_repo, "knots/session-sess1") is False
         assert current_branch(git_repo) == "main"
 
     @pytest.mark.asyncio
@@ -804,7 +833,7 @@ class TestSessionBranches:
         from agent_knots.gitutil import branch_exists
 
         mgr = SessionManager(sessions_dir)
-        await mgr._ensure_branch(str(git_repo), None, "tsk-1", "sess1", False)
+        await mgr._ensure_branch(str(git_repo), None, None, "sess1", False)
         (git_repo / "work.txt").write_text("real work\n")
         subprocess.run(["git", "add", "work.txt"], cwd=str(git_repo), check=True,
                        capture_output=True)
@@ -813,12 +842,34 @@ class TestSessionBranches:
 
         session = Session(
             id="sess1", working_dir=str(git_repo),
-            branch="knots/tsk-1-sess1", branch_created=True, branch_base="main",
+            branch="knots/session-sess1", branch_created=True, branch_base="main",
         )
         mgr._sessions[session.id] = session
         await mgr.stop(session.id)
 
-        assert branch_exists(git_repo, "knots/tsk-1-sess1") is True
+        assert branch_exists(git_repo, "knots/session-sess1") is True
+
+    @pytest.mark.asyncio
+    async def test_stop_keeps_a_dirty_but_uncommitted_branch(self, sessions_dir, git_repo):
+        """The dirty-tree fix: zero commits but uncommitted changes must
+        survive teardown too — not just branches with real commits.
+        Otherwise auto-stop-on-review would delete the branch and carry
+        the agent's unreviewed, uncommitted work onto base."""
+        from agent_knots.gitutil import branch_exists
+
+        mgr = SessionManager(sessions_dir)
+        await mgr._ensure_branch(str(git_repo), None, None, "sess1", False)
+        (git_repo / "work.txt").write_text("uncommitted work\n")
+
+        session = Session(
+            id="sess1", working_dir=str(git_repo),
+            branch="knots/session-sess1", branch_created=True, branch_base="main",
+        )
+        mgr._sessions[session.id] = session
+        await mgr.stop(session.id)
+
+        assert branch_exists(git_repo, "knots/session-sess1") is True
+        assert (git_repo / "work.txt").read_text() == "uncommitted work\n"
 
     @pytest.mark.asyncio
     async def test_stop_releases_the_repo_for_the_next_writer(self, sessions_dir, git_repo):
