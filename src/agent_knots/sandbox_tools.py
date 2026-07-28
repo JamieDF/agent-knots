@@ -21,6 +21,7 @@ import subprocess
 import tempfile
 import uuid
 from pathlib import Path
+from typing import Callable
 
 from strands.tools import tool as _tool_dec
 
@@ -71,7 +72,7 @@ def _resource_preexec(timeout: int):
 
 def run_confined(
     command: str, cwd: str | None, timeout: int = 60,
-    max_output: int | None = None,
+    max_output: int | None = None, env: dict[str, str] | None = None,
 ) -> dict:
     """Run a shell command with basic resource limits and full process-tree
     cleanup on timeout. See module docstring — this bounds resource usage
@@ -83,21 +84,29 @@ def run_confined(
             characters (with a note appended) before returning — protects
             against a runaway command flooding the agent's context with
             output, not a hard OS-level cap on what the process can write.
+        env: Extra environment variables (e.g. injected vault
+            credentials) merged on top of the current process's own
+            environment — never a bare replacement, since that would
+            drop PATH and break every command. Any value in here is
+            scrubbed out of stdout/stderr before they're returned (see
+            scrub_secrets), so an `env` or an accidental `echo $VAR`
+            can't leak a credential into the agent's context.
     """
     try:
         proc = subprocess.Popen(
             command, shell=True, cwd=cwd or None, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env={**os.environ, **env} if env else None,
             preexec_fn=_resource_preexec(timeout) if hasattr(os, "setsid") else None,
         )
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": scrub_secrets(str(e), env)}
 
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
         return {
-            "stdout": _truncate(stdout, max_output),
-            "stderr": _truncate(stderr, max_output),
+            "stdout": _truncate(scrub_secrets(stdout, env), max_output),
+            "stderr": _truncate(scrub_secrets(stderr, env), max_output),
             "exit_code": proc.returncode,
         }
     except subprocess.TimeoutExpired:
@@ -105,12 +114,37 @@ def run_confined(
         stdout, stderr = proc.communicate()
         return {
             "error": f"Command timed out ({timeout}s)",
-            "stdout": _truncate(stdout, max_output),
-            "stderr": _truncate(stderr, max_output),
+            "stdout": _truncate(scrub_secrets(stdout, env), max_output),
+            "stderr": _truncate(scrub_secrets(stderr, env), max_output),
         }
     except Exception as e:
         _kill_process_tree(proc)
-        return {"error": str(e)}
+        return {"error": scrub_secrets(str(e), env)}
+
+
+def scrub_secrets(text: str, env: dict[str, str] | None) -> str:
+    """Replace any occurrence of an injected credential's value in text
+    with a placeholder naming the env var it came from — applied to
+    tool output before it's truncated (truncating first could split a
+    secret across the cut, defeating the match) and before it reaches
+    the agent's context / session history / SSE stream.
+
+    Values under 8 characters are skipped: a short secret risks matching
+    harmless substrings of ordinary output (a line number, a file size,
+    part of an unrelated hash), which would scrub innocuous text and
+    make the output actively misleading rather than protective.
+
+    This only covers what comes back through this tool call — it can't
+    stop an agent writing a credential to a file via the editor tool and
+    reading it back some other way. That gap is accepted, not fixed
+    here.
+    """
+    if not env or not text:
+        return text
+    for name, value in env.items():
+        if len(value) >= 8 and value in text:
+            text = text.replace(value, f"[redacted:{name}]")
+    return text
 
 
 def _truncate(text: str, limit: int | None) -> str:
@@ -133,7 +167,10 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
         pass
 
 
-def run_background(command: str, cwd: str | None, session_id: str = "") -> dict:
+def run_background(
+    command: str, cwd: str | None, session_id: str = "",
+    env: dict[str, str] | None = None,
+) -> dict:
     """Start a command detached from the tool call, for anything meant to
     outlive a single turn — dev servers, watchers, long builds.
 
@@ -149,7 +186,16 @@ def run_background(command: str, cwd: str | None, session_id: str = "") -> dict:
     stdout/stderr are redirected to a log file (path returned) rather
     than captured in memory, since there's no point in the call where
     we'd ever read them back — the process is still running when this
-    returns.
+    returns. Unlike run_confined, that log file is NOT scrubbed of
+    injected credential values — there's no output here to scrub at
+    return time. A dev server that logs a credential it was started
+    with will have it sitting in that file; reading the file back
+    through the shell tool later scrubs it at that point, same as any
+    other command output.
+
+    Args:
+        env: Extra environment variables merged on top of the current
+            process's own environment, same convention as run_confined.
     """
     log_path = os.path.join(
         tempfile.gettempdir(), f"agent-knots-bg-{session_id or 'session'}-{uuid.uuid4().hex[:8]}.log"
@@ -159,10 +205,11 @@ def run_background(command: str, cwd: str | None, session_id: str = "") -> dict:
             proc = subprocess.Popen(
                 command, shell=True, cwd=cwd or None,
                 stdout=log_file, stderr=subprocess.STDOUT,
+                env={**os.environ, **env} if env else None,
                 preexec_fn=(lambda: os.setsid()) if hasattr(os, "setsid") else None,
             )
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": scrub_secrets(str(e), env)}
 
     return {
         "pid": proc.pid,
@@ -204,6 +251,7 @@ def kill_background_process(pid: int) -> None:
 def make_sandboxed_shell(
     workspace: str, max_output: int = 1 << 20,
     session_id: str = "", background_pids: list[int] | None = None,
+    env_provider: Callable[[], dict[str, str]] | None = None,
 ):
     """Create a shell tool that defaults cwd to the workspace directory.
 
@@ -211,6 +259,12 @@ def make_sandboxed_shell(
     a background=true command — lets the caller (SessionManager) track
     and clean these up when the session ends, since they'd otherwise
     outlive it indefinitely.
+
+    env_provider, if given, is called fresh on every invocation rather
+    than resolved once and captured — so a vault unlocked after the
+    session started still takes effect on the next command, and no
+    credential plaintext sits captured in this closure for the whole
+    session's lifetime.
     """
 
     @_tool_dec(description=(
@@ -230,12 +284,13 @@ def make_sandboxed_shell(
                 instead of waiting for it to finish — use this for dev
                 servers or anything else meant to outlive this tool call.
         """
+        env = env_provider() if env_provider else None
         if background:
-            result = run_background(command, cwd=workspace, session_id=session_id)
+            result = run_background(command, cwd=workspace, session_id=session_id, env=env)
             if background_pids is not None and "pid" in result:
                 background_pids.append(result["pid"])
             return result
-        return run_confined(command, cwd=workspace, max_output=max_output)
+        return run_confined(command, cwd=workspace, max_output=max_output, env=env)
 
     return shell_tool
 

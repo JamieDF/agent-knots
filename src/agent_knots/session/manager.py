@@ -41,6 +41,41 @@ class CancelKind(Enum):
     INTERRUPT = "interrupt"  # current turn only — session stays alive
     STOP = "stop"  # the whole session is ending
 
+
+class _SessionCredentialEnv:
+    """Lazily resolves a task's required_credentials into shell env vars,
+    memoised for a short TTL.
+
+    A callable-backed cache rather than a one-shot dict so a vault
+    unlocked *after* the session started still takes effect on the next
+    shell call — but re-decrypting and re-auditing on literally every
+    tool invocation would be wasteful and would spam the audit log, so
+    resolution is only repeated after the TTL elapses.
+    """
+
+    _TTL = 30.0
+
+    def __init__(self, vault: VaultStore, cred_ids: list[str], caller: str) -> None:
+        self._vault = vault
+        self._cred_ids = cred_ids
+        self._caller = caller
+        self._env: dict[str, str] = {}
+        self._resolved_at = 0.0
+
+    def resolve(self) -> tuple[dict[str, str], list[str]]:
+        """Force a fresh resolution now. Called once eagerly at session
+        start (so the system prompt can mention unavailable credentials
+        from the first turn) and again by get_env() once the TTL lapses."""
+        self._env, problems = self._vault.resolve_env(self._cred_ids, caller=self._caller)
+        self._resolved_at = time.time()
+        return self._env, problems
+
+    def get_env(self) -> dict[str, str]:
+        if time.time() - self._resolved_at > self._TTL:
+            self.resolve()
+        return self._env
+
+
 # ── Strands imports ──────────────────────────────────────────────────────────
 
 try:
@@ -255,6 +290,16 @@ class SessionManager:
             resolved_working_dir, project_id, task_id, session_id, advisory,
         )
 
+        # Resolved once, synchronously, so any unavailable credential is
+        # visible in the system prompt from the agent's first turn
+        # rather than only surfacing when a shell command using it first
+        # fails. cred_env (if any) is then handed to the shell tool below
+        # as a re-resolving provider, so unlocking the vault later still
+        # takes effect on the next command.
+        cred_env, cred_problems = self._resolve_credential_env(task_id, session_id)
+        if cred_problems:
+            full_prompt = full_prompt + "\n\nUnavailable credentials: " + "; ".join(cred_problems)
+
         # Custom (shell-command) tools are bound to resolved_working_dir here
         # since, unlike the built-in shell/editor tools below, they have no
         # separate sandboxed-swap step.
@@ -268,7 +313,10 @@ class SessionManager:
         # — without this, a dev server an agent starts in the background
         # would outlive the session indefinitely.
         ws_sandbox, background_pids = self._maybe_create_sandbox(resolved_working_dir)
-        all_tools = self._swap_sandboxed_tools(all_tools, ws_sandbox, session_id, background_pids)
+        all_tools = self._swap_sandboxed_tools(
+            all_tools, ws_sandbox, session_id, background_pids,
+            env_provider=cred_env.get_env if cred_env else None,
+        )
 
         # Create the agent with mode-aware intervention handler.
         from agent_knots.intervention import ModeInterventionHandler
@@ -307,6 +355,7 @@ class SessionManager:
         if branch_result.name and resolved_working_dir and not advisory:
             self._repo_writers[resolved_working_dir] = session_id
         self._announce_branch(session, branch_result)
+        self._announce_credential_problems(session, cred_problems)
 
         self._register_hooks(agent, session, task_id)
 
@@ -949,6 +998,56 @@ class SessionManager:
             # Never let progress bookkeeping stop a session starting.
             pass
 
+    def _resolve_credential_env(
+        self, task_id: str | None, session_id: str,
+    ) -> tuple[_SessionCredentialEnv | None, list[str]]:
+        """Resolve the task's required_credentials into env vars, if
+        there's a vault and a task that names any.
+
+        Returns (None, []) whenever there's nothing to inject — no
+        vault configured, no task, or a task with no
+        required_credentials — so the caller can skip wiring an
+        env_provider into the shell tool at all rather than plumbing
+        through an always-empty one.
+        """
+        if not (self.vault and task_id):
+            return None, []
+        from agent_knots.config import tasks_dir as _tasks_dir
+        from agent_knots.task.store import TaskStore
+
+        task = TaskStore(_tasks_dir()).get(task_id)
+        if not task or not task.required_credentials:
+            return None, []
+
+        cred_env = _SessionCredentialEnv(self.vault, task.required_credentials, caller=session_id)
+        _, problems = cred_env.resolve()
+        return cred_env, problems
+
+    def _announce_credential_problems(self, session: Session, problems: list[str]) -> None:
+        """Surface missing/locked credentials the same way branch
+        outcomes are surfaced: a UI event plus a task progress entry, so
+        the gap is visible even after the session that hit it ends."""
+        if not problems:
+            return
+        message = "Unavailable credentials: " + "; ".join(problems)
+        session._broadcast(Event(
+            type=EventType.STATE_CHANGE,
+            session_id=session.id,
+            message=message,
+        ))
+        if not session.task_id:
+            return
+        try:
+            from agent_knots.config import tasks_dir as _tasks_dir
+            from agent_knots.task.models import ProgressEntry
+            from agent_knots.task.store import TaskStore
+
+            TaskStore(_tasks_dir()).log_progress(session.task_id, ProgressEntry(
+                entry=message, caller=session.id,
+            ))
+        except Exception:
+            pass
+
     @staticmethod
     def _resolve_working_dir(working_dir: str | None, project_id: str | None) -> str | None:
         """explicit > workspace repo > None (caller's own cwd)."""
@@ -1006,7 +1105,10 @@ class SessionManager:
         return create_sandbox(str(resolved_working_dir)), background_pids
 
     @staticmethod
-    def _swap_sandboxed_tools(all_tools: list[Any], ws_sandbox: Any, session_id: str, background_pids: list[int]) -> list[Any]:
+    def _swap_sandboxed_tools(
+        all_tools: list[Any], ws_sandbox: Any, session_id: str, background_pids: list[int],
+        env_provider: Any = None,
+    ) -> list[Any]:
         """Swap in sandboxed shell/editor tools if we have a workspace."""
         if not (ws_sandbox and ws_sandbox.exists):
             return all_tools
@@ -1016,6 +1118,7 @@ class SessionManager:
         sb_shell = make_sandboxed_shell(
             ws, max_output=ws_sandbox.max_output,
             session_id=session_id, background_pids=background_pids,
+            env_provider=env_provider,
         )
         sb_editor = make_sandboxed_editor(ws, max_file_size=ws_sandbox.max_file_size)
         return [

@@ -805,3 +805,90 @@ class TestSessionBranches:
         entries = [p.entry for p in store.get(task.id).progress]
         assert any(session.branch in e for e in entries)
         await mgr.stop(session.id)
+
+
+class TestVaultCredentialInjection:
+    """A task's required_credentials should reach the shell tool as env
+    vars, without the value ever landing in the system prompt or a tool
+    result — see vault.store.resolve_env / sandbox_tools.scrub_secrets."""
+
+    @pytest.mark.asyncio
+    async def test_credential_reaches_the_shell_tool_scrubbed(
+        self, sessions_dir, git_repo, agent_knots_home,
+    ):
+        from agent_knots.config import tasks_dir, vault_dir
+        from agent_knots.task.models import Task, new_task_id
+        from agent_knots.task.store import TaskStore
+        from agent_knots.vault.store import Credential, InjectionTemplate, VaultStore
+
+        vault = VaultStore(vault_dir())
+        vault.unlock("passphrase")
+        vault.add_credential(Credential(id="gh", value="supersecretvalue"))
+        vault.set_template("gh", InjectionTemplate(name="e", env={"GH_TOKEN": "$value"}))
+
+        task = TaskStore(tasks_dir()).create(Task(
+            id=new_task_id(), title="Needs a credential", required_credentials=["gh"],
+        ))
+
+        mgr = SessionManager(sessions_dir, vault=vault)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            task_id=task.id, working_dir=str(git_repo), runtime_override="inprocess",
+        )
+
+        tool_func = session._agent.tool_registry.registry["shell_tool"]._tool_func
+        result = tool_func(command="echo $GH_TOKEN")
+
+        assert "supersecretvalue" not in result["stdout"]
+        assert "[redacted:GH_TOKEN]" in result["stdout"]
+        assert "supersecretvalue" not in session._agent.system_prompt
+        await mgr.stop(session.id)
+
+    @pytest.mark.asyncio
+    async def test_missing_credential_noted_in_system_prompt_not_raised(
+        self, sessions_dir, git_repo, agent_knots_home,
+    ):
+        from agent_knots.config import tasks_dir, vault_dir
+        from agent_knots.task.models import Task, new_task_id
+        from agent_knots.task.store import TaskStore
+        from agent_knots.vault.store import VaultStore
+
+        vault = VaultStore(vault_dir())  # never unlocked
+
+        task = TaskStore(tasks_dir()).create(Task(
+            id=new_task_id(), title="Needs a credential", required_credentials=["gh"],
+        ))
+
+        mgr = SessionManager(sessions_dir, vault=vault)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            task_id=task.id, working_dir=str(git_repo), runtime_override="inprocess",
+        )
+
+        assert "Unavailable credentials" in session._agent.system_prompt
+        assert "gh" in session._agent.system_prompt
+        await mgr.stop(session.id)
+
+    @pytest.mark.asyncio
+    async def test_no_vault_configured_is_a_silent_noop(
+        self, sessions_dir, git_repo, agent_knots_home,
+    ):
+        """SessionManager(vault=None) is the default every existing test
+        and CLI vault command relies on — required_credentials must not
+        crash a session that has no vault to resolve them from."""
+        from agent_knots.config import tasks_dir
+        from agent_knots.task.models import Task, new_task_id
+        from agent_knots.task.store import TaskStore
+
+        task = TaskStore(tasks_dir()).create(Task(
+            id=new_task_id(), title="Needs a credential", required_credentials=["gh"],
+        ))
+
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            task_id=task.id, working_dir=str(git_repo), runtime_override="inprocess",
+        )
+
+        assert "Unavailable credentials" not in session._agent.system_prompt
+        await mgr.stop(session.id)

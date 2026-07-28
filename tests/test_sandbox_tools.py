@@ -18,6 +18,7 @@ from agent_knots.sandbox_tools import (
     make_sandboxed_shell,
     run_background,
     run_confined,
+    scrub_secrets,
 )
 
 
@@ -116,6 +117,12 @@ class TestRunBackground:
         time.sleep(0.3)
         kill_background_process(result["pid"])  # already exited — should be a no-op
 
+    def test_env_var_is_available_to_the_process(self):
+        result = run_background("echo $FOO", cwd=None, env={"FOO": "bar"})
+        time.sleep(0.3)
+        kill_background_process(result["pid"])
+        assert Path(result["log_file"]).read_text().strip() == "bar"
+
 
 class TestSandboxedShell:
     def test_defaults_cwd_to_workspace(self, workspace):
@@ -150,6 +157,85 @@ class TestSandboxedShell:
         result = shell("echo hi")
         assert result["stdout"].strip() == "hi"
         assert pids == []
+
+    def test_env_provider_makes_credentials_available_and_scrubbed(self, workspace):
+        shell = make_sandboxed_shell(
+            workspace, env_provider=lambda: {"SECRET": "supersecretvalue"},
+        )
+        result = shell("echo \"got: $SECRET\"")
+        assert "supersecretvalue" not in result["stdout"]
+        assert "[redacted:SECRET]" in result["stdout"]
+
+    def test_env_provider_called_fresh_each_call(self, workspace):
+        calls = {"n": 0}
+
+        def provider():
+            calls["n"] += 1
+            return {"N": str(calls["n"])}
+
+        shell = make_sandboxed_shell(workspace, env_provider=provider)
+        shell("true")
+        shell("true")
+        assert calls["n"] == 2
+
+    def test_no_env_provider_behaves_as_before(self, workspace):
+        shell = make_sandboxed_shell(workspace)
+        result = shell("echo hi")
+        assert result["stdout"].strip() == "hi"
+
+
+class TestScrubSecrets:
+    def test_redacts_matching_value(self):
+        text = scrub_secrets("token=supersecretvalue end", {"TOK": "supersecretvalue"})
+        assert text == "token=[redacted:TOK] end"
+
+    def test_leaves_unmatched_text_alone(self):
+        assert scrub_secrets("nothing sensitive here", {"TOK": "supersecretvalue"}) == \
+            "nothing sensitive here"
+
+    def test_short_values_are_not_scrubbed(self):
+        # A short secret risks matching harmless substrings of ordinary
+        # output (a line number, a hash fragment) — scrubbing those would
+        # make the output misleading rather than protective.
+        text = scrub_secrets("count=1234", {"PIN": "1234"})
+        assert text == "count=1234"
+
+    def test_multiple_secrets_each_redacted(self):
+        text = scrub_secrets("a=firstsecretval b=secondsecretval", {
+            "A": "firstsecretval", "B": "secondsecretval",
+        })
+        assert "firstsecretval" not in text
+        assert "secondsecretval" not in text
+        assert "[redacted:A]" in text
+        assert "[redacted:B]" in text
+
+    def test_none_env_is_a_noop(self):
+        assert scrub_secrets("some output", None) == "some output"
+
+    def test_empty_text_is_a_noop(self):
+        assert scrub_secrets("", {"TOK": "supersecretvalue"}) == ""
+
+
+class TestRunConfinedEnv:
+    def test_env_var_is_available_to_the_command(self):
+        result = run_confined("echo $FOO", cwd=None, env={"FOO": "bar"})
+        assert result["stdout"].strip() == "bar"
+
+    def test_path_survives_the_merge(self):
+        # env is merged on top of the current process's own env, never a
+        # bare replacement — a bare env would drop PATH and break every
+        # command that isn't a builtin.
+        result = run_confined("which echo", cwd=None, env={"FOO": "bar"})
+        assert result["exit_code"] == 0
+
+    def test_stdout_is_scrubbed(self):
+        result = run_confined("echo $SECRET", cwd=None, env={"SECRET": "supersecretvalue"})
+        assert "supersecretvalue" not in result["stdout"]
+        assert "[redacted:SECRET]" in result["stdout"]
+
+    def test_no_env_behaves_as_before(self):
+        result = run_confined("echo hello", cwd=None)
+        assert result["stdout"].strip() == "hello"
 
 
 class TestSandboxedEditor:

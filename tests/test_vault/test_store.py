@@ -254,3 +254,100 @@ class TestAuditLog:
     def test_audit_no_log_yet(self, vault_dir):
         store = VaultStore(vault_dir)
         assert store.audit_log() == []
+
+    def test_duration_is_recorded(self, unlocked_store):
+        unlocked_store.add_credential(Credential(id="k", value="v"))
+        unlocked_store.use_credential("k")
+        entries = unlocked_store.audit_log()
+        assert entries[-1].duration >= 0.0
+
+
+class TestRenderEnv:
+    def test_substitutes_value_placeholder(self):
+        from agent_knots.vault.store import render_env
+        tmpl = InjectionTemplate(name="env", env={"GH_TOKEN": "$value"})
+        assert render_env(tmpl, "secret123") == {"GH_TOKEN": "secret123"}
+
+    def test_substitutes_within_a_larger_string(self):
+        from agent_knots.vault.store import render_env
+        tmpl = InjectionTemplate(name="env", env={"AUTH": "Bearer $value"})
+        assert render_env(tmpl, "tok") == {"AUTH": "Bearer tok"}
+
+    def test_multiple_env_vars(self):
+        from agent_knots.vault.store import render_env
+        tmpl = InjectionTemplate(name="env", env={"A": "$value", "B": "static"})
+        assert render_env(tmpl, "x") == {"A": "x", "B": "static"}
+
+    def test_non_env_template_raises(self):
+        from agent_knots.vault.store import render_env
+        tmpl = InjectionTemplate(name="file", file_path="/tmp/x")
+        with pytest.raises(ValueError, match="not an env-mode template"):
+            render_env(tmpl, "secret")
+
+
+class TestResolveEnv:
+    def test_resolves_single_credential(self, unlocked_store):
+        unlocked_store.add_credential(Credential(id="gh", value="ghp_abc123456"))
+        unlocked_store.set_template("gh", InjectionTemplate(name="e", env={"GH_TOKEN": "$value"}))
+
+        env, problems = unlocked_store.resolve_env(["gh"])
+
+        assert env == {"GH_TOKEN": "ghp_abc123456"}
+        assert problems == []
+
+    def test_merges_multiple_credentials(self, unlocked_store):
+        unlocked_store.add_credential(Credential(id="gh", value="gh-secret"))
+        unlocked_store.set_template("gh", InjectionTemplate(name="e", env={"GH_TOKEN": "$value"}))
+        unlocked_store.add_credential(Credential(id="npm", value="npm-secret"))
+        unlocked_store.set_template("npm", InjectionTemplate(name="e", env={"NPM_TOKEN": "$value"}))
+
+        env, problems = unlocked_store.resolve_env(["gh", "npm"])
+
+        assert env == {"GH_TOKEN": "gh-secret", "NPM_TOKEN": "npm-secret"}
+        assert problems == []
+
+    def test_missing_credential_is_a_problem_not_an_exception(self, unlocked_store):
+        env, problems = unlocked_store.resolve_env(["does-not-exist"])
+        assert env == {}
+        assert len(problems) == 1
+        assert "does-not-exist" in problems[0]
+        assert "not found" in problems[0]
+
+    def test_credential_with_no_env_template_is_a_problem(self, unlocked_store):
+        unlocked_store.add_credential(Credential(id="gh", value="v"))
+        unlocked_store.set_template("gh", InjectionTemplate(name="f", file_path="/tmp/x"))
+
+        env, problems = unlocked_store.resolve_env(["gh"])
+
+        assert env == {}
+        assert "no env-mode injection template" in problems[0]
+
+    def test_locked_vault_is_a_problem_not_an_exception(self, vault_dir):
+        store = VaultStore(vault_dir)
+        store.unlock("pass")
+        store.add_credential(Credential(id="gh", value="v"))
+        store.set_template("gh", InjectionTemplate(name="e", env={"T": "$value"}))
+        store.lock()
+
+        env, problems = store.resolve_env(["gh"])
+
+        assert env == {}
+        assert "gh" in problems[0]
+
+    def test_partial_success_still_returns_the_good_credentials(self, unlocked_store):
+        unlocked_store.add_credential(Credential(id="gh", value="gh-secret"))
+        unlocked_store.set_template("gh", InjectionTemplate(name="e", env={"GH_TOKEN": "$value"}))
+
+        env, problems = unlocked_store.resolve_env(["gh", "missing"])
+
+        assert env == {"GH_TOKEN": "gh-secret"}
+        assert len(problems) == 1
+        assert "missing" in problems[0]
+
+    def test_never_leaks_value_into_problem_strings(self, unlocked_store):
+        unlocked_store.add_credential(Credential(id="gh", value="super-secret-value"))
+        unlocked_store.set_template("gh", InjectionTemplate(name="f", file_path="/tmp/x"))
+
+        _, problems = unlocked_store.resolve_env(["gh"])
+
+        assert "super-secret-value" not in problems[0]

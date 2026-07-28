@@ -83,6 +83,21 @@ class AuditOptions:
     limit: int = 0
 
 
+def render_env(template: InjectionTemplate, value: str) -> dict[str, str]:
+    """Substitute the decrypted value into an env-mode template's $value
+    placeholders (the convention documented in `vault template add
+    --env`), producing the actual environment variables to inject.
+
+    Raises on non-env templates (file/stdin/command_wrapper) rather than
+    silently doing nothing — those modes aren't implemented for session
+    tool injection yet, and returning {} would look like "no
+    credentials needed" instead of "this template can't be used here".
+    """
+    if not template.env:
+        raise ValueError(f"template {template.name!r} is not an env-mode template")
+    return {k: v.replace("$value", value) for k, v in template.env.items()}
+
+
 # ── on-disk entry (private) ──────────────────────────────────────────────────
 
 
@@ -362,6 +377,7 @@ class VaultStore:
 
         Records an audit entry.
         """
+        started = time.time()
         self._ensure_unlocked()
         entry = self._find_entry(cred_id)
         if entry is None:
@@ -381,6 +397,7 @@ class VaultStore:
                 caller=caller,
                 success=False,
                 error="decryption failed",
+                duration=time.time() - started,
             ))
             raise ValueError(f"failed to decrypt credential {cred_id!r}") from None
         finally:
@@ -397,9 +414,41 @@ class VaultStore:
             command=command,
             caller=caller,
             success=True,
+            duration=time.time() - started,
         ))
 
         return plain
+
+    def resolve_env(
+        self, cred_ids: list[str], caller: str = "",
+    ) -> tuple[dict[str, str], list[str]]:
+        """Render env-var injection templates for a list of credential ids
+        into one merged environment dict.
+
+        Never raises — every failure (credential missing, no env-mode
+        template, vault locked) becomes a problem string naming only the
+        credential id, never a value. A missing credential must not stop
+        a session from starting; it should just not have that
+        credential's env vars available, with the gap surfaced to
+        whoever's watching rather than silently swallowed.
+        """
+        env: dict[str, str] = {}
+        problems: list[str] = []
+        for cred_id in cred_ids:
+            if self.get_credential(cred_id) is None:
+                problems.append(f"{cred_id}: credential not found")
+                continue
+            template = next((t for t in self.list_templates(cred_id) if t.env), None)
+            if template is None:
+                problems.append(f"{cred_id}: no env-mode injection template")
+                continue
+            try:
+                value = self.use_credential(cred_id, template_name=template.name, caller=caller)
+            except (RuntimeError, ValueError) as e:
+                problems.append(f"{cred_id}: {e}")
+                continue
+            env.update(render_env(template, value))
+        return env, problems
 
     def audit_log(self, opts: AuditOptions | None = None) -> list[AuditEntry]:
         """Return audit entries matching the given options."""
