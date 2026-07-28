@@ -59,6 +59,22 @@ def worktrees_dir() -> Path:
     return _ensure_dir(_home() / "worktrees")
 
 
+def session_workdir(session_id: str) -> Path:
+    """A dedicated, isolated directory for a session that has no explicit
+    working_dir and no project attached.
+
+    Without this, such a session resolved to no working directory at
+    all — which meant no sandbox, which meant its shell/editor tools
+    fell back to strands_tools' raw, unbounded versions operating on
+    wherever the agent-knots server process itself happened to be
+    running from. Confirmed live: a workspace-less test session wrote a
+    file straight into this project's own repo. Every session now gets
+    somewhere real and contained to work instead — see
+    SessionManager._resolve_working_dir.
+    """
+    return _ensure_dir(_home() / "workdirs" / session_id)
+
+
 def stages_file() -> Path:
     """Path to the board-stages config YAML file (Workflows screen)."""
     return _home() / "stages.yaml"

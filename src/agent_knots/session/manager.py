@@ -296,7 +296,7 @@ class SessionManager:
 
         task_context = self._resolve_task_context(session_id, task_id, advisory)
         full_prompt = self._build_full_prompt(system_prompt, task_context, mode, task_id)
-        resolved_working_dir = self._resolve_working_dir(working_dir, project_id)
+        resolved_working_dir = self._resolve_working_dir(working_dir, project_id, session_id)
 
         # Branch before anything binds to the working tree — the sandbox
         # and the shell/editor tools below all take resolved_working_dir
@@ -1077,17 +1077,34 @@ class SessionManager:
             pass
 
     @staticmethod
-    def _resolve_working_dir(working_dir: str | None, project_id: str | None) -> str | None:
-        """explicit > workspace repo > None (caller's own cwd)."""
+    def _resolve_working_dir(
+        working_dir: str | None, project_id: str | None, session_id: str,
+    ) -> str:
+        """explicit > workspace repo > a fresh per-session workdir.
+
+        Always returns a real, existing directory — never None/empty.
+        A session with no explicit working_dir and no project attached
+        used to fall through to no working directory at all, which
+        meant no sandbox, which meant its shell/editor tools fell back
+        to strands_tools' raw, unbounded versions operating on wherever
+        the agent-knots server process itself happened to be running
+        from (confirmed live: this wrote a file straight into this
+        project's own repo during testing). config.session_workdir()
+        gives every session somewhere real and contained instead.
+        """
         if working_dir:
             return working_dir
-        if not project_id:
-            return None
-        from agent_knots.project.store import ProjectStore
-        from agent_knots.config import projects_dir as _projects_dir
+        if project_id:
+            from agent_knots.project.store import ProjectStore
+            from agent_knots.config import projects_dir as _projects_dir
 
-        proj = ProjectStore(_projects_dir()).get(project_id)
-        return proj.repository if proj and proj.repository else None
+            proj = ProjectStore(_projects_dir()).get(project_id)
+            if proj and proj.repository:
+                return proj.repository
+
+        from agent_knots.config import session_workdir
+
+        return str(session_workdir(session_id))
 
     def _build_tools(self, tools: list[Any] | None, resolved_working_dir: str | None, session_id: str) -> list[Any]:
         """Default tools + enabled custom tools from the registry, plus

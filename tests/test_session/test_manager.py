@@ -562,8 +562,72 @@ class TestSessionManagerStart:
             runtime_override="inprocess",
         )
         assert "shell" not in session._agent.tool_names
-        assert "editor" in session._agent.tool_names  # untouched tool still present
+        # Untouched tool still present — sandboxed to this session's
+        # auto-provisioned workdir (see _resolve_working_dir), hence
+        # 'editor_tool' rather than the raw 'editor'.
+        assert "editor_tool" in session._agent.tool_names
         await mgr.stop(session.id)
+
+    @pytest.mark.asyncio
+    async def test_no_working_dir_or_project_gets_a_real_sandboxed_workdir(
+        self, sessions_dir, agent_knots_home,
+    ):
+        """Regression test for a real bug found testing this live: a
+        session with no explicit working_dir and no project used to
+        resolve to no working directory at all, which meant no sandbox,
+        which meant its shell/editor tools fell back to strands_tools'
+        raw, unbounded versions — operating on wherever the agent-knots
+        server process itself happened to be running from. Confirmed
+        live: this wrote a file straight into this project's own repo
+        during a Playwright run. Every session must get a real,
+        contained directory instead."""
+        from agent_knots.config import session_workdir
+
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            runtime_override="inprocess",
+        )
+        assert session.working_dir == str(session_workdir(session.id))
+        assert Path(session.working_dir).exists()
+        # Sandboxed, not the raw strands_tools versions.
+        assert "shell_tool" in session._agent.tool_names
+        assert "editor_tool" in session._agent.tool_names
+        assert "shell" not in session._agent.tool_names
+        assert "editor" not in session._agent.tool_names
+        await mgr.stop(session.id)
+
+    @pytest.mark.asyncio
+    async def test_auto_workdir_actually_confines_the_shell_tool(
+        self, sessions_dir, agent_knots_home,
+    ):
+        """Not just that the tool got swapped — that it actually runs
+        rooted at the auto-provisioned directory, same as any other
+        sandboxed session."""
+        mgr = SessionManager(sessions_dir)
+        session = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            runtime_override="inprocess",
+        )
+        tool_func = session._agent.tool_registry.registry["shell_tool"]._tool_func
+        result = tool_func(command="pwd")
+        assert result["stdout"].strip() == session.working_dir
+        await mgr.stop(session.id)
+
+    @pytest.mark.asyncio
+    async def test_each_session_gets_its_own_workdir(self, sessions_dir, agent_knots_home):
+        mgr = SessionManager(sessions_dir)
+        s1 = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            runtime_override="inprocess",
+        )
+        s2 = await mgr.start(
+            model="fake/model", api_key="fake-key", base_url="http://fake",
+            runtime_override="inprocess",
+        )
+        assert s1.working_dir != s2.working_dir
+        await mgr.stop(s1.id)
+        await mgr.stop(s2.id)
 
     @pytest.mark.asyncio
     async def test_custom_tool_bound_to_session_workspace(self, sessions_dir, agent_knots_home, tmp_path):
