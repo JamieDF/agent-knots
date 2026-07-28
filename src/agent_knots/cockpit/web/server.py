@@ -46,12 +46,14 @@ def create_app(
 
     auth = Auth(cockpit_token_file())
 
-    # Instantiated once per app (not per-request, unlike ToolRegistry/
-    # ProjectStore/TaskStore in the route modules) because VaultStore's
-    # unlock state (the derived key) lives in memory on the instance
-    # itself — a fresh instance per request would forget it was ever
-    # unlocked.
-    vault = VaultStore(vault_dir())
+    # Reuse session_manager.vault rather than building a second
+    # VaultStore here: unlock state (the derived key) lives in memory on
+    # the instance itself, so two instances would mean unlocking via
+    # this router never unlocks the store agent sessions actually read
+    # credentials from. Falls back to a fresh instance only when the
+    # manager wasn't given one (e.g. tests constructing SessionManager
+    # directly with no vault).
+    vault = session_manager.vault or VaultStore(vault_dir())
 
     # ── auth middleware ──────────────────────────────────────────────────
 

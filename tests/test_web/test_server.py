@@ -1196,6 +1196,38 @@ class TestEventSerialization:
         json.dumps(serialize_event(evt))  # should not raise
 
 
+class TestVaultSharedInstance:
+    """Regression guard: the web app used to build its own VaultStore
+    independent of the one (if any) handed to SessionManager, so
+    unlocking via the Settings UI never unlocked the store agent
+    sessions actually read credentials from."""
+
+    @pytest.mark.asyncio
+    async def test_unlock_via_api_unlocks_the_session_managers_vault(self, agent_knots_home):
+        from agent_knots.config import vault_dir
+        from agent_knots.vault.store import VaultStore
+
+        vault = VaultStore(vault_dir())
+        mgr = SessionManager(agent_knots_home / "sessions", vault=vault)
+        app = create_app(mgr)
+        transport = ASGITransport(app=app)
+
+        from agent_knots.config import cockpit_token_file
+        from agent_knots.cockpit.web.auth import load_or_create_token
+        token = load_or_create_token(cockpit_token_file())
+
+        async with AsyncClient(
+            transport=transport, base_url="http://test", follow_redirects=True,
+        ) as c:
+            resp = await c.post(
+                "/api/vault/unlock", json={"passphrase": "hunter2"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert resp.status_code == 200
+
+        assert vault.unlocked is True
+
+
 class TestVaultAPI:
     @pytest.mark.asyncio
     async def test_status_uninitialized(self, authed_client):

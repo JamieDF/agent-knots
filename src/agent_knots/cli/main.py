@@ -20,8 +20,9 @@ from agent_knots.cli.session import session_app
 from agent_knots.cli.settings import settings_app
 from agent_knots.cli.task import task_app
 from agent_knots.cli.vault import vault_app
-from agent_knots.config import cockpit_token_file, sessions_dir
+from agent_knots.config import cockpit_token_file, sessions_dir, vault_dir
 from agent_knots.session.manager import SessionManager
+from agent_knots.vault.store import VaultStore
 
 app = typer.Typer(
     name="agent-knots",
@@ -63,7 +64,10 @@ def _launch_web(host: str, port: int) -> None:
     s = settings.load()
     set_runtime_type(s.agent.runtime)
 
-    mgr = SessionManager(sessions_dir())
+    # One VaultStore instance shared with the web app's vault router — a
+    # second instance here would mean unlocking via the Settings UI never
+    # unlocks the store agent sessions actually read from.
+    mgr = SessionManager(sessions_dir(), vault=VaultStore(vault_dir()))
 
     # __file__ is src/agent_knots/cli/main.py → 4 parents up = project root.
     static_dir = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
@@ -85,7 +89,7 @@ def _launch_tui() -> None:
     """Launch the Textual TUI cockpit."""
     from agent_knots.cockpit.tui.app import CockpitApp
 
-    mgr = SessionManager(sessions_dir())
+    mgr = SessionManager(sessions_dir(), vault=VaultStore(vault_dir()))
     app = CockpitApp(mgr)
     app.run()
 
