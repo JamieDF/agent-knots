@@ -23,6 +23,12 @@ class _FakeEvent:
     selected_tool = None
 
 
+def _tool_event(name: str):
+    event = _FakeEvent()
+    event.selected_tool = type(name, (), {})  # a class named `name` has __name__ == name
+    return event
+
+
 class TestModeInterventionHandler:
     def test_before_tool_call_proceeds_in_agent_mode(self):
         handler = ModeInterventionHandler(get_mode=lambda: "agent")
@@ -55,3 +61,54 @@ class TestModeInterventionHandler:
         assert bool(hook_registry.get_callbacks_for(BeforeToolCallEvent(
             agent=None, selected_tool=None, tool_use={}, invocation_state={},
         )))
+
+
+class TestToolAllowlist:
+    """Per-session tool allowlist — the escape hatch that lets an
+    advisory agent call read_task/log_progress despite being read-only,
+    since the blunt mode gate above denies every tool with no exceptions."""
+
+    def test_allowed_tool_proceeds(self):
+        handler = ModeInterventionHandler(
+            get_mode=lambda: "agent", get_allowed_tools=lambda: {"read_task"},
+        )
+        assert isinstance(handler.before_tool_call(_tool_event("read_task")), Proceed)
+
+    def test_unlisted_tool_denied_even_in_agent_mode(self):
+        """The allowlist restricts even a normally-unrestricted mode —
+        it's not just an addition to the mode gate, it replaces it."""
+        handler = ModeInterventionHandler(
+            get_mode=lambda: "agent", get_allowed_tools=lambda: {"read_task"},
+        )
+        assert isinstance(handler.before_tool_call(_tool_event("shell")), Deny)
+
+    def test_always_allowed_tools_proceed_even_if_not_listed(self):
+        """An advisory agent must always be able to report, even if
+        whoever configured its Role.tools forgot read_task/log_progress."""
+        handler = ModeInterventionHandler(
+            get_mode=lambda: "agent", get_allowed_tools=lambda: {"editor"},
+        )
+        assert isinstance(handler.before_tool_call(_tool_event("read_task")), Proceed)
+        assert isinstance(handler.before_tool_call(_tool_event("log_progress")), Proceed)
+
+    def test_allowlist_wins_over_agent_mode(self):
+        handler = ModeInterventionHandler(
+            get_mode=lambda: "agent", get_allowed_tools=lambda: set(),
+        )
+        assert isinstance(handler.before_tool_call(_tool_event("shell")), Deny)
+
+    def test_no_allowlist_falls_back_to_mode_agent(self):
+        """None (the default) must behave identically to the pre-allowlist
+        handler — no regression for every session that isn't advisory."""
+        handler = ModeInterventionHandler(get_mode=lambda: "agent")
+        assert isinstance(handler.before_tool_call(_tool_event("shell")), Proceed)
+
+    def test_no_allowlist_falls_back_to_mode_reviewer(self):
+        handler = ModeInterventionHandler(get_mode=lambda: "reviewer")
+        assert isinstance(handler.before_tool_call(_tool_event("shell")), Deny)
+
+    def test_default_get_allowed_tools_is_none(self):
+        """Constructing without get_allowed_tools at all (every call
+        site before this feature) must not change behaviour."""
+        handler = ModeInterventionHandler(get_mode=lambda: "reviewer")
+        assert handler._get_allowed_tools() is None

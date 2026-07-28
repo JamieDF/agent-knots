@@ -116,6 +116,11 @@ class Session:
     # or switch branches — the writer owns HEAD — and never take over the
     # task's assigned_to.
     advisory: bool = False
+    # None = no allowlist, tool access follows mode as before. A set
+    # restricts tool calls to exactly those names (plus
+    # ALWAYS_ALLOWED_WITH_ALLOWLIST) regardless of mode — see
+    # ModeInterventionHandler. Set on advisory sessions from Role.tools.
+    allowed_tools: set[str] | None = None
 
     # Internal — not serialised. Multiple SSE subscribers (e.g. two browser
     # tabs open on the same agent) each get their own queue rather than
@@ -322,7 +327,8 @@ class SessionManager:
         from agent_knots.intervention import ModeInterventionHandler
 
         intervention_handler = ModeInterventionHandler(
-            get_mode=lambda: session.mode
+            get_mode=lambda: session.mode,
+            get_allowed_tools=lambda: session.allowed_tools,
         )
 
         agent = Agent(
