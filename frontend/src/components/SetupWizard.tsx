@@ -10,8 +10,7 @@ interface Props {
 }
 
 /** First-run setup wizard — shown inline in place of the Dashboard
- * until a model provider is configured. See
- * design_handoff_atelier_cockpit/README.md §9. */
+ * until a model provider is configured. */
 function SetupWizard({ onComplete, onSkip }: Props) {
   const { theme } = useTheme()
   const [settings, setSettings] = useState<SettingsResponse | null>(null)

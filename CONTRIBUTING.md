@@ -21,7 +21,7 @@ Be respectful, assume good faith, focus on the technical.
 ## Development setup
 
 ```bash
-git clone https://github.com/jamiedf/agent-knots.git
+git clone https://github.com/JamieDF/agent-knots.git
 cd agent-knots
 uv sync
 uv run pytest
@@ -38,7 +38,7 @@ Run the CLI/cockpit against your local checkout with:
 
 ```bash
 uv run agent-knots version
-uv run agent-knots launch --web
+uv run agent-knots launch
 ```
 
 ## Project layout
@@ -145,14 +145,6 @@ git push origin v0.2.0
 
 There's no packaged release/installer yet — see the
 [roadmap](roadmap.md).
-
-## Decision records
-
-Significant architectural decisions are recorded as ADRs in
-[`docs/decisions/`](docs/decisions/). Some predate the Python rebuild and
-record decisions made for the original Go implementation — read the note
-at the top of each ADR before relying on its specifics. Read these before
-proposing changes that affect core interfaces.
 
 ## License
 

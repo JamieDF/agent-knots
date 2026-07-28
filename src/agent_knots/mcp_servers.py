@@ -1,6 +1,5 @@
 """MCP server registry — config-only in this version. Add/list/toggle/
-remove a server entry; there's no real MCP client wiring yet (matches
-design_handoff_atelier_cockpit's own stub-list decision). Unlike the
+remove a server entry; there's no real MCP client wiring yet. Unlike the
 fixed-cardinality Stages/Roles lists, this one grows with add/remove,
 so it's a plain YAML list store rather than a whole-list-only one.
 """

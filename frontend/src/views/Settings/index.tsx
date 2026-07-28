@@ -26,12 +26,9 @@ const SECTIONS = [
 ]
 
 /** Settings screen — a scrolling column of cards (one per SECTIONS
- * entry), in the order specified by design_handoff_atelier_cockpit/
- * README.md §8, with a sticky side nav for jumping between them
- * directly since the page has grown long enough that scrolling to a
- * specific card by hand is tedious. First-run flow previews (README
- * item 8) are deferred to Phase 6, which is what actually builds the
- * setup-wizard route these would link to. */
+ * entry), with a sticky side nav for jumping between them directly
+ * since the page has grown long enough that scrolling to a specific
+ * card by hand is tedious. */
 function SettingsPage() {
   const location = useLocation()
   const scrollRef = useRef<HTMLDivElement>(null)

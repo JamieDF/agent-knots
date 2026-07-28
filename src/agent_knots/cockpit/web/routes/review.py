@@ -1,8 +1,8 @@
 """Review queue API (post-hoc diffs derived live from git).
 
 No separate diff-capture/staging layer — pending diffs are just each
-configured workspace's current uncommitted git changes, per
-WORKPLAN.md's Phase 4 decoupling note. Approve stages+commits a
+configured workspace's current uncommitted git changes. Approve
+stages+commits a
 specific file (or everything pending, for approve-all). Reject
 deliberately does NOT discard the changes — git checkout/reset/clean
 against a real repo is a destructive action this won't automate; it

@@ -1,6 +1,6 @@
 [project]
 name = "agent-knots"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first orchestrator for AI coding agents. You stay in control."
 authors = [
     { name = "Jamie Fraser", email = "jamiedf8@protonmail.com" }

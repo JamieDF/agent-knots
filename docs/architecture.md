@@ -2,10 +2,7 @@
 
 This document describes agent-knots's design at a level intended for
 contributors and curious users. For the high-level "what does it do" see the
-[README](../README.md). For the rationale behind specific decisions, see the
-decision records in [`docs/decisions/`](decisions/) — note some of those
-predate the Python rebuild described here and record decisions made for the
-original Go implementation.
+[README](../README.md).
 
 ## Goals
 
@@ -13,14 +10,14 @@ agent-knots is built around five goals. Each architectural decision should
 serve at least one of these:
 
 1. **You always own the session.** No dead-end states. Control transfers
-   both ways, at any moment (assume/relinquish).
+   both ways, at any moment (the autonomous toggle).
 2. **Model-agnostic.** One abstraction layer over OpenAI-compatible APIs,
    Ollama, MiniMax, GLM, Anthropic, anything else — via LiteLLM/OpenAI
    clients under the Strands Agents SDK.
 3. **Local-first.** Everything lives on disk under `~/.agent-knots/`. No
    required cloud sync.
-4. **Multi-agent from day one.** Concurrent sessions and sub-agent
-   delegation are first-class concepts.
+4. **Multi-agent from day one.** Concurrent sessions, sub-agent delegation,
+   and advisory roles sharing a task are all first-class concepts.
 5. **State is outside the agent.** Tasks, progress, credentials, projects —
    all persistent structured objects, never just chat scrollback.
 
@@ -38,7 +35,7 @@ serve at least one of these:
 │                     │                                      │
 │   ┌─────────────────▼─────────────────────────────────┐   │
 │   │     SessionManager                                  │   │
-│   │  InProcessRuntime                                    │   │
+│   │  InProcessRuntime · git branch per session            │   │
 │   │  ┌──────────────────────────────────────────────┐  │   │
 │   │  │  Strands Agent (MiniMax/OpenAI/Anthropic/...)  │  │   │
 │   │  │  Tools: editor, shell, calculator, think,      │  │   │
@@ -74,6 +71,8 @@ agent-knots/
 │   ├── project/                   # Workspace model + YAML store
 │   ├── vault/                     # AES-256-GCM crypto + file store
 │   ├── tools/                     # Tool registry, defaults, custom tools
+│   ├── workflows/                 # Board stage config + agent role config (incl. advisory roles)
+│   ├── policies/                  # Config toggles for the Settings screen
 │   ├── config.py                  # Data-directory paths (AGENT_KNOTS_HOME resolution)
 │   ├── settings.py                # Global YAML settings store
 │   ├── provider.py                # Model provider resolution (CLI/env/settings)
@@ -81,10 +80,13 @@ agent-knots/
 │   ├── sandbox_tools.py           # Sandboxed shell/editor tools
 │   ├── intervention.py            # Read-only tool gating for reviewer/security modes
 │   ├── hooks.py                   # Token tracking + auto progress logging
-│   └── events.py                  # Event/EventType/ToolCall wire types
+│   ├── events.py                  # Event/EventType/ToolCall wire types
+│   ├── gitutil.py                 # Per-session branch create/resume/teardown
+│   ├── wastebin.py                # Stopped-session tombstones + retention
+│   ├── mcp_servers.py             # MCP server registry (config-only, no client wiring yet)
+│   └── usage.py                   # Token/cost usage ledger
 ├── tests/                         # Python unit tests
-├── mockups/                       # HTML design mockups
-├── docs/                          # Architecture, decisions, quickstart
+├── docs/                          # Architecture, quickstart
 └── pyproject.toml
 ```
 
@@ -120,7 +122,7 @@ attribute removed when the SSE fan-out fix replaced the single queue with
 the first event any subprocess-runtime session tried to emit — uncaught
 by any test since the default runtime is `inprocess`. Its own event-chunk
 parser had also independently drifted from the fixed one in
-`manager.py`. See [`docs/RETRO.md`](RETRO.md) for the full writeup.
+`manager.py`.
 `set_runtime_type()`/`create_runtime()` silently fall back to
 `InProcessRuntime` for any unrecognized runtime value now (including a
 pre-existing `"subprocess"` saved in a settings/project file from before
@@ -133,10 +135,10 @@ roadmap — can be added later without changing `SessionManager`'s own
 code, only `create_runtime()`.
 
 `SessionManager.start()` resolves which one to use via `create_runtime()`
-for both paths — there's no special-casing of either runtime type. See
-[`docs/RETRO.md`](RETRO.md) for the audit that found (and fixed) the
-previous asymmetry, where `InProcessRuntime` was dead code and the
-in-process path bypassed the `SessionRuntime` abstraction entirely.
+for both paths — there's no special-casing of either runtime type.
+`InProcessRuntime` used to be dead code, with the in-process path
+bypassing the `SessionRuntime` abstraction entirely; that asymmetry is
+fixed now.
 
 **Why this matters:** the orchestrator — cockpit, task system, vault
 integration — talks to sessions through this interface regardless of
@@ -177,6 +179,38 @@ A workspace record (`project/models.py`, `project/store.py`) bundling one
 or more repos with project-level settings and a task namespace. Selecting a
 project scopes task listing and session workspace resolution.
 
+### Session branches
+
+A task-attached session gets its own git branch (`gitutil.py`), named from
+the task's title plus a short hash of its id for uniqueness
+(`knots/<slugified-title>-<hash>`). The branch is created on first start
+and reused on every later resume of the same task, so a second session
+picking up old work checks out exactly what the first session left behind
+rather than starting fresh off the base branch. A branch is only deleted
+automatically if it ends up with zero commits and a clean working tree
+(`gitutil.delete_branch_if_empty`) — an agent's uncommitted work is never
+silently discarded by session teardown.
+
+### Wastebin
+
+Every `SessionManager.stop()` call, automatic or manual, writes a
+tombstone record (`wastebin.py`): task, branch, tokens, cost, and whether
+the session's working directory was one of the app's own auto-provisioned
+ones (only those get cleaned up on delete — a real repo path never does).
+A session auto-stops once its task reaches `review`, `done`, or
+`abandoned`. Wastebin entries are individually deletable and swept by a
+configurable retention setting; deleting an entry never force-deletes a
+branch a newer entry or a still-active session legitimately references.
+
+### Multi-agent
+
+Beyond `delegate_task` (an agent spawning its own sub-agent on a
+sub-task), a `Role` (`workflows/models.py`) can be marked `advisory`,
+meaning it shares an existing task's session rather than starting its
+own: a read-only reviewer role, for instance, runs alongside the task's
+main writer session with a restricted tool allowlist
+(`Session.allowed_tools`) rather than write access.
+
 ### WorkspaceSandbox
 
 Per-session isolation (`isolation.py`, `sandbox_tools.py`). Rather than a
@@ -193,8 +227,7 @@ container boundary, each session gets a `WorkspaceSandbox` that:
   modern runtimes like Node/V8 reserve several GB of *virtual* address
   space upfront regardless of actual memory used, so any cap small
   enough to matter made every `npm`/`vite`/`node` command an agent tried
-  crash immediately with an OOM error, real memory pressure or not — see
-  `docs/RETRO.md`;
+  crash immediately with an OOM error, real memory pressure or not;
 - lets the shell tool start a command with `background=true` for
   anything meant to outlive the tool call (dev servers, watchers) — see
   "Background processes" above;
@@ -202,9 +235,7 @@ container boundary, each session gets a `WorkspaceSandbox` that:
   `max_file_size`, both configurable on `WorkspaceSandbox`.
 
 Full container-based isolation (podman/Docker) is a roadmap item, not yet
-implemented — see
-[`docs/decisions/004-container-isolation.md`](decisions/004-container-isolation.md)
-for the original design sketch.
+implemented.
 
 ### Tool registry
 
@@ -291,7 +322,7 @@ had `assistant` mode denying every tool call via the same handler; that
 turned out not to be the wanted behavior (a paused session should still
 be able to act on what you tell it, just not keep self-directing on its
 own), and the handler was also just plain broken for anything it
-tried to gate, see docs/RETRO.md.
+tried to gate.
 
 ### Interrupt vs stop
 

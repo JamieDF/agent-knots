@@ -6,9 +6,8 @@ import List from './tasks/List'
 import TaskDialog from '../components/TaskDialog'
 
 /** Tasks screen shell — Board/List tab pill + "+ New task" + "⚙ Stages"
- * header, per design_handoff_atelier_cockpit/README.md §3. Stage config
- * (the "⚙ Stages" button) lives on the Workflows screen (Phase 4) — for
- * now it just links there. */
+ * header. Stage config (the "⚙ Stages" button) lives on the Workflows
+ * screen — this just links there. */
 function Tasks() {
   const [searchParams, setSearchParams] = useSearchParams()
   const view = searchParams.get('view') === 'list' ? 'list' : 'board'

@@ -4,6 +4,8 @@ All notable changes to agent-knots are documented here.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-28
+
 ### Fixed
 - **Agent Thread: stale thread state on navigating between sessions.**
   Starting a new session while already viewing one (or otherwise
@@ -483,8 +485,6 @@ tool validation, and authenticated web requests — all previously at zero.
   data directory is now `~/.agent-knots/`. Legacy Go implementation
   (`cmd/`, `internal/`, `go.mod`) removed — superseded by the Python
   rebuild below.
-
-## [Unreleased] — Python Rebuild (2026-07)
 
 ### Added
 - **Python rebuild** — Complete rewrite from Go to Python on Strands Agents SDK

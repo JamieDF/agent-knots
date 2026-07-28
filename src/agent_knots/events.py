@@ -20,7 +20,7 @@ class EventType(StrEnum):
     # No backend code broadcasts this yet — the frontend (AgentThread's
     # EventRow "blocker"/"ask" branch) and the TUI (app.py) both already
     # have real, working rendering for it, waiting on a producer that was
-    # never built. Not dead code — a half-built feature. See docs/RETRO.md.
+    # never built. Not dead code — a half-built feature.
     BLOCKER = "blocker"
     STATE_CHANGE = "state_change"
     ERROR = "error"

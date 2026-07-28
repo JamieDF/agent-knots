@@ -2,8 +2,9 @@
 
 One implementation: InProcessRuntime, which runs the agent in the same
 Python process. A second, SubprocessRuntime (spawning a child process
-for isolation), existed here but was removed — see docs/RETRO.md. It
-referenced a Session API (session._events) that stopped existing when
+for isolation), existed here but was removed after it turned out to
+never actually work. It referenced a Session API (session._events) that
+stopped existing when
 the SSE fan-out fix replaced the single queue with
 _subscribers/_history/_broadcast(), so it crashed on the first event any
 subprocess-runtime session tried to emit, and had zero test coverage

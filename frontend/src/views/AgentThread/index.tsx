@@ -26,11 +26,10 @@ const RAIL_MIN_FRACTION = 0.05
 const RAIL_MAX_FRACTION = 0.95
 const GOAL_RAIL_WIDTH = 260
 
-/** Agent Thread — the full 3-zone Atelier layout (Phase 3). Header, left
- * goal rail (collapsible via Cmd/Ctrl+B), center event stream with a
- * renderer per event kind, composer with autonomous/paused/ended states,
- * right rail (Terminal/Files/Commands/Browser). See
- * design_handoff_atelier_cockpit/README.md §2. */
+/** Agent Thread — the full 3-zone Atelier layout. Header, left goal rail
+ * (collapsible via Cmd/Ctrl+B), center event stream with a renderer per
+ * event kind, composer with autonomous/paused/ended states, right rail
+ * (Terminal/Files/Commands/Browser). */
 function AgentThread() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()

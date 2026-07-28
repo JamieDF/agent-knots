@@ -642,10 +642,9 @@ class SessionManager:
         """Mark a checkpoint in the thread. No real snapshot is taken —
         this only broadcasts a marker event for the UI's "revert to
         here" affordance. Real checkpoint/revert (conversation-history +
-        worktree snapshotting) is real, larger, future work — see
-        docs/RETRO.md's note on the prior save_checkpoint/load_checkpoint
-        implementation, which was removed as orphaned dead code rather
-        than wired up.
+        worktree snapshotting) is real, larger, future work. A prior
+        save_checkpoint/load_checkpoint implementation was removed as
+        orphaned dead code rather than wired up.
         """
         session = self._sessions.get(session_id)
         if session is None:

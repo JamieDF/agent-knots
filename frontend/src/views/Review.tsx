@@ -6,8 +6,7 @@ import { fetchReviewDiffs, fetchReviewDiffText, approveReview, rejectReview, typ
 type Status = 'pending' | 'committed' | 'rejected'
 
 /** Review queue — pending diffs derived live from git (post-hoc, no
- * separate capture/staging layer, per WORKPLAN.md's Phase 4 decoupling
- * note). See design_handoff_atelier_cockpit/README.md §5. */
+ * separate capture/staging layer). */
 function Review() {
   const [diffs, setDiffs] = useState<ReviewDiff[]>([])
   const [statuses, setStatuses] = useState<Record<string, Status>>({})

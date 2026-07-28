@@ -1,8 +1,8 @@
-/** Status → color/glyph map, from design_handoff_atelier_cockpit/README.md
- * ("Status colors: draft · open · planned · in_progress · blocked ·
- * review · done · abandoned"). Single source of truth — don't hand-roll
- * per-view status color dicts (Board.tsx and TaskDetail.tsx used to each
- * have their own, slightly inconsistent, copy of this). */
+/** Status → color/glyph map covering draft · open · planned ·
+ * in_progress · blocked · review · done · abandoned. Single source of
+ * truth — don't hand-roll per-view status color dicts (Board.tsx and
+ * TaskDetail.tsx used to each have their own, slightly inconsistent,
+ * copy of this). */
 
 export interface StatusStyle {
   color: string

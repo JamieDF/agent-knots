@@ -7,7 +7,8 @@ consulted the global runtime-type setting, ignoring an explicitly
 resolved type passed in by the caller.
 
 SubprocessRuntime (and its tests) were removed along with the
-implementation — see docs/RETRO.md for why. set_runtime_type()/
+implementation after it turned out to never actually work.
+set_runtime_type()/
 create_runtime() now treat any non-"inprocess" value (including a
 pre-existing "subprocess" saved in an old settings.yaml/project.yaml)
 as inprocess rather than raising, which the tests below cover.

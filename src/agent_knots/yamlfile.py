@@ -2,8 +2,7 @@
 
 Six different stores (task, project, vault, settings, tools, workflows)
 each independently reimplemented "write to .tmp, then rename" and
-"yaml.safe_load wrapped in try/except" — found during a full-codebase
-review (docs/CODE_REVIEW.md). Centralizing both here also makes the
+"yaml.safe_load wrapped in try/except". Centralizing both here also makes the
 chmod(0o600) permission hygiene apply uniformly; previously vault/
 settings/tools chmod'd their files and task/project never did, for no
 real reason (none of them contain anything more sensitive than the

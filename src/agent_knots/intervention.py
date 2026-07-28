@@ -58,7 +58,7 @@ class ModeInterventionHandler(InterventionHandler):
     previous version of this file used on_-prefixed names that didn't
     match anything, so none of these were ever actually registered —
     every mode's tool calls proceeded unconditionally, silently, with no
-    test catching it. See docs/RETRO.md.
+    test catching it.
     """
 
     def __init__(

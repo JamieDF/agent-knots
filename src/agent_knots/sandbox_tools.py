@@ -7,9 +7,8 @@ IMPORTANT: this is *not* a security boundary. Commands run via a real
 shell (`shell=True`), so `cd /`, absolute paths, `curl`, `rm -rf /`, env
 tricks, etc. are not blocked — only the starting directory and resource
 usage are bounded. Genuine containment (filesystem/network isolation
-against an adversarial agent) needs the container runtime tracked in
-docs/decisions/004-container-isolation.md and the roadmap; it isn't
-built yet. Path confinement for the editor tool (below) is real, since
+against an adversarial agent) needs the container runtime tracked on
+the roadmap; it isn't built yet. Path confinement for the editor tool (below) is real, since
 that's plain path resolution rather than an arbitrary shell command.
 """
 

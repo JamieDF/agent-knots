@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
 import { fetchStages } from './api'
 
-/** Board/List stage config — now backed by the Workflows screen's real
- * config store (Phase 4). DEFAULT_STAGES is only the initial-paint
- * fallback before the first fetch resolves, mirroring the backend's own
- * defaults (agent_knots.workflows.models.DEFAULT_STAGES) so there's no
- * visible flash of different content.
+/** Board/List stage config — backed by the Workflows screen's real
+ * config store. DEFAULT_STAGES is only the initial-paint fallback before
+ * the first fetch resolves, mirroring the backend's own defaults
+ * (agent_knots.workflows.models.DEFAULT_STAGES) so there's no visible
+ * flash of different content.
  *
  * Status→stage mapping: open+planned → Open, in_progress+blocked → In
  * progress — blocked/planned surface as card badges, not their own
- * columns (see design_handoff_atelier_cockpit/README.md §3).
+ * columns.
  */
 
 export interface Stage {

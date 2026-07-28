@@ -8,7 +8,7 @@ import { useClickOutside } from '../lib/useClickOutside'
 
 /** Notification bell — pending-blocker count badge, dropdown of
  * blocker/done rows deep-linking to their task, and a phone-push
- * footer toggle. See design_handoff_atelier_cockpit/README.md §10. */
+ * footer toggle. */
 function NotificationBell() {
   const { items, blockerCount } = useNotifications()
   const [open, setOpen] = useState(false)

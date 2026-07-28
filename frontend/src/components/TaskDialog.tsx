@@ -20,11 +20,11 @@ const REVIEW_GATES = [
 ]
 
 /** Unified task create/edit dialog, replacing the old CreateTaskDialog.tsx
- * (3 fields only) and TaskDetail.tsx's separate edit modal. Per
- * design_handoff_atelier_cockpit/README.md §11: chip tags, criteria/steps
- * row-list editors, review-gate select, "✨ Draft with agent". Editing
- * preserves criteria_met/step status for unchanged items — enforced
- * server-side (PATCH matches by text), this dialog just sends the lists. */
+ * (3 fields only) and TaskDetail.tsx's separate edit modal. Chip tags,
+ * criteria/steps row-list editors, review-gate select, "✨ Draft with
+ * agent". Editing preserves criteria_met/step status for unchanged items
+ * — enforced server-side (PATCH matches by text), this dialog just sends
+ * the lists. */
 function TaskDialog({ open, onClose, onSaved, task, initialStatus }: Props) {
   const isEdit = !!task
   const { workspace } = useWorkspaceScope()

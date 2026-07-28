@@ -5,74 +5,87 @@
   </picture>
 </p>
 
-# Agent Knots
+# agent-knots
 
-> Local-first orchestrator for AI coding agents. You stay in control.
+> A self-hosted, task-based orchestrator for AI agents. You stay in control.
 
-Agent Knots runs AI coding agents in your workspace. Watch them work in real time
-from a browser or terminal. Take over any agent mid-task, hand control back.
-Manage tasks on a Kanban board. Agents have tools for reading/writing files,
-running shell commands, and managing structured tasks with progress tracking.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](pyproject.toml)
+[![Tests](https://img.shields.io/badge/tests-520%2B%20passing-brightgreen.svg)](tests/)
 
-Built on [Strands Agents SDK](https://github.com/strands-agents/harness-sdk) with
-[MiniMax M2.7](https://platform.minimax.io) as the default model provider.
-Configurable to use OpenAI, Anthropic, Ollama, or any OpenAI-compatible API.
+agent-knots is a self-hosted, task-based orchestrator for AI agents.
+Create a task, assign it to an agent, and watch it work in real time
+from a browser or terminal. Take over mid-task whenever you want.
+Everything is tracked against the task, not a single chat session, so
+you keep hold of the bigger picture across a long-running project
+instead of losing it every time a session ends.
+
+Manage tasks across different workspaces, create custom agent workflows,
+configure agent isolation, and step in to take control of the agent
+whenever you need.
+
+Built on [Strands Agents SDK](https://github.com/strands-agents/sdk-python).
+Provider-agnostic: configure OpenAI, Anthropic, Ollama, or any
+OpenAI-compatible API in Settings. Developed and tested against MiniMax M2.7.
 
 ---
 
 ## Quickstart
 
 ```bash
-git clone https://github.com/jamiedf/agent-knots.git
+git clone https://github.com/JamieDF/agent-knots.git
 cd agent-knots
 ./install.sh
 
-# Launch the web cockpit — GUI is the primary surface.
-agent-knots launch --web --port 8080
+# Launch the web cockpit (GUI is the default and primary surface).
+agent-knots launch --port 8080
 # → http://127.0.0.1:8080/?token=...
 # First launch opens a setup wizard in the browser to configure your
 # model provider (API key, model, base URL). No manual config needed.
 
-# Or launch the TUI cockpit
-agent-knots launch
+# Or launch the TUI instead
+agent-knots launch --tui
 # → j/k navigate, Enter focus, a assume, r relinquish, t tools, d delete, q quit
 ```
 
 `install.sh` installs [`uv`](https://docs.astral.sh/uv/) if missing, syncs
-Python dependencies, builds the web frontend (needs Node.js — skipped with
+Python dependencies, builds the web frontend (needs Node.js; skipped with
 a warning if not found), and installs the `agent-knots` command globally
 via `uv tool install`. Safe to re-run.
 
 **Skipping the setup wizard** (scripted installs, CI, containers): export
 `AGENT_KNOTS_API_KEY` / `AGENT_KNOTS_MODEL` / `AGENT_KNOTS_BASE_URL` before
-first launch, or write `~/.agent-knots/settings.yaml` directly — either
+first launch, or write `~/.agent-knots/settings.yaml` directly. Either
 way, `configured` is true before the wizard would even ask. See
 [`docs/quickstart.md`](docs/quickstart.md) for the settings file format.
 
 ---
 
-## What works
+## Features
 
-| Capability | Status |
-|---|---|
-| **Session lifecycle** | ✅ Start/stop agents from GUI, TUI, or CLI. Composer's Stop cancels only the current turn (session stays open, send another message to continue) — a separate header Delete ends the session for good |
-| **Live event streaming** | ✅ SSE (web) + async event queue (TUI). Fanned out to every subscriber — multiple browser tabs on the same agent don't race for events. Tool calls, messages, progress |
-| **Web cockpit** | ✅ Vite + React SPA ("Atelier"). Dashboard, Tasks (Board/List), Task Detail, Agent Thread (chat-style, markdown, resizable layout, replay scrubber), Review, Workflows, Settings |
-| **Agent Thread right rail** | ✅ Real interactive terminal (PTY + xterm.js) in the agent's working directory, a Files tab with previews, a Command Log (every shell invocation + timestamp), and a multi-tab Browser (address bar, open/close tabs, chat links open in a new tab) |
-| **Background processes** | ✅ Agents can start a dev server or other long-running process with `background=true` — it isn't killed by the tool's timeout, and is cleaned up automatically when the session ends |
-| **TUI cockpit** | ✅ Textual. Agent list, focus view, tools manager, keyboard shortcuts |
-| **Autonomous toggle** | ✅ A single on/off switch on task-attached sessions: on lets the agent self-direct from its task, off interrupts whatever's running and pauses it for back-and-forth (tools still work either way — sending a message while on is itself the "hold up" that pauses it) |
-| **Multi-turn chat** | ✅ Sequential conversation with context retention |
-| **Task system** | ✅ YAML-backed. Draft → Open → In Progress → Review → Done, with an enforced review gate (only a human can pass a task through review — an agent can't self-approve its own work) and task dependencies (blocked from starting until dependencies are done). Progress logs, acceptance criteria (human or agent can mark met), steps |
-| **Kanban board** | ✅ Configurable stages (Workflows screen), drag-and-drop between columns, all task statuses covered |
-| **Vault** | ✅ AES-256-GCM, argon2id KDF, injection templates, audit log. Full web UI (a Settings section) alongside the CLI |
-| **Agent tools** | ✅ 12 built-in: editor, shell, calculator, think + 8 task tools. Custom tools via settings |
-| **Task tools** | ✅ Agent can create, read, update, log progress, add steps on tasks |
-| **Workspaces** | ✅ Multi-project workspaces. Task filtering, session grouping, path isolation, archive/unarchive |
-| **Runtime** | ✅ In-process. (A second, subprocess-isolated runtime existed but never actually worked — removed rather than fixed; real process isolation is a container-runtime roadmap item instead) |
-| **Model providers** | ✅ MiniMax, OpenAI, Anthropic, Ollama, custom. Configurable in settings |
-| **Custom tools** | ✅ User-defined shell command tools. Enable/disable per tool |
-| **Accessibility** | ✅ App-wide font size and font family, in Settings |
+- **Sessions**: start and stop agents from the web UI, TUI, or CLI, each
+  running in-process (container isolation is on the roadmap). Task-attached
+  sessions get their own git branch, reused automatically if you resume the
+  task later, and auto-stop once their task reaches review, done, or
+  abandoned.
+- **Multi-agent**: an advisory role (e.g. a read-only reviewer) can share a
+  task alongside the main agent, and an agent can delegate a sub-task to its
+  own sub-agent.
+- **Live observability and control**: watch an agent's terminal, files, and
+  command log in real time, not just its chat output, and take over any
+  agent mid-task from a browser or terminal.
+- **Tasks**: YAML-backed, Draft → Open → In Progress → Review → Done, with
+  a review gate only a human can pass, dependencies, acceptance criteria,
+  and a configurable Kanban board.
+- **Vault**: AES-256-GCM encrypted credential store. Agents can use a
+  credential in a tool call without the raw value ever appearing in their
+  context.
+- **Providers**: OpenAI, Anthropic, Ollama, MiniMax, or any
+  OpenAI-compatible API, configurable per workspace.
+- Also included: a TUI cockpit, custom shell-command tools, multi-workspace
+  project grouping, and per-app accessibility settings.
+
+See [`roadmap.md`](roadmap.md) for what's not built yet.
 
 ---
 
@@ -124,9 +137,9 @@ agent-knots
 │                    │                              │
 │   ┌────────────────▼───────────────────────────┐ │
 │   │     Session Manager                         │ │
-│   │  InProcessRuntime                           │ │
+│   │  InProcessRuntime · git branch per session   │ │
 │   │  ┌──────────────────────────────────────┐  │ │
-│   │  │  Strands Agent (MiniMax/OpenAI/...)   │  │ │
+│   │  │  Strands Agent (any provider)          │  │ │
 │   │  │  12 tools: editor, shell, task mgmt   │  │ │
 │   │  │  Sandbox: cwd isolation + path guard  │  │ │
 │   │  └──────────────────────────────────────┘  │ │
@@ -138,7 +151,7 @@ agent-knots
 
 ```
 agent-knots/
-├── frontend/                  # Vite + React SPA ("Atelier" web cockpit)
+├── frontend/                  # Vite + React SPA (web cockpit)
 │   └── src/
 │       ├── views/             # Dashboard, Tasks (Board/List), TaskDetail,
 │       │                      # AgentThread, Review, Workflows, Settings
@@ -149,17 +162,18 @@ agent-knots/
 │   ├── cockpit/
 │   │   ├── tui/               # Textual TUI (overview, focus, tools)
 │   │   └── web/               # FastAPI server (auth, SSE, REST, SPA shell)
-│   ├── session/                # SessionManager, InProcessRuntime
+│   ├── session/                # SessionManager, InProcessRuntime, delegation
 │   ├── task/                  # Task models, YAML store, Strands tools for agents
 │   ├── vault/                 # AES-256-GCM crypto + file store
 │   ├── project/               # Workspace models + YAML store
 │   ├── tools/                 # Tool registry, defaults, custom tools
+│   ├── wastebin.py            # Stopped-session tombstones + retention
+│   ├── gitutil.py             # Per-session branch create/resume/teardown
 │   ├── settings.py            # Global YAML settings store
 │   ├── provider.py            # Model provider resolution (CLI/env/settings)
 │   ├── isolation.py           # Workspace sandbox config
 │   └── sandbox_tools.py       # Sandboxed shell/editor tools
-├── tests/                     # Python unit tests (300+)
-├── mockups/                   # HTML design mockups
+├── tests/                     # Python unit tests (520+)
 ├── docs/                      # ADRs, architecture, plan
 └── pyproject.toml
 ```
@@ -169,7 +183,7 @@ agent-knots/
 ## Testing
 
 ```bash
-# Python unit tests (350+)
+# Python unit tests (520+)
 uv run --with pytest pytest tests/ -q
 
 # Playwright e2e tests (~74)
@@ -183,12 +197,20 @@ and are expected to fail without one.
 
 ## Status
 
-**Alpha, feature-complete.** Sessions, tasks, board, tools, vault, isolation,
-multi-turn chat, assume/relinquish — all functional and tested. Agents run with
-MiniMax M2.7 by default, configurable to any OpenAI-compatible provider.
+**Alpha, feature-complete.** Provider-agnostic; developed and tested against
+MiniMax M2.7.
+
+---
+
+## Contributing
+
+Contributions welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for dev
+setup, coding conventions, and the PR process. [`roadmap.md`](roadmap.md)
+tracks what's shipped and what's next. [`CHANGELOG.md`](CHANGELOG.md) has
+the full history.
 
 ---
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT. See [`LICENSE`](LICENSE).

@@ -27,8 +27,7 @@ const PIPELINE_TEMPLATES = [
 ]
 
 /** Workflows screen — stage config, default agent roles, generated
- * workflow diagram, pipeline templates. See
- * design_handoff_atelier_cockpit/README.md §6. */
+ * workflow diagram, pipeline templates. */
 function Workflows() {
   const [stages, setStages] = useState<StageInfo[]>([])
   const [roles, setRoles] = useState<RoleInfo[]>([])

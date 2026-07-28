@@ -6,9 +6,8 @@ import { priorityColor } from '../../lib/priorityColors'
 import { useTaskList } from '../../lib/useTaskList'
 import TaskDialog from '../../components/TaskDialog'
 
-/** Board tab of the Tasks screen — stage-driven columns per
- * design_handoff_atelier_cockpit/README.md §3, backed by the real
- * Workflows stage config (Phase 4). */
+/** Board tab of the Tasks screen — stage-driven columns backed by the
+ * real Workflows stage config. */
 function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [dialogStatus, setDialogStatus] = useState<string | null>(null)

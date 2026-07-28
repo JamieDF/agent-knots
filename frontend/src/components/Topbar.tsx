@@ -21,9 +21,9 @@ const NAV_ITEMS = [
 
 /** Floating top-bar pill nav: Dashboard · Tasks · Review · Workflows ·
  * Settings, plus workspace scope, stats, notifications, theme toggle,
- * + New session. Vault was originally its own top-nav screen per
- * design_handoff_atelier_cockpit/README.md, but per usage feedback it's
- * just more config — folded into a Settings section instead. */
+ * + New session. Vault was originally planned as its own top-nav screen,
+ * but per usage feedback it's just more config — folded into a Settings
+ * section instead. */
 function Topbar({ agents }: Props) {
   const totalTokens = agents.reduce((s, a) => s + a.tokens_used, 0)
   const { workspace } = useWorkspaceScope()

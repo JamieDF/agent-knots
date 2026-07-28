@@ -1,10 +1,10 @@
 # Quickstart
 
-The GUI is the primary way to use agent-knots — `./install.sh` then
-`agent-knots launch --web` gets you a setup wizard in the browser
-with no manual config. This walkthrough goes a bit deeper than that: vault,
-tasks, and a full session lifecycle from the CLI, for scripting and
-automation.
+The GUI is the primary way to use agent-knots, and the default:
+`./install.sh` then `agent-knots launch` gets you a setup wizard in the
+browser with no manual config. This walkthrough goes a bit deeper than
+that: vault, tasks, and a full session lifecycle from the CLI, for
+scripting and automation.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ automation.
 ## Install
 
 ```bash
-git clone https://github.com/jamiedf/agent-knots.git
+git clone https://github.com/JamieDF/agent-knots.git
 cd agent-knots
 ./install.sh
 ```
@@ -30,7 +30,7 @@ frontend, and installs the `agent-knots` command globally via
 
 ```bash
 agent-knots version
-# agent-knots 0.1.0
+# agent-knots 0.2.0
 ```
 
 If you're working from source without running `install.sh` (e.g.
@@ -39,7 +39,7 @@ version`, etc.
 
 ## Configure a model provider
 
-**Via the GUI:** `agent-knots launch --web` opens a setup wizard
+**Via the GUI:** `agent-knots launch` opens a setup wizard
 automatically on first launch — pick a provider preset (OpenAI, MiniMax,
 Anthropic, Ollama, or custom), paste an API key, done. No manual file
 editing.
@@ -171,17 +171,19 @@ needed from a well-behaved agent).
 ## Launch the cockpit
 
 ```bash
-# TUI (default)
-agent-knots launch
-# → j/k navigate, Enter focus, a assume, r relinquish, t tools, d delete, q quit
-
-# Web
-agent-knots launch --web --port 8080
+# Web (primary surface, default)
+agent-knots launch --port 8080
 # → http://127.0.0.1:8080/?token=...
+
+# TUI
+agent-knots launch --tui
+# → j/k navigate, Enter focus, a assume, r relinquish, t tools, d delete, q quit
 ```
 
-Both surfaces show live agent status, let you start new sessions, and
-support assume/relinquish take-over.
+The web cockpit is the primary surface and gets active development. The
+TUI shows live agent status and lets you start sessions, but lags behind
+the web UI in features (no task screen, no multi-turn sending, no vault
+UI).
 
 ## What's next?
 

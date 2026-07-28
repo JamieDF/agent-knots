@@ -1,5 +1,5 @@
-/** Priority → color map, from design_handoff_atelier_cockpit/README.md
- * ("Priority: URGENT err, HIGH warn-ink, MED acc, LOW mut"). */
+/** Priority → color map: URGENT = err, HIGH = warn-ink, MED = acc,
+ * LOW = mut. */
 
 export const PRIORITY_COLORS: Record<string, string> = {
   urgent: 'var(--err)',

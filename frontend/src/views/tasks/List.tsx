@@ -6,8 +6,7 @@ import { priorityColor } from '../../lib/priorityColors'
 import { useTaskList } from '../../lib/useTaskList'
 import { Card, Chip } from '../../components/primitives'
 
-/** List tab of the Tasks screen — stage filter chips + task rows, per
- * design_handoff_atelier_cockpit/README.md §3. */
+/** List tab of the Tasks screen — stage filter chips + task rows. */
 function List({ reloadSignal }: { reloadSignal?: number } = {}) {
   const [stageFilter, setStageFilter] = useState<string | null>(null)
   const navigate = useNavigate()

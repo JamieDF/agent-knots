@@ -28,7 +28,7 @@ class ProviderProfile:
     whichever profile is currently active — "Set default" on the
     Settings screen copies a profile's fields into `agent` rather than
     resolve_provider() having to know about the list at all, so the
-    precedence logic hardened in Phase 3 stays untouched."""
+    existing precedence logic in resolve_provider() stays untouched."""
     name: str
     model: str = ""
     api_key: str = ""

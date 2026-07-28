@@ -740,7 +740,7 @@ test.describe('board view', () => {
     await page.waitForTimeout(2000)
 
     // Should see stage column headers (Draft/Open/In progress/Review/Done
-    // — the Phase 1 default stage set from lib/stages.ts).
+    // — the default stage set from lib/stages.ts).
     await expect(page.locator('text=Open')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('text=In progress')).toBeVisible()
     await expect(page.locator('text=Done')).toBeVisible()
@@ -999,7 +999,7 @@ test.describe('task editing', () => {
 
   test('Tasks nav pill switches between Board and List tabs', async ({ page }) => {
     // Replaces the old "Tasks ▾" dropdown, which no longer exists — Board
-    // and List are now tabs inside the /tasks screen (Phase 1 merge).
+    // and List are now tabs inside the /tasks screen.
     await page.goto(BASE)
     await page.waitForTimeout(1000)
 
@@ -1109,7 +1109,7 @@ test.describe('session-task assignment', () => {
   })
 
   test('New session dialog offers open tasks to attach to', async ({ page }) => {
-    // Phase 2 replaced Dashboard's own ad-hoc task-picker dropdown with a
+    // Dashboard's own ad-hoc task-picker dropdown was replaced with a
     // real NewSessionDialog opened from Topbar's (now-enabled) "+ New
     // session" button — a native <select> instead of an open list of
     // buttons, so task options are asserted via the select's contents
@@ -1249,7 +1249,7 @@ test.describe('runtime & isolation', () => {
     // after a code review found it never actually worked — it referenced
     // a Session API that stopped existing when SSE fan-out landed, so it
     // crashed on the first event any subprocess-runtime session tried to
-    // emit. See docs/RETRO.md. create_runtime()/set_runtime_type() now
+    // emit. create_runtime()/set_runtime_type() now
     // silently treat any non-"inprocess" value (including an old
     // "subprocess" saved from before the removal) as in-process, so a
     // pre-existing workspace with that value doesn't break on upgrade —
@@ -1318,9 +1318,8 @@ test.describe('agent panel tabs', () => {
   })
 
   test('terminal, files, commands, browser tabs switch in agent thread', async ({ page }) => {
-    // Phase 3 consolidated the old 4-tab set (Terminal/Review/Code/
-    // Browser) into Terminal/Files/Preview per
-    // design_handoff_atelier_cockpit/README.md §2 — task info (the old
+    // The original 4-tab set (Terminal/Review/Code/Browser) was
+    // consolidated into Terminal/Files/Preview — task info (the old
     // "Review" tab's content) moved to the always-visible left goal
     // rail instead of being a tab. A later round added a 4th tab,
     // Commands (a structured log of shell invocations + timestamps),
@@ -1435,7 +1434,7 @@ test.describe('agent panel tabs', () => {
     await page.waitForTimeout(3000)
 
     // Task title/criteria are always visible in the left goal rail —
-    // no tab click needed (that's the point of the Phase 3 redesign).
+    // no tab click needed (that's the point of the Agent Thread redesign).
     await expect(page.locator('text=Panel review test').first()).toBeVisible({ timeout: 10000 })
     await expect(page.locator('text=Should show in panel')).toBeVisible()
 

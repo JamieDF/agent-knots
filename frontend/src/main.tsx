@@ -30,7 +30,7 @@ createRoot(document.getElementById('root')!).render(
         <Route element={<App />}>
           <Route index element={<Dashboard />} />
           <Route path="agent/:id" element={<AgentThreadRoute />} />
-          {/* /board merged into the Tasks screen's Board tab (Phase 1) —
+          {/* /board merged into the Tasks screen's Board tab —
               redirect so old bookmarks/links still land somewhere real. */}
           <Route path="board" element={<Navigate to="/tasks?view=board" replace />} />
           <Route path="tasks" element={<Tasks />} />

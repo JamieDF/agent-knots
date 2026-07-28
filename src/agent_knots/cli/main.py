@@ -41,15 +41,16 @@ def version() -> None:
 
 @app.command()
 def launch(
-    web: bool = typer.Option(False, "--web", help="Launch the web GUI instead of TUI."),
+    tui: bool = typer.Option(False, "--tui", help="Launch the terminal UI instead of the web GUI."),
+    web: bool = typer.Option(True, "--web", help="Launch the web GUI (default)."),
     port: int = typer.Option(8080, "--port", help="Port for the web server."),
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address."),
 ) -> None:
-    """Launch the cockpit (TUI by default, --web for browser GUI)."""
-    if web:
-        _launch_web(host, port)
-    else:
+    """Launch the cockpit (web GUI by default, --tui for the terminal UI)."""
+    if tui:
         _launch_tui()
+    else:
+        _launch_web(host, port)
 
 
 def _launch_web(host: str, port: int) -> None:

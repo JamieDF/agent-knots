@@ -84,3 +84,4 @@
 - [ ] Mobile-responsive layout — Full mobile support for the web cockpit
 - [ ] Zero-clone installer — `curl <url>/install.sh | bash` without a
   manual `git clone` first (the script would self-clone); Windows support
+- [ ] CI — GitHub Actions running pytest + ruff on every PR; there's none today

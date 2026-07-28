@@ -1,7 +1,7 @@
 """Tests for ModeInterventionHandler.
 
-Previously had zero coverage — a real bug shipped silently as a result
-(see docs/RETRO.md): the handler defined on_before_tool_call/etc., method
+Previously had zero coverage, and a real bug shipped silently as a
+result: the handler defined on_before_tool_call/etc., method
 names that don't match strands.interventions.InterventionHandler's base
 class, so InterventionRegistry's override-detection never registered any
 hook at all. Every mode's tool calls proceeded unconditionally. These
