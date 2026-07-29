@@ -498,11 +498,18 @@ test.describe('task UI', () => {
 
 /** Poll a task until the agent modifies it (progress or status change). */
 async function waitForAgentToModifyTask(page: any, taskId: string, maxSec = 120): Promise<any> {
+  // Freshly created tasks default to 'draft' (task/models.py), not
+  // 'open' — so "status !== 'open'" as an exit condition would return
+  // on the very first poll before the agent has done anything. Track
+  // the starting status instead and wait for it to actually change.
+  const startRes = await page.request.get(`${BASE}/api/tasks/${taskId}`)
+  const startStatus = (await startRes.json()).status
+
   const deadline = Date.now() + maxSec * 1000
   while (Date.now() < deadline) {
     const res = await page.request.get(`${BASE}/api/tasks/${taskId}`)
     const task = await res.json()
-    if (task.progress.length > 0 || task.status !== 'open') {
+    if (task.progress.length > 0 || task.status !== startStatus) {
       return task
     }
     await new Promise(r => setTimeout(r, 3000))
@@ -583,10 +590,12 @@ test.describe('cockpit — agent task tools', () => {
     expect(sessionRes.status()).toBe(200)
     const session = await sessionRes.json()
 
-    // Navigate to cockpit and find the agent card.
+    // Navigate to cockpit and find the agent card. A task-attached card
+    // shows the task's title, not the raw session id (see the "create
+    // task-attached session" test above).
     await page.goto(BASE)
     await page.waitForTimeout(3000)
-    const card = page.locator(`text=${session.id}`)
+    const card = page.locator('text=Cockpit tool e2e test').first()
     await expect(card).toBeVisible({ timeout: 10000 })
 
     // Enter the agent thread directly (card title isn't a nav target).
@@ -876,21 +885,30 @@ test.describe('advisory agents', () => {
       const writer = agents[0]
       expect(writer.advisory).toBe(false)
       expect(writer.role).toBe('builder')
-      expect(writer.branch).toContain(task.id)
+      // Branches are task-scoped and named from the task's title plus a
+      // short hash of its id, not the raw id (gitutil.session_branch_name).
+      const { createHash } = await import('crypto')
+      const shortId = createHash('sha1').update(task.id).digest('hex').slice(0, 6)
+      expect(writer.branch).toBe(`knots/advisory-e2e-task-${shortId}`)
 
       const afterInProgress = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
       expect(afterInProgress.assigned_to).toBe(writer.id)
 
-      // review fires the reviewer — advisory, no branch of its own.
+      // review fires the reviewer — advisory, no branch of its own. It
+      // also auto-stops the writer (routes/tasks.py's auto-stop runs on
+      // the same PATCH, before role triggers create the reviewer — see
+      // task/lifecycle.py), so only the reviewer remains in the active
+      // agents list once this settles.
       await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'review' } })
+      let reviewer: any
       for (let i = 0; i < 20; i++) {
         await page.waitForTimeout(300)
         agents = (await (await page.request.get(`${BASE}/api/tasks/${task.id}/agents`)).json()).agents
-        if (agents.length >= 2) break
+        reviewer = agents.find((a: any) => a.advisory)
+        if (reviewer) break
       }
-      expect(agents.length).toBe(2)
-      const reviewer = agents.find((a: any) => a.advisory)
       expect(reviewer).toBeTruthy()
+      expect(agents.find((a: any) => a.id === writer.id)).toBeUndefined()
       expect(reviewer.role).toBe('reviewer')
       expect(reviewer.branch).toBeNull()
 
@@ -1061,7 +1079,11 @@ test.describe('session-task assignment', () => {
       data: { title: 'Assignment test task', priority: 'medium' },
     })
     const task = await taskRes.json()
-    expect(task.status).toBe('open')
+    expect(task.status).toBe('draft')
+
+    // Move to open — only an 'open' task auto-transitions to in_progress
+    // when a session starts (SessionManager._resolve_task_context).
+    await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'open' } })
 
     // Start a session assigned to this task.
     const sessionRes = await page.request.post(`${BASE}/api/sessions`, {
@@ -1216,8 +1238,19 @@ test.describe('full task workflow', () => {
     // 7. Verify agent logged progress.
     expect(progressCount).toBeGreaterThanOrEqual(1)
 
-    // 8. If agent didn't mark it done, we set it manually.
-    if (current.status !== 'done') {
+    // 8. If the agent didn't finish the workflow itself, drive it the
+    // rest of the way as a human would — done can't be reached directly
+    // from in_progress (task/store.py::_validate_transition requires
+    // passing through review first, then a human — not the agent that
+    // did the work — has to be the one to approve it).
+    if (current.status === 'in_progress') {
+      await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'review' } })
+      current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+    }
+    if (current.status === 'review') {
+      for (const criterion of current.acceptance_criteria) {
+        await page.request.post(`${BASE}/api/tasks/${task.id}/criteria/toggle`, { data: { criterion, met: true } })
+      }
       await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'done' } })
       current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
     }
@@ -1778,19 +1811,23 @@ test.describe('settings screen', () => {
     const wsRow = page.locator('text=Delete Me').locator('..')
     // If this were still window.confirm(), a native dialog would block
     // the page and this click would hang waiting for a dialog handler.
+    // Scoped to the dialog itself (role="dialog") — an unscoped
+    // "Delete" text locator also matches every row's button in the
+    // Settings Wastebin list.
+    const dialog = page.getByRole('dialog')
     await wsRow.locator('button:has-text("✕")').click()
     await page.waitForTimeout(300)
     await expect(page.locator('text=Delete this workspace?')).toBeVisible()
 
     // Cancel — workspace still there.
-    await page.locator('button:text-is("Cancel")').click()
+    await dialog.locator('button:text-is("Cancel")').click()
     await page.waitForTimeout(300)
     await expect(page.locator('text=Delete Me')).toBeVisible()
 
     // Confirm — workspace actually gone.
     await wsRow.locator('button:has-text("✕")').click()
     await page.waitForTimeout(300)
-    await page.locator('button:text-is("Delete")').click()
+    await dialog.locator('button:text-is("Delete")').click()
     await page.waitForTimeout(500)
     await expect(page.locator('text=Delete Me')).toHaveCount(0)
   })
@@ -1895,10 +1932,13 @@ test.describe('notification bell', () => {
 
       await page.click('button[title="Notifications"]')
       await page.waitForTimeout(300)
-      await expect(page.locator('text=Bell E2E task')).toBeVisible()
-      await expect(page.locator('text=blocked · ')).toBeVisible()
+      // Scoped to the topbar — a blocked task also surfaces as a card on
+      // the Dashboard itself, so an unscoped locator matches both.
+      const dropdown = page.getByRole('banner')
+      await expect(dropdown.getByText('Bell E2E task')).toBeVisible()
+      await expect(dropdown.getByText('blocked · ')).toBeVisible()
 
-      await page.click('text=Bell E2E task')
+      await dropdown.getByText('Bell E2E task').click()
       await page.waitForTimeout(500)
       expect(page.url()).toContain(`/tasks/${task.id}`)
     } finally {
@@ -1993,7 +2033,7 @@ test.describe('workspace creation UI', () => {
 
     await expect(page.locator('text=github.com/jamiedf/agent-knots')).toBeVisible()
 
-    await page.click('button:text-is("Cancel")')
+    await page.getByRole('dialog').locator('button:text-is("Cancel")').click()
   })
 
 })
@@ -2308,15 +2348,18 @@ test.describe('task to agent thread lifecycle', () => {
     await page.waitForTimeout(300)
     await expect(page.locator('text=Delete this session?')).toBeVisible()
 
-    // Cancel — still on the thread, session still exists.
-    await page.locator('button:text-is("Cancel")').click()
+    // Cancel — still on the thread, session still exists. Scoped to the
+    // dialog (role="dialog") — an unscoped locator can also match a
+    // Wastebin row's own Delete button elsewhere on the page.
+    const dialog = page.getByRole('dialog')
+    await dialog.locator('button:text-is("Cancel")').click()
     await page.waitForTimeout(300)
     expect(page.url()).toContain(`/agent/${session.id}`)
 
     // Confirm — actually deletes and navigates to the dashboard.
     await page.click('button[title="Delete this session"]')
     await page.waitForTimeout(300)
-    await page.locator('button:text-is("Delete")').click()
+    await dialog.locator('button:text-is("Delete")').click()
     await page.waitForTimeout(600)
     expect(page.url()).toBe(`${BASE}/`)
 
