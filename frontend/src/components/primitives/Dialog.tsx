@@ -35,6 +35,8 @@ function Dialog({ open, onClose, children, width = 480 }: Props) {
       }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
         onClick={e => e.stopPropagation()}
         style={{
           width,
