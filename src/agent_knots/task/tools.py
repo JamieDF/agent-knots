@@ -65,6 +65,36 @@ def validate_task_output(data: dict) -> dict:
 # ── task tools ───────────────────────────────────────────────────────────────
 
 
+def _create_task_impl(
+    title: str,
+    description: str,
+    priority: str,
+    acceptance_criteria: list[str] | None,
+    project: str,
+) -> dict:
+    validation = validate_task_output({"title": title, "priority": priority})
+    if not validation["valid"]:
+        return {"error": "; ".join(validation["errors"])}
+
+    store = _store()
+    task = Task(
+        id=new_task_id(project),
+        title=title,
+        description=description,
+        priority=Priority(priority),
+        acceptance_criteria=acceptance_criteria or [],
+        project=project,
+    )
+    store.create(task)
+    return {
+        "id": task.id,
+        "title": task.title,
+        "status": task.status.value,
+        "priority": task.priority.value,
+        "project": task.project,
+    }
+
+
 @tool(description="Create a new task in the project tracker. Use this to record work that needs to be done.")
 def create_task(
     title: str,
@@ -84,40 +114,16 @@ def create_task(
         The created task with its ID, or an error if title/priority are
         invalid.
     """
-    validation = validate_task_output({"title": title, "priority": priority})
-    if not validation["valid"]:
-        return {"error": "; ".join(validation["errors"])}
-
-    store = _store()
-    task = Task(
-        id=new_task_id(),
-        title=title,
-        description=description,
-        priority=Priority(priority),
-        acceptance_criteria=acceptance_criteria or [],
-    )
-    store.create(task)
-    return {
-        "id": task.id,
-        "title": task.title,
-        "status": task.status.value,
-        "priority": task.priority.value,
-    }
+    return _create_task_impl(title, description, priority, acceptance_criteria, project="")
 
 
-@tool(description="Read full details of a task by its ID.")
-def read_task(task_id: str) -> dict:
-    """Read a task's details including steps, criteria, and progress.
-
-    Args:
-        task_id: The task ID (e.g. 'T-2026-07-07-...').
-
-    Returns:
-        Full task details, or an error if not found.
-    """
+def _read_task_impl(task_id: str, project: str) -> dict:
     store = _store()
     task = store.get(task_id)
-    if task is None:
+    if task is None or (project and task.project != project):
+        # Same "not found" for missing vs. wrong-workspace — a
+        # workspace-scoped session shouldn't be able to confirm a task
+        # even exists in a workspace it isn't allowed to see into.
         return {"error": f"Task {task_id!r} not found"}
 
     return {
@@ -135,20 +141,22 @@ def read_task(task_id: str) -> dict:
     }
 
 
-@tool(description="List tasks, optionally filtered by status. Use this to see what work is pending.")
-def list_tasks(status: str = "") -> dict:
-    """List all tasks, optionally filtered by status.
+@tool(description="Read full details of a task by its ID.")
+def read_task(task_id: str) -> dict:
+    """Read a task's details including steps, criteria, and progress.
 
     Args:
-        status: Optional filter. One of 'draft', 'open', 'planned',
-                'in_progress', 'blocked', 'review', 'done', 'abandoned'.
-                Omit for all tasks.
+        task_id: The task ID (e.g. 'T-2026-07-07-...').
 
     Returns:
-        List of task summaries.
+        Full task details, or an error if not found.
     """
+    return _read_task_impl(task_id, project="")
+
+
+def _list_tasks_impl(status: str, project: str) -> dict:
     store = _store()
-    tasks = store.list(status=status, limit=20)
+    tasks = store.list(status=status, project=project, limit=20)
     return {
         "tasks": [
             {
@@ -161,6 +169,21 @@ def list_tasks(status: str = "") -> dict:
             for t in tasks
         ]
     }
+
+
+@tool(description="List tasks, optionally filtered by status. Use this to see what work is pending.")
+def list_tasks(status: str = "") -> dict:
+    """List all tasks, optionally filtered by status.
+
+    Args:
+        status: Optional filter. One of 'draft', 'open', 'planned',
+                'in_progress', 'blocked', 'review', 'done', 'abandoned'.
+                Omit for all tasks.
+
+    Returns:
+        List of task summaries.
+    """
+    return _list_tasks_impl(status, project="")
 
 
 _UPDATE_STATUS_DESCRIPTION = (
@@ -445,6 +468,70 @@ def _schedule_side_effects_if_status_changed(
         _deferred_status_side_effects(session_manager, old_status, new_status, task_id),
         loop,
     )
+
+
+def make_workspace_scoped_task_tools(project_id: str) -> list:
+    """create_task, read_task, and list_tasks bound to the session's
+    workspace, so a workspace-attached session can't create, read, or
+    discover-via-listing a task outside the workspace it's actually
+    running in.
+
+    project is deliberately not an agent-facing parameter on any of
+    these (unlike title/status/etc.) — it's closed over instead, the
+    same way review_gate approval is restricted to actor="human" in
+    task/store.py: a value the caller must never be able to override by
+    just asking.
+    """
+
+    @tool(description="Create a new task in the project tracker. Use this to record work that needs to be done. The task is always created in this session's workspace.")
+    def create_task(
+        title: str,
+        description: str = "",
+        priority: str = "medium",
+        acceptance_criteria: list[str] | None = None,
+    ) -> dict:
+        """Create a new task in this session's workspace.
+
+        Args:
+            title: Short summary of what needs to be done.
+            description: Longer context about the task.
+            priority: One of 'low', 'medium', 'high', 'urgent'.
+            acceptance_criteria: List of verifiable conditions for completion.
+
+        Returns:
+            The created task with its ID, or an error if title/priority are
+            invalid.
+        """
+        return _create_task_impl(title, description, priority, acceptance_criteria, project=project_id)
+
+    @tool(description="Read full details of a task by its ID. Only tasks in this session's workspace are visible.")
+    def read_task(task_id: str) -> dict:
+        """Read a task's details including steps, criteria, and progress.
+
+        Args:
+            task_id: The task ID (e.g. 'T-2026-07-07-...').
+
+        Returns:
+            Full task details, or an error if not found (including if the
+            task exists but belongs to a different workspace).
+        """
+        return _read_task_impl(task_id, project=project_id)
+
+    @tool(description="List tasks in this session's workspace, optionally filtered by status. Use this to see what work is pending.")
+    def list_tasks(status: str = "") -> dict:
+        """List tasks in this session's workspace, optionally filtered by status.
+
+        Args:
+            status: Optional filter. One of 'draft', 'open', 'planned',
+                    'in_progress', 'blocked', 'review', 'done', 'abandoned'.
+                    Omit for all tasks.
+
+        Returns:
+            List of task summaries, scoped to this session's workspace.
+        """
+        return _list_tasks_impl(status, project=project_id)
+
+    return [create_task, read_task, list_tasks]
 
 
 def make_session_aware_status_tools(session_manager: Any) -> list:

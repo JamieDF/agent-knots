@@ -35,6 +35,7 @@ function SetupWizard({ onComplete, onSkip }: Props) {
       if (!s.agent.base_url && !s.agent.api_key) return
       if (s.agent.base_url) {
         if (s.agent.base_url.includes('minimax')) setPreset('minimax')
+        else if (s.agent.base_url.includes('deepseek')) setPreset('deepseek')
         else if (s.agent.base_url.includes('ollama')) setPreset('ollama')
         else setPreset('custom')
       } else {

@@ -151,6 +151,7 @@ class Session:
     # mode's instruction forever, even after mode changes.
     _base_prompt: str = field(default="", repr=False)
     _task_context: str = field(default="", repr=False)
+    _workspace_context: str = field(default="", repr=False)
     # Pending ask_user question — a dict with keys: event (threading.Event),
     # answer (str), question (str), options (list[str] | None). The tool
     # blocks on the Event; the /api/agent/{id}/answer endpoint sets it.
@@ -295,7 +296,8 @@ class SessionManager:
         session_id = uuid.uuid4().hex[:12]
 
         task_context = self._resolve_task_context(session_id, task_id, advisory)
-        full_prompt = self._build_full_prompt(system_prompt, task_context, mode, task_id)
+        workspace_context = self._build_workspace_context(project_id)
+        full_prompt = self._build_full_prompt(system_prompt, task_context, workspace_context, mode, task_id)
         resolved_working_dir = self._resolve_working_dir(working_dir, project_id, session_id)
 
         # Branch before anything binds to the working tree — the sandbox
@@ -319,7 +321,7 @@ class SessionManager:
         # Custom (shell-command) tools are bound to resolved_working_dir here
         # since, unlike the built-in shell/editor tools below, they have no
         # separate sandboxed-swap step.
-        all_tools = self._build_tools(tools, resolved_working_dir, session_id)
+        all_tools = self._build_tools(tools, resolved_working_dir, session_id, project_id)
         model_instance = self._build_model_instance(provider)
 
         # background_pids is created here (before the Session below exists)
@@ -368,6 +370,7 @@ class SessionManager:
             _background_pids=background_pids,
             _base_prompt=system_prompt,
             _task_context=task_context,
+            _workspace_context=workspace_context,
         )
         self._sessions[session_id] = session
 
@@ -594,7 +597,7 @@ class SessionManager:
         # Rebuild the system prompt from stored components with the new mode.
         if session._agent is not None:
             new_prompt = _build_system_prompt(
-                session._base_prompt, session._task_context, mode,
+                session._base_prompt, session._task_context, session._workspace_context, mode,
             )
             if session.task_id:
                 from agent_knots.session.features import inject_memory
@@ -975,10 +978,31 @@ class SessionManager:
         return _build_task_prompt(task)
 
     @staticmethod
-    def _build_full_prompt(system_prompt: str, task_context: str, mode: str, task_id: str | None) -> str:
+    def _build_workspace_context(project_id: str | None) -> str:
+        """Fetch the workspace's prompt context, if project_id names one.
+
+        Without this, a workspace-attached session had no way to know
+        it was in a workspace at all — not its name, not its
+        description, nothing — beyond whatever it could infer from
+        files already sitting in its own working directory.
+        """
+        if not project_id:
+            return ""
+        from agent_knots.project.store import ProjectStore
+        from agent_knots.config import projects_dir as _projects_dir
+
+        project = ProjectStore(_projects_dir()).get(project_id)
+        if not project:
+            return ""
+        return _build_workspace_prompt(project)
+
+    @staticmethod
+    def _build_full_prompt(
+        system_prompt: str, task_context: str, workspace_context: str, mode: str, task_id: str | None,
+    ) -> str:
         """Assemble the system prompt, then inject cross-session memory
         from the task's own prior progress log, if there is one."""
-        full_prompt = _build_system_prompt(system_prompt, task_context, mode)
+        full_prompt = _build_system_prompt(system_prompt, task_context, workspace_context, mode)
         if task_id:
             from agent_knots.session.features import inject_memory
             memory_block = inject_memory(task_id)
@@ -1169,7 +1193,10 @@ class SessionManager:
 
         return str(session_workdir(session_id))
 
-    def _build_tools(self, tools: list[Any] | None, resolved_working_dir: str | None, session_id: str) -> list[Any]:
+    def _build_tools(
+        self, tools: list[Any] | None, resolved_working_dir: str | None, session_id: str,
+        project_id: str | None = None,
+    ) -> list[Any]:
         """Default tools + enabled custom tools from the registry, plus
         the delegate_task tool for multi-agent delegation. Must run
         before the Agent is constructed — Strands reads the tools list
@@ -1189,6 +1216,15 @@ class SessionManager:
         # an agent marking its own task done never triggered either.
         from agent_knots.task.tools import make_session_aware_status_tools
         session_aware = {t.__name__: t for t in make_session_aware_status_tools(self)}
+        # create_task/read_task/list_tasks, if this session belongs to a
+        # workspace, get swapped the same way — project is closed over
+        # rather than agent-supplied, so this session can't create,
+        # read, or discover-via-listing a task outside the workspace
+        # it's actually running in.
+        if project_id:
+            from agent_knots.task.tools import make_workspace_scoped_task_tools
+            for t in make_workspace_scoped_task_tools(project_id):
+                session_aware[t.__name__] = t
         all_tools = [session_aware.get(getattr(t, "__name__", ""), t) for t in all_tools]
 
         from agent_knots.session.features import make_delegate_tool, make_ask_user_tool
@@ -1326,12 +1362,34 @@ def _build_task_prompt(task: Any) -> str:
     return "\n".join(parts)
 
 
-def _build_system_prompt(base_prompt: str, task_context: str, mode: str) -> str:
+def _build_workspace_prompt(project: Any) -> str:
+    """Build a workspace context block for the system prompt."""
+    parts = [
+        "## Workspace",
+        f"Workspace ID: {project.id}",
+        f"Name: {project.name}",
+    ]
+    if project.description:
+        parts.append(f"Description: {project.description}")
+    if project.repository:
+        parts.append(f"Repository: {project.repository}")
+    parts.append(
+        "\nAny task you create with create_task is created in this "
+        "workspace automatically — you don't need to (and can't) put it "
+        "in a different one from this session."
+    )
+    return "\n".join(parts)
+
+
+def _build_system_prompt(base_prompt: str, task_context: str, workspace_context: str, mode: str) -> str:
     """Assemble the full system prompt."""
     parts = []
 
     if base_prompt:
         parts.append(base_prompt)
+
+    if workspace_context:
+        parts.append(workspace_context)
 
     if mode == "agent":
         parts.append("You are an autonomous coding agent. You have tools for reading/writing files, running shell commands, editing code, and managing tasks. Work through tasks systematically. Log progress after every meaningful action using the task tools provided.")
