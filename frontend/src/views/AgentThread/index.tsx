@@ -244,8 +244,8 @@ function AgentThread() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderBottom: '1px solid var(--line)', background: 'var(--card)', flexShrink: 0 }}>
         <button onClick={() => navigate('/')} style={{ fontSize: 16, color: 'var(--ink2)' }}>←</button>
         <span style={{ width: 7, height: 7, borderRadius: '50%', background: agent?.running ? 'var(--ok)' : 'var(--mut2)' }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{task?.title || id}</span>
-        <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>{id}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{task?.title || agent?.name || id}</span>
+        <span style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>{agent?.name || id}</span>
         {/* The Autonomous toggle — only shown when there's a task to
             self-direct from. Flipping it off is the "hold up" action:
             interrupts whatever's running right now; flipping it back on

@@ -7,6 +7,7 @@
  * independently in two separate preset maps here. */
 export const PROVIDER_PRESETS: Record<string, { model: string; base_url: string }> = {
   minimax: { model: 'minimax-m2.7', base_url: 'https://api.minimax.io/v1' },
+  deepseek: { model: 'deepseek-chat', base_url: 'https://api.deepseek.com/v1' },
   openai: { model: 'gpt-4o-mini', base_url: '' },
   anthropic: { model: 'claude-sonnet-4-20250514', base_url: '' },
   ollama: { model: 'llama3', base_url: 'http://localhost:11434/v1' },

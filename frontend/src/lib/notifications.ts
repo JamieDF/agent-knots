@@ -8,6 +8,7 @@ export interface NotificationItem {
   taskId: string
   time: number
   agentId?: string
+  agentName?: string
 }
 
 /** Derives notifications from the tasks list plus pending agent questions.
@@ -47,6 +48,7 @@ export function useNotifications() {
       taskId: q.task_id || '',
       time: now,
       agentId: q.agent_id,
+      agentName: q.agent_name,
     }))
 
   const items = [...agentQuestions, ...blockers, ...recentlyDone].sort((a, b) => b.time - a.time)

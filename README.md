@@ -11,7 +11,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-520%2B%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-525%2B%20passing-brightgreen.svg)](tests/)
 
 agent-knots is a self-hosted, task-based orchestrator for AI agents.
 Create a task, assign it to an agent, and watch it work in real time
@@ -25,8 +25,9 @@ configure agent isolation, and step in to take control of the agent
 whenever you need.
 
 Built on [Strands Agents SDK](https://github.com/strands-agents/sdk-python).
-Provider-agnostic: configure OpenAI, Anthropic, Ollama, or any
-OpenAI-compatible API in Settings. Developed and tested against MiniMax M2.7.
+Provider-agnostic: configure OpenAI, Anthropic, Ollama, DeepSeek, or any
+OpenAI-compatible API in Settings. Developed and tested against MiniMax
+M2.7 and DeepSeek.
 
 ---
 
@@ -64,10 +65,13 @@ way, `configured` is true before the wizard would even ask. See
 ## Features
 
 - **Sessions**: start and stop agents from the web UI, TUI, or CLI, each
-  running in-process (container isolation is on the roadmap). Task-attached
-  sessions get their own git branch, reused automatically if you resume the
-  task later, and auto-stop once their task reaches review, done, or
-  abandoned.
+  running in-process (container isolation is on the roadmap) and given a
+  human-readable name (e.g. "sleepy-panda") instead of a raw id.
+  Task-attached sessions get their own git branch, reused automatically
+  if you resume the task later, and auto-stop once their task reaches
+  review, done, or abandoned. A stopped session's full transcript is
+  kept and can be reopened read-only afterward, not just while it's
+  running.
 - **Multi-agent**: an advisory role (e.g. a read-only reviewer) can share a
   task alongside the main agent, and an agent can delegate a sub-task to its
   own sub-agent.
@@ -76,11 +80,13 @@ way, `configured` is true before the wizard would even ask. See
   agent mid-task from a browser or terminal.
 - **Tasks**: YAML-backed, Draft → Open → In Progress → Review → Done, with
   a review gate only a human can pass, dependencies, acceptance criteria,
-  and a configurable Kanban board.
+  and a configurable Kanban board. A workspace-attached agent always knows
+  which workspace it's in and can only create, read, or list tasks inside
+  it.
 - **Vault**: AES-256-GCM encrypted credential store. Agents can use a
   credential in a tool call without the raw value ever appearing in their
   context.
-- **Providers**: OpenAI, Anthropic, Ollama, MiniMax, or any
+- **Providers**: OpenAI, Anthropic, Ollama, MiniMax, DeepSeek, or any
   OpenAI-compatible API, configurable per workspace.
 - Also included: a TUI cockpit, custom shell-command tools, multi-workspace
   project grouping, and per-app accessibility settings.
@@ -167,7 +173,8 @@ agent-knots/
 │   ├── vault/                 # AES-256-GCM crypto + file store
 │   ├── project/               # Workspace models + YAML store
 │   ├── tools/                 # Tool registry, defaults, custom tools
-│   ├── wastebin.py            # Stopped-session tombstones + retention
+│   ├── wastebin.py            # Stopped-session tombstones + full history + retention
+│   ├── names.py                # Human-readable session names ("sleepy-panda")
 │   ├── gitutil.py             # Per-session branch create/resume/teardown
 │   ├── settings.py            # Global YAML settings store
 │   ├── provider.py            # Model provider resolution (CLI/env/settings)
@@ -183,10 +190,10 @@ agent-knots/
 ## Testing
 
 ```bash
-# Python unit tests (520+)
+# Python unit tests (525+)
 uv run --with pytest pytest tests/ -q
 
-# Playwright e2e tests (~74)
+# Playwright e2e tests (~76)
 cd frontend && npx playwright test
 ```
 
@@ -198,7 +205,7 @@ and are expected to fail without one.
 ## Status
 
 **Alpha, feature-complete.** Provider-agnostic; developed and tested against
-MiniMax M2.7.
+MiniMax M2.7 and DeepSeek.
 
 ---
 

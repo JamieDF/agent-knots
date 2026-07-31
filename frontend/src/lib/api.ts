@@ -30,11 +30,12 @@ function jsonInit(method: string, body?: unknown): RequestInit {
 // ── types ───────────────────────────────────────────────────────────────────
 
 export interface AgentInfo {
-  id: string; mode: string; task_id: string | null; project_id: string | null
+  id: string; name: string; mode: string; task_id: string | null; project_id: string | null
   tokens_used: number; cost_usd: number; running: boolean
   model: string; started_at: number
   pending_question: { question: string; options: string[] | null } | null
   branch: string | null; advisory: boolean; role: string
+  last_activity: string
 }
 
 export interface ProviderInfo {
@@ -55,7 +56,7 @@ export interface SettingsResponse {
 }
 
 export interface WastebinEntry {
-  session_id: string; task_id: string | null; task_title: string; project_id: string | null
+  session_id: string; name: string; task_id: string | null; task_title: string; project_id: string | null
   branch: string | null; working_dir: string; is_auto_workdir: boolean
   role: string; advisory: boolean; model: string
   tokens_used: number; cost_usd: number; started_at: number; stopped_at: number
@@ -115,7 +116,7 @@ export async function answerAgent(id: string, answer: string): Promise<void> {
   await apiFetch(`/api/agent/${id}/answer`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ answer }) })
 }
 export interface PendingQuestion {
-  agent_id: string; task_id: string | null; question: string; options: string[] | null
+  agent_id: string; agent_name: string; task_id: string | null; question: string; options: string[] | null
 }
 export async function fetchPendingQuestions(): Promise<{ questions: PendingQuestion[] }> {
   return apiFetch('/api/agents/pending-questions')
@@ -146,6 +147,15 @@ export async function fetchTask(id: string): Promise<TaskDetail> {
 
 export async function fetchTaskAgents(id: string): Promise<{ agents: AgentInfo[] }> {
   return apiFetch(`/api/tasks/${id}/agents`)
+}
+
+export interface PastSession {
+  id: string; name: string; role: string; advisory: boolean; model: string
+  tokens_used: number; cost_usd: number; started_at: number; stopped_at: number
+}
+
+export async function fetchTaskHistory(id: string): Promise<{ sessions: PastSession[] }> {
+  return apiFetch(`/api/tasks/${id}/history`)
 }
 
 export async function createTask(data: {

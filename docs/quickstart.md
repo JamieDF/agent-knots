@@ -13,8 +13,8 @@ scripting and automation.
 - **Node.js** (to build the web cockpit frontend; skipped with a warning
   if missing — the CLI/TUI still work, but the web cockpit falls back to
   a minimal shell with no setup wizard)
-- An **LLM API key** for any OpenAI-compatible provider (MiniMax, OpenAI,
-  Ollama, etc.)
+- An **LLM API key** for any OpenAI-compatible provider (MiniMax,
+  DeepSeek, OpenAI, Ollama, etc.)
 
 ## Install
 
@@ -41,8 +41,8 @@ version`, etc.
 
 **Via the GUI:** `agent-knots launch` opens a setup wizard
 automatically on first launch — pick a provider preset (OpenAI, MiniMax,
-Anthropic, Ollama, or custom), paste an API key, done. No manual file
-editing.
+DeepSeek, Anthropic, Ollama, or custom), paste an API key, done. No
+manual file editing.
 
 **Via the CLI/config, e.g. for scripted installs or CI** — settings
 resolve in this order: CLI flags → `AGENT_KNOTS_*` env vars →

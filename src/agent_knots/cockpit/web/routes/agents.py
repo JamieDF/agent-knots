@@ -30,6 +30,56 @@ from agent_knots.session.manager import SessionManager
 from agent_knots.task.store import TaskStore
 
 
+def _summarize_last_activity(session) -> str:
+    """A short, human-readable snapshot of the most recent thing this
+    session did — the Dashboard only polls the agent list (not full
+    SSE), so its cards had nothing to show beyond a static
+    "working…"/"idle" word with zero actual content.
+
+    Walks _history backward: a run of consecutive message/thinking
+    deltas gets joined into one readable trailing excerpt (mirrors
+    AgentThread's reduceEvent merge, just enough of it for a summary);
+    otherwise the most recent tool call, described by name.
+    """
+    history = session._history
+    if not history:
+        return ""
+
+    last = history[-1]
+    if last.type.value in ("message", "thinking"):
+        parts: list[str] = []
+        for ev in reversed(history):
+            if ev.type is not last.type:
+                break
+            parts.append(ev.message or "")
+        text = "".join(reversed(parts)).strip()
+        if text:
+            prefix = "Thinking: " if last.type.value == "thinking" else ""
+            return prefix + (text[:140] + "…" if len(text) > 140 else text)
+
+    for ev in reversed(history):
+        if ev.type.value == "tool_call" and ev.tool_call:
+            name = ev.tool_call.name
+            args = ev.tool_call.args or {}
+            # Every session gets a sandboxed working dir now (see
+            # SessionManager._resolve_working_dir), so the swapped-in
+            # shell_tool/editor_tool (sandbox_tools.py) is always what's
+            # actually in play, not the richer strands-native
+            # 'shell'/'editor' tools this used to check for — which no
+            # live tool call ever matches anymore.
+            if name == "shell_tool":
+                cmd = args.get("command", "")
+                return f"Running: {cmd}"[:140] if cmd else "Running a shell command"
+            if name == "editor_tool":
+                path = args.get("path", "")
+                return f"Editing {path}" if path else "Using the editor"
+            return f"Using {name}"
+        if ev.type.value == "state_change" and ev.message:
+            return ev.message
+
+    return ""
+
+
 def _agent_to_response(session) -> dict:
     pq = session._pending_question
     pending = None
@@ -40,6 +90,7 @@ def _agent_to_response(session) -> dict:
         }
     return {
         "id": session.id,
+        "name": session.name,
         "mode": session.mode,
         "task_id": session.task_id,
         "project_id": session.project_id,
@@ -52,6 +103,31 @@ def _agent_to_response(session) -> dict:
         "branch": session.branch,
         "advisory": session.advisory,
         "role": session.role,
+        "last_activity": _summarize_last_activity(session),
+    }
+
+
+def _wastebin_entry_to_agent_response(entry) -> dict:
+    """Same shape as _agent_to_response, for a session that's already
+    stopped — reopening it (from Task Detail's history, say) shouldn't
+    404 just because it isn't live anymore. running is always False and
+    there's never a pending question (nothing left to answer)."""
+    return {
+        "id": entry.session_id,
+        "name": entry.name,
+        "mode": entry.mode,
+        "task_id": entry.task_id,
+        "project_id": entry.project_id,
+        "tokens_used": entry.tokens_used,
+        "cost_usd": entry.cost_usd,
+        "running": False,
+        "model": entry.model,
+        "started_at": entry.started_at,
+        "pending_question": None,
+        "branch": entry.branch,
+        "advisory": entry.advisory,
+        "role": entry.role,
+        "last_activity": "",
     }
 
 
@@ -77,6 +153,7 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
             if pq and pq.get("event") and not pq["event"].is_set():
                 items.append({
                     "agent_id": s.id,
+                    "agent_name": s.name,
                     "task_id": s.task_id,
                     "question": pq.get("question", ""),
                     "options": pq.get("options"),
@@ -94,8 +171,51 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
         than racing for them on one shared queue.
         """
         session = session_manager.get(agent_id)
+        sse_headers = {
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+
         if session is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
+            # Already stopped — replay its persisted wastebin history
+            # once, then idle exactly like a live-but-quiet session
+            # (keepalives, never actually closing the response) instead
+            # of ending the stream. EventSource auto-reconnects on a
+            # closed or errored connection regardless of what data was
+            # sent, so ending it here would just re-replay the same
+            # history in a loop forever rather than settling.
+            from agent_knots.config import wastebin_dir
+            from agent_knots.wastebin import WastebinStore
+
+            entry = WastebinStore(wastebin_dir()).get(agent_id)
+            if entry is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+
+            history = entry.history
+            if not history or history[-1].get("type") != "ended":
+                history = [*history, {
+                    "type": "ended", "session_id": agent_id, "timestamp": entry.stopped_at,
+                    "message": "Session stopped.", "tool_call": None, "tool_result": None,
+                    "error": "", "data": None,
+                }]
+
+            async def replay_generator():
+                yield "event: connected\ndata: {}\n\n"
+                for event in history:
+                    yield f"data: {json.dumps(event)}\n\n"
+                try:
+                    while True:
+                        if await request.is_disconnected():
+                            break
+                        await asyncio.sleep(15.0)
+                        yield ": keepalive\n\n"
+                except asyncio.CancelledError:
+                    pass
+
+            from fastapi.responses import StreamingResponse
+
+            return StreamingResponse(replay_generator(), media_type="text/event-stream", headers=sse_headers)
 
         q = session.subscribe()
 
@@ -125,24 +245,28 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
 
         from fastapi.responses import StreamingResponse
 
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache, no-transform",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
+        return StreamingResponse(event_generator(), media_type="text/event-stream", headers=sse_headers)
 
     @router.get("/api/agent/{agent_id}")
     async def get_agent(agent_id: str):
         """Return a single session's detail (Task Detail's session-info
-        side block, Agent Thread's header)."""
+        side block, Agent Thread's header).
+
+        Falls back to the wastebin if the session already stopped —
+        reopening a finished session to see what it did shouldn't 404
+        just because it isn't live anymore.
+        """
         session = session_manager.get(agent_id)
-        if session is None:
+        if session is not None:
+            return _agent_to_response(session)
+
+        from agent_knots.config import wastebin_dir
+        from agent_knots.wastebin import WastebinStore
+
+        entry = WastebinStore(wastebin_dir()).get(agent_id)
+        if entry is None:
             raise HTTPException(status_code=404, detail="Agent not found")
-        return _agent_to_response(session)
+        return _wastebin_entry_to_agent_response(entry)
 
     @router.get("/api/agent/{agent_id}/file")
     async def get_agent_file(agent_id: str, path: str = Query(...)):
@@ -377,6 +501,21 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
                         status_code=400,
                         detail=f"Cannot start — task is blocked by unfinished dependencies: {blockers}",
                     )
+
+            # Every session started through this route is a writer (the
+            # only advisory sessions in the app come from role triggers,
+            # see workflows/models.py) — refuse a second one on a task
+            # that already has one active, rather than two agents
+            # silently fighting over the same working tree/branch.
+            existing = next(
+                (s for s in session_manager.active if s.task_id == body.task_id and not s.advisory),
+                None,
+            )
+            if existing is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"An agent ({existing.id}) is already working on this task.",
+                )
 
         spend_cap = PolicyStore(policies_file()).get("spend_cap")
         if spend_cap is not None and spend_cap.enabled:

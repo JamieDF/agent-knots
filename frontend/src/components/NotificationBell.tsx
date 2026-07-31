@@ -71,7 +71,7 @@ function NotificationBell() {
                   <div style={{ fontSize: 12.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.title}</div>
                   <div style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>
                     {i.kind === 'question' ? 'agent question' : i.kind === 'blocker' ? 'blocked' : 'done'}
-                    {i.agentId && <span> · {i.agentId}</span>}
+                    {i.agentName && <span> · {i.agentName}</span>}
                     {i.time > 0 && <span> · {timeAgo(i.time)}</span>}
                   </div>
                 </div>

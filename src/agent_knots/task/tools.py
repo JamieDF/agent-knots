@@ -65,6 +65,36 @@ def validate_task_output(data: dict) -> dict:
 # ── task tools ───────────────────────────────────────────────────────────────
 
 
+def _create_task_impl(
+    title: str,
+    description: str,
+    priority: str,
+    acceptance_criteria: list[str] | None,
+    project: str,
+) -> dict:
+    validation = validate_task_output({"title": title, "priority": priority})
+    if not validation["valid"]:
+        return {"error": "; ".join(validation["errors"])}
+
+    store = _store()
+    task = Task(
+        id=new_task_id(project),
+        title=title,
+        description=description,
+        priority=Priority(priority),
+        acceptance_criteria=acceptance_criteria or [],
+        project=project,
+    )
+    store.create(task)
+    return {
+        "id": task.id,
+        "title": task.title,
+        "status": task.status.value,
+        "priority": task.priority.value,
+        "project": task.project,
+    }
+
+
 @tool(description="Create a new task in the project tracker. Use this to record work that needs to be done.")
 def create_task(
     title: str,
@@ -84,40 +114,16 @@ def create_task(
         The created task with its ID, or an error if title/priority are
         invalid.
     """
-    validation = validate_task_output({"title": title, "priority": priority})
-    if not validation["valid"]:
-        return {"error": "; ".join(validation["errors"])}
-
-    store = _store()
-    task = Task(
-        id=new_task_id(),
-        title=title,
-        description=description,
-        priority=Priority(priority),
-        acceptance_criteria=acceptance_criteria or [],
-    )
-    store.create(task)
-    return {
-        "id": task.id,
-        "title": task.title,
-        "status": task.status.value,
-        "priority": task.priority.value,
-    }
+    return _create_task_impl(title, description, priority, acceptance_criteria, project="")
 
 
-@tool(description="Read full details of a task by its ID.")
-def read_task(task_id: str) -> dict:
-    """Read a task's details including steps, criteria, and progress.
-
-    Args:
-        task_id: The task ID (e.g. 'T-2026-07-07-...').
-
-    Returns:
-        Full task details, or an error if not found.
-    """
+def _read_task_impl(task_id: str, project: str) -> dict:
     store = _store()
     task = store.get(task_id)
-    if task is None:
+    if task is None or (project and task.project != project):
+        # Same "not found" for missing vs. wrong-workspace — a
+        # workspace-scoped session shouldn't be able to confirm a task
+        # even exists in a workspace it isn't allowed to see into.
         return {"error": f"Task {task_id!r} not found"}
 
     return {
@@ -135,20 +141,22 @@ def read_task(task_id: str) -> dict:
     }
 
 
-@tool(description="List tasks, optionally filtered by status. Use this to see what work is pending.")
-def list_tasks(status: str = "") -> dict:
-    """List all tasks, optionally filtered by status.
+@tool(description="Read full details of a task by its ID.")
+def read_task(task_id: str) -> dict:
+    """Read a task's details including steps, criteria, and progress.
 
     Args:
-        status: Optional filter. One of 'draft', 'open', 'planned',
-                'in_progress', 'blocked', 'review', 'done', 'abandoned'.
-                Omit for all tasks.
+        task_id: The task ID (e.g. 'T-2026-07-07-...').
 
     Returns:
-        List of task summaries.
+        Full task details, or an error if not found.
     """
+    return _read_task_impl(task_id, project="")
+
+
+def _list_tasks_impl(status: str, project: str) -> dict:
     store = _store()
-    tasks = store.list(status=status, limit=20)
+    tasks = store.list(status=status, project=project, limit=20)
     return {
         "tasks": [
             {
@@ -161,6 +169,21 @@ def list_tasks(status: str = "") -> dict:
             for t in tasks
         ]
     }
+
+
+@tool(description="List tasks, optionally filtered by status. Use this to see what work is pending.")
+def list_tasks(status: str = "") -> dict:
+    """List all tasks, optionally filtered by status.
+
+    Args:
+        status: Optional filter. One of 'draft', 'open', 'planned',
+                'in_progress', 'blocked', 'review', 'done', 'abandoned'.
+                Omit for all tasks.
+
+    Returns:
+        List of task summaries.
+    """
+    return _list_tasks_impl(status, project="")
 
 
 _UPDATE_STATUS_DESCRIPTION = (
@@ -380,14 +403,14 @@ def add_step(task_id: str, step_title: str) -> dict:
     }
 
 
-# ── session-aware status tools ──────────────────────────────────────────────
+# ── session-aware task tools ────────────────────────────────────────────────
 #
 # update_task_status and log_progress above have no SessionManager
 # reference and call TaskStore directly — an agent using them to move
 # its own task into review/done/abandoned (the normal way an autonomous
 # builder finishes) never triggered the same auto-stop / role-trigger
 # side effects a human changing status through the web PATCH already
-# gets. make_session_aware_status_tools produces session-bound versions
+# gets. make_session_aware_task_tools produces session-bound versions
 # that do, swapped in by SessionManager._build_tools the same way the
 # sandboxed shell/editor tools are (see session/manager.py).
 
@@ -447,16 +470,84 @@ def _schedule_side_effects_if_status_changed(
     )
 
 
-def make_session_aware_status_tools(session_manager: Any) -> list:
-    """update_task_status and log_progress, bound to a SessionManager so
-    a status change they make can trigger auto-stop / role-trigger side
-    effects — see the module note above.
+def make_session_aware_task_tools(session_manager: Any, session_id: str, project_id: str = "") -> list:
+    """create_task, read_task, list_tasks, update_task_status, and
+    log_progress, all bound to this specific session.
+
+    Three things layered on top of the plain (module-level) versions:
+      - workspace scoping: if project_id is set, create/read/list are
+        confined to that workspace. project is deliberately not an
+        agent-facing parameter on any of these (unlike title/status/
+        etc.) — it's closed over instead, the same way review_gate
+        approval is restricted to actor="human" in task/store.py: a
+        value the caller must never be able to override by just asking.
+      - auto-stop / role-trigger side effects on status changes — see
+        the module note above.
+      - task adoption: a session started with no task_id adopts the
+        first task it creates or logs progress/status on, so the goal
+        rail (and Task Detail's "who's working on this") reflect a
+        task an agent picks up mid-session the same as one it was
+        started with. Only the first touch counts — see
+        SessionManager.maybe_adopt_task.
 
     Must be called from the session's own async start() (i.e. on the
     main event loop) so asyncio.get_running_loop() below captures the
     right loop — see _schedule_side_effects_if_status_changed.
     """
     loop = asyncio.get_running_loop()
+    workspace_note = " The task is always created in this session's workspace." if project_id else ""
+    workspace_visibility_note = " Only tasks in this session's workspace are visible." if project_id else ""
+
+    @tool(description=f"Create a new task in the project tracker. Use this to record work that needs to be done.{workspace_note}")
+    def create_task(
+        title: str,
+        description: str = "",
+        priority: str = "medium",
+        acceptance_criteria: list[str] | None = None,
+    ) -> dict:
+        """Create a new task.
+
+        Args:
+            title: Short summary of what needs to be done.
+            description: Longer context about the task.
+            priority: One of 'low', 'medium', 'high', 'urgent'.
+            acceptance_criteria: List of verifiable conditions for completion.
+
+        Returns:
+            The created task with its ID, or an error if title/priority are
+            invalid.
+        """
+        result = _create_task_impl(title, description, priority, acceptance_criteria, project=project_id)
+        if "id" in result:
+            session_manager.maybe_adopt_task(session_id, result["id"])
+        return result
+
+    @tool(description=f"Read full details of a task by its ID.{workspace_visibility_note}")
+    def read_task(task_id: str) -> dict:
+        """Read a task's details including steps, criteria, and progress.
+
+        Args:
+            task_id: The task ID (e.g. 'T-2026-07-07-...').
+
+        Returns:
+            Full task details, or an error if not found (including if the
+            task exists but belongs to a different workspace).
+        """
+        return _read_task_impl(task_id, project=project_id)
+
+    @tool(description=f"List tasks, optionally filtered by status. Use this to see what work is pending.{workspace_visibility_note}")
+    def list_tasks(status: str = "") -> dict:
+        """List tasks, optionally filtered by status.
+
+        Args:
+            status: Optional filter. One of 'draft', 'open', 'planned',
+                    'in_progress', 'blocked', 'review', 'done', 'abandoned'.
+                    Omit for all tasks.
+
+        Returns:
+            List of task summaries.
+        """
+        return _list_tasks_impl(status, project=project_id)
 
     @tool(description=_UPDATE_STATUS_DESCRIPTION)
     def update_task_status(task_id: str, status: str) -> dict:
@@ -464,6 +555,8 @@ def make_session_aware_status_tools(session_manager: Any) -> list:
         old_status = before.status.value if before else ""
         result = _update_task_status_impl(task_id, status)
         _schedule_side_effects_if_status_changed(loop, session_manager, task_id, old_status, result)
+        if "error" not in result:
+            session_manager.maybe_adopt_task(session_id, task_id)
         return result
 
     @tool(description=_LOG_PROGRESS_DESCRIPTION)
@@ -475,9 +568,11 @@ def make_session_aware_status_tools(session_manager: Any) -> list:
         old_status = before.status.value if before else ""
         result = _log_progress_impl(task_id, entry, status, next_step, resolution)
         _schedule_side_effects_if_status_changed(loop, session_manager, task_id, old_status, result)
+        if "error" not in result:
+            session_manager.maybe_adopt_task(session_id, task_id)
         return result
 
-    return [update_task_status, log_progress]
+    return [create_task, read_task, list_tasks, update_task_status, log_progress]
 
 
 # Export list of all task tools for easy passing to Agent.

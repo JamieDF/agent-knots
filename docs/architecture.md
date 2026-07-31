@@ -82,7 +82,8 @@ agent-knots/
 │   ├── hooks.py                   # Token tracking + auto progress logging
 │   ├── events.py                  # Event/EventType/ToolCall wire types
 │   ├── gitutil.py                 # Per-session branch create/resume/teardown
-│   ├── wastebin.py                # Stopped-session tombstones + retention
+│   ├── names.py                   # Human-readable session names ("sleepy-panda")
+│   ├── wastebin.py                # Stopped-session tombstones + history + retention
 │   ├── mcp_servers.py             # MCP server registry (config-only, no client wiring yet)
 │   └── usage.py                   # Token/cost usage ledger
 ├── tests/                         # Python unit tests
@@ -101,8 +102,11 @@ web server, and TUI are all thin front ends over the same `SessionManager`.
 `SessionManager` (`session/manager.py`) owns the set of active `Session`
 objects and is the single thing the CLI, TUI, and web server all talk to.
 Starting a session resolves the model provider, assembles the system prompt
-(mode + task context), and builds a Strands `Agent` with the tool set and a
-`ModeInterventionHandler`.
+(mode + task + workspace context), builds a Strands `Agent` with the tool
+set and a `ModeInterventionHandler`, and assigns a human-readable name
+(`names.py` — "sleepy-panda"-style, unique among currently active
+sessions) that stands in for the raw session id everywhere the UI shows
+an agent.
 
 `SessionRuntime` (`session/runtime.py`) has one implementation:
 
@@ -164,6 +168,17 @@ A persistent work record with structured progress logs
 progress from earlier sessions on the same task into the system prompt
 (`inject_memory`), so a new session picks up where the last one left off.
 
+If a session belongs to a workspace, `create_task`/`read_task`/
+`list_tasks` are swapped for versions bound to that workspace
+(`task/tools.py::make_session_aware_task_tools`) — `project` is closed
+over rather than an agent-facing parameter, so the agent can't create a
+task outside its own workspace, list tasks from another one, or use
+`read_task` to confirm a task in another workspace even exists (it
+returns the same "not found" either way). A session started with no
+task also adopts the first one it creates or logs progress on
+(`SessionManager.maybe_adopt_task`), moving it to `in_progress` the same
+as a session started with a task from the outset.
+
 **Acceptance criteria are enforced, not advisory.** `Task.criteria_met`
 tracks which acceptance criteria have been explicitly marked satisfied via
 `mark_criterion_met`. `TaskStore._validate_transition` refuses to move a
@@ -178,6 +193,12 @@ quietly satisfy the gate.
 A workspace record (`project/models.py`, `project/store.py`) bundling one
 or more repos with project-level settings and a task namespace. Selecting a
 project scopes task listing and session workspace resolution.
+
+A workspace-attached session's system prompt includes a `## Workspace`
+block (`SessionManager._build_workspace_context`) naming the workspace,
+its description, and repository — without this, a session had no way to
+know which workspace it was in at all beyond whatever it could infer
+from files already sitting in its own working directory.
 
 ### Session branches
 
@@ -194,13 +215,23 @@ silently discarded by session teardown.
 ### Wastebin
 
 Every `SessionManager.stop()` call, automatic or manual, writes a
-tombstone record (`wastebin.py`): task, branch, tokens, cost, and whether
-the session's working directory was one of the app's own auto-provisioned
-ones (only those get cleaned up on delete — a real repo path never does).
-A session auto-stops once its task reaches `review`, `done`, or
+tombstone record (`wastebin.py`): task, branch, tokens, cost, the
+session's full serialized event history, and whether the session's
+working directory was one of the app's own auto-provisioned ones (only
+those get cleaned up on delete — a real repo path never does). A
+session auto-stops once its task reaches `review`, `done`, or
 `abandoned`. Wastebin entries are individually deletable and swept by a
 configurable retention setting; deleting an entry never force-deletes a
 branch a newer entry or a still-active session legitimately references.
+
+The persisted history is more than a cleanup record — `GET
+/api/agent/{id}` and the SSE events endpoint both fall back to the
+matching wastebin entry when `SessionManager.get()` returns nothing
+live, replaying the stored history (plus a synthetic `ended` event if
+one wasn't already broadcast before the tombstone was written) instead
+of 404ing. A stopped session can be reopened from Task Detail's "Past
+sessions" list and its full transcript reviewed read-only through the
+same Agent Thread UI a live session uses.
 
 ### Multi-agent
 
@@ -427,8 +458,9 @@ container-backed runtime.
 ### Model providers
 
 Anything OpenAI-compatible works out of the box via `provider.py`.
-MiniMax, OpenAI, Anthropic, and Ollama are all just base-URL + API-key
-combinations; no per-provider code is needed unless you want a non-OpenAI-
+MiniMax, OpenAI, Anthropic, Ollama, and DeepSeek are all just base-URL +
+API-key combinations (`frontend/src/lib/providerPresets.ts` lists the
+presets); no per-provider code is needed unless you want a non-OpenAI-
 compatible SDK.
 
 ## What's not in scope (yet)

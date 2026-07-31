@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  fetchTask, updateTask, deleteTask, toggleCriterion, createSession, fetchTaskAgents, answerAgent,
-  type TaskDetail as TDetail, type AgentInfo,
+  fetchTask, updateTask, deleteTask, toggleCriterion, createSession, fetchTaskAgents, fetchTaskHistory, answerAgent,
+  type TaskDetail as TDetail, type AgentInfo, type PastSession,
 } from '../lib/api'
 import { useWorkspaceScope } from '../lib/workspaceContext'
 import { statusStyle } from '../lib/statusColors'
@@ -29,6 +29,7 @@ function TaskDetail() {
   const [loading, setLoading] = useState(true)
   const [showEdit, setShowEdit] = useState(false)
   const [agents, setAgents] = useState<AgentInfo[]>([])
+  const [pastSessions, setPastSessions] = useState<PastSession[]>([])
   const [related, setRelated] = useState<TDetail[]>([])
   const [error, setError] = useState('')
 
@@ -38,6 +39,7 @@ function TaskDetail() {
       setTask(t)
       setLoading(false)
       fetchTaskAgents(id).then(r => setAgents(r.agents)).catch(() => setAgents([]))
+      fetchTaskHistory(id).then(r => setPastSessions(r.sessions)).catch(() => setPastSessions([]))
       if (t.dependencies.length > 0) {
         Promise.all(t.dependencies.map(d => fetchTask(d).catch(() => null)))
           .then(rs => setRelated(rs.filter((r): r is TDetail => r !== null)))
@@ -47,7 +49,15 @@ function TaskDetail() {
     }).catch(() => setLoading(false))
   }, [id])
 
-  useEffect(() => { load() }, [load])
+  // Poll so progress/status an agent writes while this page is open
+  // shows up without a manual reload — same 5s cadence as the
+  // Board/List task views (useTaskList.ts), which this page had no
+  // equivalent of at all before.
+  useEffect(() => {
+    load()
+    const interval = setInterval(load, 5000)
+    return () => clearInterval(interval)
+  }, [load])
 
   const handleToggleCriterion = async (criterion: string, met: boolean) => {
     if (!id) return
@@ -89,6 +99,11 @@ function TaskDetail() {
 
   const stepsDone = task.steps.filter(s => s.status === 'done').length
   const metSet = new Set(task.criteria_met)
+  // task.assigned_to is never cleared when a session stops, so it can
+  // point at a dead session — agents (fetched live via
+  // fetchTaskAgents) is the accurate signal for whether someone's
+  // actually still on this task right now.
+  const activeWriter = agents.find(a => !a.advisory)
 
   const stageIndex = LIFECYCLE.indexOf(task.status === 'blocked' ? 'in_progress' : task.status === 'planned' ? 'open' : task.status)
 
@@ -102,12 +117,12 @@ function TaskDetail() {
         <Chip color={priorityColor(task.priority)} soft>{task.priority}</Chip>
         {task.project && <Chip mono>{task.project}</Chip>}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          {task.assigned_to ? (
+          {activeWriter ? (
             <button
-              onClick={() => navigate(`/agent/${task.assigned_to}`)}
+              onClick={() => navigate(`/agent/${activeWriter.id}`)}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--ok-soft)', color: 'var(--ok)' }}
             >
-              ● Agent active — open thread →
+              ● Watch {activeWriter.name} →
             </button>
           ) : (
             <>
@@ -290,7 +305,7 @@ function TaskDetail() {
               any read-only advisory agents (e.g. a reviewer role) sharing
               its working tree. Writer sorts first. */}
           {[...agents].sort((a, b) => Number(a.advisory) - Number(b.advisory)).map(a => (
-            <SideBlock key={a.id} label={a.advisory ? `🛡 Advisory · ${a.role || 'agent'}` : 'Session'}>
+            <SideBlock key={a.id} label={a.advisory ? `🛡 ${a.name} · ${a.role || 'agent'}` : a.name}>
               <Row l="Mode" v={a.mode} />
               {a.branch && <Row l="Branch" v={a.branch} mono />}
               <Row l="Tokens" v={a.tokens_used.toLocaleString()} />
@@ -303,6 +318,27 @@ function TaskDetail() {
               </button>
             </SideBlock>
           ))}
+          {/* Finished sessions — stopped, but their full transcript
+              survives in the wastebin and can still be reopened
+              read-only via /agent/{id} (routes/agents.py falls back to
+              it once the session's no longer live). */}
+          {pastSessions.length > 0 && (
+            <SideBlock label="Past sessions">
+              {pastSessions.map(s => (
+                <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
+                  <span style={{ fontSize: 11.5, color: 'var(--ink2)', flex: 1 }}>
+                    {s.advisory ? `🛡 ${s.role || 'advisory'}` : 'writer'} · {timeAgo(s.stopped_at)}
+                  </span>
+                  <button
+                    onClick={() => navigate(`/agent/${s.id}`)}
+                    style={{ fontSize: 11, fontWeight: 600, color: 'var(--acc)' }}
+                  >
+                    Watch {s.name} →
+                  </button>
+                </div>
+              ))}
+            </SideBlock>
+          )}
           <SideBlock label="Tools used">
             {toolCounts(task.progress).length === 0 && <span style={{ fontSize: 12, color: 'var(--mut)' }}>None yet</span>}
             {toolCounts(task.progress).map(([name, count]) => (
