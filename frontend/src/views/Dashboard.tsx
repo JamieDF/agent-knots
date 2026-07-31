@@ -162,7 +162,7 @@ function WorkspaceCluster({ workspace, agents, tasks, onChanged, onNewSession, a
           running===true at this exact instant. RunningAgentCard's body
           strip already distinguishes "working…" vs "idle". */}
       {agents.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginBottom: 16 }}>
           {agents.map(agent => (
             <RunningAgentCard key={agent.id} agent={agent} task={tasks.find(t => t.id === agent.task_id)} onDeleted={onChanged} />
           ))}
@@ -283,18 +283,24 @@ function RunningAgentCard({ agent, task, onDeleted }: { agent: AgentInfo; task?:
   }
 
   return (
-    <Card>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--ok)' }} />
-        <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+    // minWidth: 0 — a grid/flex item's default min-width is its content's
+    // intrinsic size, not 0, so a long unbroken string (a file path, a
+    // shell command in last_activity) forces the track wider instead of
+    // respecting the ellipsis truncation below, busting the dashed
+    // workspace container. maxWidth caps how wide a lone card grows on
+    // a wide screen with few agents.
+    <Card style={{ minWidth: 0, maxWidth: 420, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, minWidth: 0 }}>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--ok)', flexShrink: 0 }} />
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {task?.title || agent.name}
         </span>
         {/* When a task title is the headline, agent.name still shows as
             a small tag — the human-readable name is what's worth
             recognizing an agent by across cards, not its raw hex id.
             No task means the title above is already agent.name. */}
-        {task && <span style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>{agent.name}</span>}
-        {task && <span style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>{task.progress_count}/{task.steps_count || task.criteria_count}</span>}
+        {task && <span style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--mut)', flexShrink: 0 }}>{agent.name}</span>}
+        {task && <span style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--mut)', flexShrink: 0 }}>{task.progress_count}/{task.steps_count || task.criteria_count}</span>}
       </div>
 
       {/* Pending question — card-level answer UI */}

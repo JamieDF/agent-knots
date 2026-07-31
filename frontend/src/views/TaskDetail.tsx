@@ -122,7 +122,7 @@ function TaskDetail() {
               onClick={() => navigate(`/agent/${activeWriter.id}`)}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--ok-soft)', color: 'var(--ok)' }}
             >
-              ● Watch — agent active →
+              ● Watch {activeWriter.name} →
             </button>
           ) : (
             <>
@@ -327,13 +327,13 @@ function TaskDetail() {
               {pastSessions.map(s => (
                 <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
                   <span style={{ fontSize: 11.5, color: 'var(--ink2)', flex: 1 }}>
-                    {s.advisory ? `🛡 ${s.name} · ${s.role || 'advisory'}` : s.name} · {timeAgo(s.stopped_at)}
+                    {s.advisory ? `🛡 ${s.role || 'advisory'}` : 'writer'} · {timeAgo(s.stopped_at)}
                   </span>
                   <button
                     onClick={() => navigate(`/agent/${s.id}`)}
                     style={{ fontSize: 11, fontWeight: 600, color: 'var(--acc)' }}
                   >
-                    Watch replay →
+                    Watch {s.name} →
                   </button>
                 </div>
               ))}
