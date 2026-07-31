@@ -20,7 +20,7 @@
   never actually worked — deleted rather than fixed, see the full
   codebase review item below. Real process isolation is a
   container-runtime roadmap item instead.)
-- [x] Model providers — MiniMax, OpenAI, Anthropic, Ollama, custom. Selectable in settings
+- [x] Model providers — MiniMax, OpenAI, Anthropic, Ollama, DeepSeek, custom. Selectable in settings
 - [x] Autonomous toggle — Single on/off switch replacing Assume/Relinquish:
   on lets the agent self-direct from its task, off interrupts whatever's
   running and pauses it for back-and-forth without blocking tool use
@@ -40,8 +40,8 @@
 - [x] Agent Thread chat UI — Left/right chat bubbles, markdown rendering
   of agent responses, replay scrubber over the session's event history
 - [x] Install script — `./install.sh`: installs uv, syncs deps, builds frontend, installs the `agent-knots` command globally
-- [x] Playwright e2e tests — ~74 browser tests covering full UI flows
-- [x] Python unit tests — 350+ tests across vault, session, task, web, sandbox, auth
+- [x] Playwright e2e tests — ~76 browser tests covering full UI flows
+- [x] Python unit tests — 525+ tests across vault, session, task, web, sandbox, auth
 - [x] Task dependencies — Tasks can depend on other tasks; blocked from
   starting (in the UI and via a `POST /api/sessions` pre-flight check)
   until every dependency is done
@@ -69,13 +69,52 @@
   fixed (CLI `--assign` silently unassigning, delegate sub-threads never
   getting the event-accumulation fix, tool results always rendering as
   success), `SubprocessRuntime` deleted rather than fixed (see below)
+- [x] Task-scoped session branches — a task's git branch is reused across
+  resumed sessions instead of one-off per session; auto-stop on
+  review/done/abandoned; every stop leaves a wastebin tombstone
+- [x] Vault injection for agents — a task's required credentials resolve
+  into shell env vars for the agent's tool calls; the raw value never
+  enters the agent's own context
+- [x] Multi-agent basics — an advisory role (e.g. a read-only reviewer)
+  can share a task alongside the main agent, and an agent can delegate a
+  sub-task to its own sub-agent via `delegate_task` (a separate task and
+  session, not shared editing of the same one)
+- [x] Workspace-scoped agent tasks — a workspace-attached session's
+  system prompt tells it which workspace it's in, and `create_task`,
+  `read_task`, and `list_tasks` are all confined to that workspace; an
+  agent can't create, read, or discover a task in a different one
+  (`project` is closed over, not agent-supplied)
+- [x] Session history persistence — a stopped session's full event
+  transcript is kept in its wastebin tombstone instead of vanishing;
+  reopening it from Task Detail's "Past sessions" list replays the whole
+  conversation read-only via the same SSE path a live session uses
+- [x] Human-readable session names — "sleepy-panda"-style names, unique
+  among currently active sessions, shown everywhere an agent appears
+  instead of its raw hex id
+- [x] Task-level auto-adoption — a session started with no task adopts
+  the first task it creates or logs progress on, moving it to
+  in_progress the same as a session started with a task from the outset
+  (previously only fired from 'open', missing the common case of a
+  freshly created task defaulting to 'draft')
+- [x] Duplicate-agent prevention — starting a session on a task that
+  already has an active writer is refused with a clear error instead of
+  two agents silently fighting over the same branch/working tree
+- [x] Live Task Detail — polls every 5s so progress an agent writes
+  while the page is open shows up without a manual reload; Dashboard
+  cards now show a live summary of the agent's most recent action
+  instead of just a static "working…"/"paused" word, and the "paused"
+  label no longer contradicts an agent that's actively mid-turn
 
 ## Next
 
 - [ ] Container runtime — Podman/Docker isolation with full filesystem + network sandboxing
 - [ ] Git worktree integration — Auto-create worktrees per session on workspace repos
-- [ ] Multi-agent orchestration — Run multiple agents on the same task, merge results
-- [ ] Vault injection for agents — Agents use vault credentials without seeing raw values
+- [ ] Concurrent multi-writer collaboration — more than one agent actively
+  editing the same task/branch at once, with conflict/result merging.
+  Today only one writer session per task is active at a time (see
+  "Duplicate-agent prevention" above); a second writer on the same repo
+  also just skips branching rather than fighting over the checked-out
+  working tree (`SessionManager._repo_writers`)
 - [ ] Syntax-highlighted diffs — Review screen colors added/removed lines
   today but doesn't syntax-highlight by language
 - [ ] Per-provider cost accuracy — Token counts are real; cost is still a

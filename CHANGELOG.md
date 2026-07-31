@@ -4,6 +4,90 @@ All notable changes to agent-knots are documented here.
 
 ## [Unreleased]
 
+### Added
+- **DeepSeek provider preset.** Routes through the same OpenAI-compatible
+  client every other provider already uses, so no backend changes were
+  needed — just a preset (`deepseek-chat`, `https://api.deepseek.com/v1`)
+  in the Setup Wizard and Settings' "Add provider" dropdown. Verified
+  live end to end: streaming, tool calls, task updates.
+- **Workspace-scoped agent tasks.** A workspace-attached session's system
+  prompt now tells it which workspace it's in (name, description,
+  repository); previously an agent had no way to know at all beyond
+  whatever it could infer from files already sitting in its working
+  directory. `create_task`, `read_task`, and `list_tasks` are now bound
+  to the session's workspace — `project` is closed over, not an
+  agent-facing parameter, so a workspace-scoped agent structurally can't
+  create, read, or discover (via listing) a task in a different
+  workspace, even if told to. `read_task` on a task in another workspace
+  returns the same "not found" as a genuinely missing id, so it can't be
+  used to confirm another workspace's task even exists.
+- **Session history persistence and reopening.** A stopped session's
+  full event history now gets written into its wastebin tombstone
+  instead of vanishing the moment it stops — `GET /api/agent/{id}` and
+  the SSE events endpoint both fall back to it when the session is no
+  longer live, so a finished session can be reopened and its full
+  transcript replayed read-only, not just while it's running. Task
+  Detail has a new "Past sessions" list linking to these.
+- **Human-readable session names.** Sessions get an Ubuntu-release-style
+  "adjective-animal" name (e.g. "sleepy-panda"), generated at start and
+  unique among currently active sessions. Replaces the raw hex session
+  id as the primary label everywhere an agent shows up: Dashboard cards,
+  the thread header, Task Detail's session blocks and Past Sessions
+  list, the notification bell, and the Settings Wastebin list.
+- **Live Task Detail polling.** The Task Detail page never polled at
+  all — progress an agent wrote while the page was open only showed up
+  after a manual reload, unlike the Board/List task views which already
+  polled every 5s. Task Detail now does too.
+- **Dashboard live activity.** Agent cards show a short summary of the
+  agent's most recent action (last message/thinking excerpt, or a
+  description of the last tool call), refreshed on the existing 3s
+  poll, instead of a bare "working…"/"idle" word with no content.
+
+### Fixed
+- **Chat history lost on navigating away and back.** The backend kept
+  only the last 500 raw SSE events per session, but a single tool call
+  alone gets re-broadcast on every incremental arg-delta as it streams
+  in — confirmed live, one `log_progress` call alone produced 50+ raw
+  events — so a real session with a handful of tool calls blew past 500
+  within a turn or two, silently evicting the oldest events from the
+  ring buffer. Raised the backend cap (500 → 20000) and the frontend's
+  rendered-item cap (300 → 3000).
+- **Files tab and Command Log tab silently empty for every real
+  session.** Every session now gets a sandboxed working directory
+  unconditionally, so the tools actually in play are `shell_tool`/
+  `editor_tool` (sandbox_tools.py) — but these two tabs (and the new
+  "last activity" summary above) were checking for the old plain names
+  (`shell`/`editor`) and argument shapes from the richer strands-native
+  tools, which no live session's tool calls have matched in a long
+  time. Fixed to match reality.
+- **Tasks not moving to "in progress."** The existing auto-transition
+  only fired when a task's status was already 'open', but a freshly
+  created task defaults to 'draft' — the common case of starting an
+  agent straight on a new task never visibly showed it as being worked
+  on at all. Broadened to fire from draft/open/planned/blocked.
+- **A second agent could start on a task already being worked.**
+  `POST /api/sessions` now refuses with a clear error if a non-advisory
+  session is already active on the given task, instead of two agents
+  silently fighting over the same branch and working tree.
+- **Task Detail's Start buttons stayed visible even with an agent
+  already on the task.** `task.assigned_to` is never cleared when a
+  session stops, so it was already unreliable as a liveness signal.
+  Switched to the page's own live-fetched agent list, and the resulting
+  "Watch" button now names the actual agent doing (or who did) the
+  work instead of generic text.
+- **Dashboard agent cards overflowing their workspace container.** A
+  fixed `1fr 1fr` grid plus a plain-div `Card` with no min-width/
+  overflow handling meant a long unbroken string (a file path or shell
+  command in the new "last activity" summary) forced the grid track
+  wider instead of respecting its ellipsis truncation. Switched to a
+  responsive `auto-fit` grid with a min/max card size and fixed the
+  min-width trap at both the grid-item and inner flex-row level.
+  Verified with real screenshots at 1280px and 700px.
+- **Taskless session picking up a task didn't update the goal rail.**
+  A session started with no task now adopts the first task it creates
+  or logs progress/status on, the same as one started with a task from
+  the outset.
+
 ## [0.2.0] - 2026-07-28
 
 ### Fixed
