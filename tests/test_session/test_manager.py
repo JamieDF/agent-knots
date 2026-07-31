@@ -1026,7 +1026,7 @@ class TestAgentToolTriggeredLifecycle:
     """update_task_status/log_progress, called by the agent itself, must
     trigger the same auto-stop / role-trigger side effects a human
     changing status via the web PATCH already gets — see
-    task/tools.py's make_session_aware_status_tools and
+    task/tools.py's make_session_aware_task_tools and
     task/lifecycle.py. Two things had to be gotten right, both only
     caught by testing against a real model (see
     test_status_change_side_effects_work_when_tool_runs_off_thread

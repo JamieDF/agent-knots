@@ -7,7 +7,7 @@ behavior. Previously only the PATCH route did — an agent marking its
 own task review/done/abandoned via update_task_status/log_progress
 (the normal way an autonomous builder actually finishes) never fired
 either, since those tools had no SessionManager reference and called
-TaskStore directly. See task/tools.py's make_session_aware_status_tools
+TaskStore directly. See task/tools.py's make_session_aware_task_tools
 for how the agent-tool path now reaches these.
 """
 

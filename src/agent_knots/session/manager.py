@@ -131,9 +131,20 @@ class Session:
     # bounded ring buffer replayed to new subscribers so a viewer opening
     # the stream late still sees prior events (and is the seed for a
     # future replay scrubber).
+    #
+    # 500 was too small in practice: a single tool call is re-broadcast
+    # on every incremental chunk as its args stream in (confirmed live —
+    # one log_progress call alone produced 50+ raw events), so a real
+    # session with a handful of tool calls blows past 500 within a turn
+    # or two. The oldest events then silently fall off the ring buffer,
+    # which looked like "navigate away and back and the earlier part of
+    # the conversation is just gone" even though nothing was actually
+    # broken in the replay path itself. 20000 is generous enough that no
+    # realistic session hits it, while still bounding worst-case memory
+    # for a truly runaway agent.
     _subscribers: list[asyncio.Queue[Event]] = field(default_factory=list, repr=False)
     _history: list[Event] = field(default_factory=list, repr=False)
-    _history_limit: int = field(default=500, repr=False)
+    _history_limit: int = field(default=20000, repr=False)
     _agent: Any = field(default=None, repr=False)       # strands.Agent
     _task: asyncio.Task[Any] | None = field(default=None, repr=False)
     # Set by cancel() — tells _run_agent's cancellation handler whether to
@@ -470,6 +481,8 @@ class SessionManager:
                 and session.working_dir == str(session_workdir(session.id)),
             )
 
+            from agent_knots.events import serialize_event
+
             WastebinStore(wastebin_dir()).add(WastebinEntry(
                 session_id=session.id,
                 task_id=session.task_id,
@@ -481,10 +494,12 @@ class SessionManager:
                 is_auto_workdir=is_auto_workdir,
                 role=session.role,
                 advisory=session.advisory,
+                mode=session.mode,
                 model=session.model,
                 tokens_used=session.tokens_used,
                 cost_usd=session.cost_usd,
                 started_at=session.started_at,
+                history=[serialize_event(e) for e in session._history],
             ))
         except Exception:
             pass
@@ -949,22 +964,41 @@ class SessionManager:
     # kind of ordering-sensitive code not worth pulling into a helper
     # that could accidentally reorder it.
 
+    # Statuses a writer session claiming a task auto-transitions out of.
+    # Not just "open" — a freshly created task defaults to 'draft'
+    # (task/models.py), so restricting this to 'open' meant a task
+    # someone started an agent on straight from draft (the common case)
+    # never visibly showed as being worked at all. blocked is included
+    # too: an agent resuming after answering a blocker is very much
+    # back to in_progress, not still blocked.
+    _AUTO_START_STATUSES = ("draft", "open", "planned", "blocked")
+
+    @classmethod
+    def _claim_task(cls, store: Any, task: Any, session_id: str) -> None:
+        """A writer session taking on a task — starting with it, or
+        adopting it mid-session via maybe_adopt_task — always assigns
+        it and moves it to in_progress unless it's already past that
+        point (in_progress/review/done/abandoned)."""
+        store.assign(task.id, session_id)
+        if task.status.value in cls._AUTO_START_STATUSES:
+            from agent_knots.task.models import TaskStatus
+            store.set_status(task.id, TaskStatus("in_progress"))
+
     def _resolve_task_context(
         self, session_id: str, task_id: str | None, advisory: bool = False,
     ) -> str:
-        """Fetch the task's prompt context and, if found, assign it to
-        this session and auto-transition it out of 'open' — a task
-        should never sit assigned-to-a-session but still 'open'.
+        """Fetch the task's prompt context and, if found, claim it for
+        this session — a task should never sit assigned-to-a-session but
+        still sitting in a not-yet-started status.
 
-        An advisory session skips both: assign() is last-writer-wins, so
+        An advisory session skips this: assign() is last-writer-wins, so
         an advisory reviewer claiming assigned_to would knock the actual
         writer off the task the moment it starts, and it has no business
-        forcing an 'open' task into 'in_progress' just by observing it.
+        forcing a task into 'in_progress' just by observing it.
         """
         if not task_id:
             return ""
         from agent_knots.task.store import TaskStore
-        from agent_knots.task.models import TaskStatus
         from agent_knots.config import tasks_dir as _tasks_dir
 
         store = TaskStore(_tasks_dir())
@@ -972,10 +1006,33 @@ class SessionManager:
         if not task:
             return ""
         if not advisory:
-            store.assign(task_id, session_id)
-            if task.status.value == "open":
-                store.set_status(task_id, TaskStatus("in_progress"))
+            self._claim_task(store, task, session_id)
         return _build_task_prompt(task)
+
+    def maybe_adopt_task(self, session_id: str, task_id: str) -> None:
+        """A session started with no task_id adopts the first task it
+        creates or logs progress/status on — so the goal rail (and Task
+        Detail's "who's working on this") reflect a task an agent picks
+        up mid-session the same as one it was started with.
+
+        Only fires once: a session already tied to a task keeps that
+        task even if it later touches a second one, rather than the
+        goal rail silently swapping out from under whoever's watching.
+        Advisory sessions are excluded for the same reason
+        _resolve_task_context excludes them from assign() — an advisory
+        reviewer touching a task has no business claiming it.
+        """
+        session = self._sessions.get(session_id)
+        if session is None or session.task_id or session.advisory:
+            return
+        session.task_id = task_id
+        from agent_knots.task.store import TaskStore
+        from agent_knots.config import tasks_dir as _tasks_dir
+
+        store = TaskStore(_tasks_dir())
+        task = store.get(task_id)
+        if task:
+            self._claim_task(store, task, session_id)
 
     @staticmethod
     def _build_workspace_context(project_id: str | None) -> str:
@@ -1208,23 +1265,17 @@ class SessionManager:
         registry = ToolRegistry()
         all_tools = list(tools or []) + registry.list_enabled(cwd=resolved_working_dir)
 
-        # update_task_status/log_progress, if enabled, get swapped for
-        # session-aware versions — same by-name-swap technique as the
-        # sandboxed shell/editor tools below, so a status change made
-        # through them can trigger the same auto-stop / role-trigger
-        # side effects the web PATCH route already gets. Without this,
-        # an agent marking its own task done never triggered either.
-        from agent_knots.task.tools import make_session_aware_status_tools
-        session_aware = {t.__name__: t for t in make_session_aware_status_tools(self)}
-        # create_task/read_task/list_tasks, if this session belongs to a
-        # workspace, get swapped the same way — project is closed over
-        # rather than agent-supplied, so this session can't create,
-        # read, or discover-via-listing a task outside the workspace
-        # it's actually running in.
-        if project_id:
-            from agent_knots.task.tools import make_workspace_scoped_task_tools
-            for t in make_workspace_scoped_task_tools(project_id):
-                session_aware[t.__name__] = t
+        # create_task/read_task/list_tasks/update_task_status/log_progress,
+        # if enabled, get swapped for session-aware versions — same
+        # by-name-swap technique as the sandboxed shell/editor tools
+        # below. Handles workspace scoping, auto-stop/role-trigger side
+        # effects on status changes, and task adoption for a taskless
+        # session — see make_session_aware_task_tools's docstring.
+        from agent_knots.task.tools import make_session_aware_task_tools
+        session_aware = {
+            t.__name__: t
+            for t in make_session_aware_task_tools(self, session_id, project_id or "")
+        }
         all_tools = [session_aware.get(getattr(t, "__name__", ""), t) for t in all_tools]
 
         from agent_knots.session.features import make_delegate_tool, make_ask_user_tool

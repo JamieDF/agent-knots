@@ -38,11 +38,17 @@ class WastebinEntry:
     is_auto_workdir: bool = False  # working_dir == config.session_workdir(id) — ours to rmtree
     role: str = ""
     advisory: bool = False
+    mode: str = ""
     model: str = ""
     tokens_used: int = 0
     cost_usd: float = 0.0
     started_at: float = 0.0
     stopped_at: float = field(default_factory=time.time)
+    # The session's full event history (serialize_event() dicts), so a
+    # stopped session can still be reopened and its transcript reviewed
+    # afterward instead of vanishing the moment it stops — see
+    # routes/agents.py's fallback in get_agent()/agent_events().
+    history: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _entry_from_dict(d: dict[str, Any]) -> WastebinEntry:
@@ -57,11 +63,13 @@ def _entry_from_dict(d: dict[str, Any]) -> WastebinEntry:
         is_auto_workdir=d.get("is_auto_workdir", False),
         role=d.get("role", ""),
         advisory=d.get("advisory", False),
+        mode=d.get("mode", ""),
         model=d.get("model", ""),
         tokens_used=d.get("tokens_used", 0),
         cost_usd=d.get("cost_usd", 0.0),
         started_at=d.get("started_at", 0.0),
         stopped_at=d.get("stopped_at", 0.0),
+        history=d.get("history", []),
     )
 
 

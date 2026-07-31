@@ -66,7 +66,14 @@ function TaskDialog({ open, onClose, onSaved, task, initialStatus }: Props) {
     }
     setError('')
     fetchTasks({ limit: 200 }).then(d => setCandidates(d.tasks)).catch(() => {})
-  }, [open, task, initialStatus])
+    // task?.id, not task itself: the parent (TaskDetail) polls and hands
+    // down a freshly-fetched task object every few seconds even while
+    // this dialog sits open — keying on the whole object would re-seed
+    // every field from the server on each poll tick and silently wipe
+    // out whatever the user was mid-typing. Re-seed only when a
+    // genuinely different task is loaded in, or the dialog reopens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, task?.id, initialStatus])
 
   const titleFor = (id: string) => candidates.find(c => c.id === id)?.title || id
   const dependencyOptions = candidates.filter(c => c.id !== task?.id && !dependencies.includes(c.id))

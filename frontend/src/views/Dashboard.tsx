@@ -322,13 +322,19 @@ function RunningAgentCard({ agent, task, onDeleted }: { agent: AgentInfo; task?:
           </div>
         </div>
       ) : (
-        <div style={{ background: 'var(--card2)', borderRadius: 8, padding: '6px 8px', marginBottom: 8, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>
-          {agent.running ? 'working…' : 'idle'}
+        <div style={{ background: 'var(--card2)', borderRadius: 8, padding: '6px 8px', marginBottom: 8, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--mut)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {agent.last_activity || (agent.running ? 'working…' : 'idle')}
         </div>
       )}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, color: 'var(--mut)' }}>
-        <span style={{ color: agent.mode === 'assistant' ? 'var(--warn-ink)' : 'var(--ok)', fontWeight: 700 }}>{agent.mode === 'assistant' ? 'paused' : 'autonomous'}</span>
+        {/* mode alone used to drive this label, so a paused (assistant
+            mode) agent actually running a turn — sending it a message
+            starts one without changing its mode — showed "paused" right
+            next to "working…" above, contradicting itself. */}
+        <span style={{ color: agent.mode === 'assistant' && !agent.running ? 'var(--warn-ink)' : 'var(--ok)', fontWeight: 700 }}>
+          {agent.mode === 'assistant' ? (agent.running ? 'responding…' : 'paused') : 'autonomous'}
+        </span>
         <span>{agent.tokens_used.toLocaleString()} tok</span>
         <button onClick={() => deleteAgent(agent.id).then(onDeleted)} style={{ color: 'var(--mut)' }}>✕</button>
         <button onClick={() => navigate(`/agent/${agent.id}`)} style={{ marginLeft: 'auto', color: 'var(--acc)', fontWeight: 600 }}>Open →</button>

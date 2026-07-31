@@ -403,14 +403,14 @@ def add_step(task_id: str, step_title: str) -> dict:
     }
 
 
-# ── session-aware status tools ──────────────────────────────────────────────
+# ── session-aware task tools ────────────────────────────────────────────────
 #
 # update_task_status and log_progress above have no SessionManager
 # reference and call TaskStore directly — an agent using them to move
 # its own task into review/done/abandoned (the normal way an autonomous
 # builder finishes) never triggered the same auto-stop / role-trigger
 # side effects a human changing status through the web PATCH already
-# gets. make_session_aware_status_tools produces session-bound versions
+# gets. make_session_aware_task_tools produces session-bound versions
 # that do, swapped in by SessionManager._build_tools the same way the
 # sandboxed shell/editor tools are (see session/manager.py).
 
@@ -470,27 +470,42 @@ def _schedule_side_effects_if_status_changed(
     )
 
 
-def make_workspace_scoped_task_tools(project_id: str) -> list:
-    """create_task, read_task, and list_tasks bound to the session's
-    workspace, so a workspace-attached session can't create, read, or
-    discover-via-listing a task outside the workspace it's actually
-    running in.
+def make_session_aware_task_tools(session_manager: Any, session_id: str, project_id: str = "") -> list:
+    """create_task, read_task, list_tasks, update_task_status, and
+    log_progress, all bound to this specific session.
 
-    project is deliberately not an agent-facing parameter on any of
-    these (unlike title/status/etc.) — it's closed over instead, the
-    same way review_gate approval is restricted to actor="human" in
-    task/store.py: a value the caller must never be able to override by
-    just asking.
+    Three things layered on top of the plain (module-level) versions:
+      - workspace scoping: if project_id is set, create/read/list are
+        confined to that workspace. project is deliberately not an
+        agent-facing parameter on any of these (unlike title/status/
+        etc.) — it's closed over instead, the same way review_gate
+        approval is restricted to actor="human" in task/store.py: a
+        value the caller must never be able to override by just asking.
+      - auto-stop / role-trigger side effects on status changes — see
+        the module note above.
+      - task adoption: a session started with no task_id adopts the
+        first task it creates or logs progress/status on, so the goal
+        rail (and Task Detail's "who's working on this") reflect a
+        task an agent picks up mid-session the same as one it was
+        started with. Only the first touch counts — see
+        SessionManager.maybe_adopt_task.
+
+    Must be called from the session's own async start() (i.e. on the
+    main event loop) so asyncio.get_running_loop() below captures the
+    right loop — see _schedule_side_effects_if_status_changed.
     """
+    loop = asyncio.get_running_loop()
+    workspace_note = " The task is always created in this session's workspace." if project_id else ""
+    workspace_visibility_note = " Only tasks in this session's workspace are visible." if project_id else ""
 
-    @tool(description="Create a new task in the project tracker. Use this to record work that needs to be done. The task is always created in this session's workspace.")
+    @tool(description=f"Create a new task in the project tracker. Use this to record work that needs to be done.{workspace_note}")
     def create_task(
         title: str,
         description: str = "",
         priority: str = "medium",
         acceptance_criteria: list[str] | None = None,
     ) -> dict:
-        """Create a new task in this session's workspace.
+        """Create a new task.
 
         Args:
             title: Short summary of what needs to be done.
@@ -502,9 +517,12 @@ def make_workspace_scoped_task_tools(project_id: str) -> list:
             The created task with its ID, or an error if title/priority are
             invalid.
         """
-        return _create_task_impl(title, description, priority, acceptance_criteria, project=project_id)
+        result = _create_task_impl(title, description, priority, acceptance_criteria, project=project_id)
+        if "id" in result:
+            session_manager.maybe_adopt_task(session_id, result["id"])
+        return result
 
-    @tool(description="Read full details of a task by its ID. Only tasks in this session's workspace are visible.")
+    @tool(description=f"Read full details of a task by its ID.{workspace_visibility_note}")
     def read_task(task_id: str) -> dict:
         """Read a task's details including steps, criteria, and progress.
 
@@ -517,9 +535,9 @@ def make_workspace_scoped_task_tools(project_id: str) -> list:
         """
         return _read_task_impl(task_id, project=project_id)
 
-    @tool(description="List tasks in this session's workspace, optionally filtered by status. Use this to see what work is pending.")
+    @tool(description=f"List tasks, optionally filtered by status. Use this to see what work is pending.{workspace_visibility_note}")
     def list_tasks(status: str = "") -> dict:
-        """List tasks in this session's workspace, optionally filtered by status.
+        """List tasks, optionally filtered by status.
 
         Args:
             status: Optional filter. One of 'draft', 'open', 'planned',
@@ -527,23 +545,9 @@ def make_workspace_scoped_task_tools(project_id: str) -> list:
                     Omit for all tasks.
 
         Returns:
-            List of task summaries, scoped to this session's workspace.
+            List of task summaries.
         """
         return _list_tasks_impl(status, project=project_id)
-
-    return [create_task, read_task, list_tasks]
-
-
-def make_session_aware_status_tools(session_manager: Any) -> list:
-    """update_task_status and log_progress, bound to a SessionManager so
-    a status change they make can trigger auto-stop / role-trigger side
-    effects — see the module note above.
-
-    Must be called from the session's own async start() (i.e. on the
-    main event loop) so asyncio.get_running_loop() below captures the
-    right loop — see _schedule_side_effects_if_status_changed.
-    """
-    loop = asyncio.get_running_loop()
 
     @tool(description=_UPDATE_STATUS_DESCRIPTION)
     def update_task_status(task_id: str, status: str) -> dict:
@@ -551,6 +555,8 @@ def make_session_aware_status_tools(session_manager: Any) -> list:
         old_status = before.status.value if before else ""
         result = _update_task_status_impl(task_id, status)
         _schedule_side_effects_if_status_changed(loop, session_manager, task_id, old_status, result)
+        if "error" not in result:
+            session_manager.maybe_adopt_task(session_id, task_id)
         return result
 
     @tool(description=_LOG_PROGRESS_DESCRIPTION)
@@ -562,9 +568,11 @@ def make_session_aware_status_tools(session_manager: Any) -> list:
         old_status = before.status.value if before else ""
         result = _log_progress_impl(task_id, entry, status, next_step, resolution)
         _schedule_side_effects_if_status_changed(loop, session_manager, task_id, old_status, result)
+        if "error" not in result:
+            session_manager.maybe_adopt_task(session_id, task_id)
         return result
 
-    return [update_task_status, log_progress]
+    return [create_task, read_task, list_tasks, update_task_status, log_progress]
 
 
 # Export list of all task tools for easy passing to Agent.

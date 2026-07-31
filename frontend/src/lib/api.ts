@@ -35,6 +35,7 @@ export interface AgentInfo {
   model: string; started_at: number
   pending_question: { question: string; options: string[] | null } | null
   branch: string | null; advisory: boolean; role: string
+  last_activity: string
 }
 
 export interface ProviderInfo {
@@ -146,6 +147,15 @@ export async function fetchTask(id: string): Promise<TaskDetail> {
 
 export async function fetchTaskAgents(id: string): Promise<{ agents: AgentInfo[] }> {
   return apiFetch(`/api/tasks/${id}/agents`)
+}
+
+export interface PastSession {
+  id: string; role: string; advisory: boolean; model: string
+  tokens_used: number; cost_usd: number; started_at: number; stopped_at: number
+}
+
+export async function fetchTaskHistory(id: string): Promise<{ sessions: PastSession[] }> {
+  return apiFetch(`/api/tasks/${id}/history`)
 }
 
 export async function createTask(data: {

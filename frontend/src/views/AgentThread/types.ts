@@ -31,7 +31,7 @@ export interface CommandEntry { command: string; timestamp: number }
  *    spanning a delta boundary, e.g. "**bold**" split across two
  *    deltas, renders correctly instead of as literal asterisks).
  */
-export function reduceEvent(prev: EventItem[], evt: SSEEvent, nextId: number, cap = 300): EventItem[] {
+export function reduceEvent(prev: EventItem[], evt: SSEEvent, nextId: number, cap = 3000): EventItem[] {
   if (evt.type === 'tool_call' && evt.tool_call) {
     const callId = evt.tool_call.id
     for (let i = prev.length - 1; i >= 0; i--) {
@@ -62,21 +62,28 @@ export function reduceEvent(prev: EventItem[], evt: SSEEvent, nextId: number, ca
   return [...prev.slice(-cap), { ...evt, id: nextId }]
 }
 
-// editor's `command` arg tells us read vs. write — 'view'/'find_line'
-// don't touch the file, everything else does (create is a genuinely new
-// file, the rest modify an existing one).
-const EDITOR_WRITE_COMMANDS = new Set(['create', 'str_replace', 'pattern_replace', 'insert', 'undo_edit'])
-
 /** Only the editor tool belongs on the Files tab — shell commands often
  * reference something that looks like a filename in their args ("cat
  * notes.txt") without it being a real file touch the way an edit/read
- * is, and mixing the two made the tab list commands, not files. */
+ * is, and mixing the two made the tab list commands, not files.
+ *
+ * Every session gets a sandboxed working dir now (see
+ * SessionManager._resolve_working_dir), so the tool actually in play is
+ * always the swapped-in editor_tool (sandbox_tools.py) — args.path and
+ * args.action ('read'/'write'/'list'), not the richer strands-native
+ * 'editor' tool's args.command ('view'/'create'/'str_replace'/...) this
+ * used to check for, which no live session's tool calls ever matched
+ * — the Files tab was silently empty for every real run. editor_tool
+ * doesn't distinguish a brand-new file from an edit to an existing one
+ * (it just overwrites either way), so 'write' covers both; 'list' is a
+ * directory listing, not a file touch, and is skipped.
+ */
 export function recordFileTouch(toolCall: NonNullable<SSEEvent['tool_call']>, setFiles: (fn: (prev: FileChange[]) => FileChange[]) => void) {
-  if (toolCall.name !== 'editor') return
+  if (toolCall.name !== 'editor_tool') return
   const path = toolCall.args.path
   if (typeof path !== 'string' || !path) return
-  const command = typeof toolCall.args.command === 'string' ? toolCall.args.command : ''
-  const action = command === 'create' ? 'write' : EDITOR_WRITE_COMMANDS.has(command) ? 'edit' : 'read'
+  const action = toolCall.args.action
+  if (action !== 'read' && action !== 'write') return
   setFiles(prev => {
     const next = prev.filter(f => f.path !== path)
     return [...next.slice(-49), { path, action, timestamp: Date.now() }]
@@ -85,16 +92,16 @@ export function recordFileTouch(toolCall: NonNullable<SSEEvent['tool_call']>, se
 
 /** Command Log — every shell invocation with its own timestamp, kept
  * separate from Terminal (a real interactive shell) and from Files
- * (editor-only touches). shell's `command` arg can be a single string
- * or a list (parallel commands), so this can log more than one entry
- * per tool call. */
+ * (editor-only touches).
+ *
+ * Same swapped-tool-name issue as recordFileTouch above: the tool
+ * actually in play is shell_tool (sandbox_tools.py), whose args.command
+ * is always a single string, not the strands-native 'shell' tool's
+ * command-or-list-of-commands shape this used to check for.
+ */
 export function recordCommand(toolCall: NonNullable<SSEEvent['tool_call']>, setCommands: (fn: (prev: CommandEntry[]) => CommandEntry[]) => void) {
-  if (toolCall.name !== 'shell') return
-  const raw = toolCall.args.command
-  const cmds: string[] = Array.isArray(raw)
-    ? raw.map(c => (typeof c === 'string' ? c : (c as Record<string, unknown>)?.command)).filter((c): c is string => typeof c === 'string')
-    : typeof raw === 'string' ? [raw] : []
-  if (cmds.length === 0) return
-  const timestamp = Date.now()
-  setCommands(prev => [...prev.slice(-199), ...cmds.map(command => ({ command, timestamp }))])
+  if (toolCall.name !== 'shell_tool') return
+  const command = toolCall.args.command
+  if (typeof command !== 'string' || !command) return
+  setCommands(prev => [...prev.slice(-199), { command, timestamp: Date.now() }])
 }

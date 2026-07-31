@@ -136,6 +136,33 @@ def create_router(session_manager: SessionManager) -> APIRouter:
         sessions = [s for s in session_manager.active if s.task_id == task_id]
         return {"agents": [_agent_to_response(s) for s in sessions]}
 
+    @router.get("/api/tasks/{task_id}/history")
+    async def list_task_session_history(task_id: str):
+        """Past (stopped) sessions that worked this task, most recent
+        first — Task Detail's "reopen and see what it did" links, since
+        list_task_agents above only ever shows currently-active ones.
+        Sessions aren't persisted beyond the wastebin, so this is the
+        only place a finished session's existence survives at all."""
+        from agent_knots.config import wastebin_dir
+        from agent_knots.wastebin import WastebinStore
+
+        entries = [e for e in WastebinStore(wastebin_dir()).list() if e.task_id == task_id]
+        return {
+            "sessions": [
+                {
+                    "id": e.session_id,
+                    "role": e.role,
+                    "advisory": e.advisory,
+                    "model": e.model,
+                    "tokens_used": e.tokens_used,
+                    "cost_usd": e.cost_usd,
+                    "started_at": e.started_at,
+                    "stopped_at": e.stopped_at,
+                }
+                for e in entries
+            ]
+        }
+
     @router.post("/api/tasks")
     async def create_task(body: CreateTaskRequest):
         """Create a new task."""
@@ -164,14 +191,14 @@ def create_router(session_manager: SessionManager) -> APIRouter:
 
         Shared with the agent-tool status-change path — see
         task/lifecycle.py and task/tools.py's
-        make_session_aware_status_tools.
+        make_session_aware_task_tools.
         """
         await maybe_auto_stop_finished_sessions(session_manager, new_status, task)
 
     def _maybe_fire_role_triggers(old_status: str, new_status: str, task: Task) -> None:
         """Shared with the agent-tool status-change path — see
         task/lifecycle.py and task/tools.py's
-        make_session_aware_status_tools."""
+        make_session_aware_task_tools."""
         maybe_fire_role_triggers(session_manager, old_status, new_status, task)
 
     @router.patch("/api/tasks/{task_id}")
