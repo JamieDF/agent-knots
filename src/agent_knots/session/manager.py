@@ -93,6 +93,11 @@ class Session:
     """A running agent session wrapping a Strands Agent."""
 
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    # Human-readable display name ("sleepy-panda") — generated in
+    # SessionManager.start() rather than via a bare default_factory here
+    # since it needs to check uniqueness against currently-active
+    # sessions, which this dataclass has no access to on its own.
+    name: str = ""
     mode: str = "agent"
     task_id: str | None = None
     project_id: str | None = None
@@ -305,6 +310,8 @@ class SessionManager:
             )
 
         session_id = uuid.uuid4().hex[:12]
+        from agent_knots.names import generate_name
+        session_name = generate_name({s.name for s in self._sessions.values()})
 
         task_context = self._resolve_task_context(session_id, task_id, advisory)
         workspace_context = self._build_workspace_context(project_id)
@@ -366,6 +373,7 @@ class SessionManager:
 
         session = Session(
             id=session_id,
+            name=session_name,
             mode=mode,
             task_id=task_id,
             project_id=project_id,
@@ -485,6 +493,7 @@ class SessionManager:
 
             WastebinStore(wastebin_dir()).add(WastebinEntry(
                 session_id=session.id,
+                name=session.name,
                 task_id=session.task_id,
                 task_title=task_title,
                 project_id=session.project_id,

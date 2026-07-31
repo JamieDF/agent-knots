@@ -305,7 +305,7 @@ function TaskDetail() {
               any read-only advisory agents (e.g. a reviewer role) sharing
               its working tree. Writer sorts first. */}
           {[...agents].sort((a, b) => Number(a.advisory) - Number(b.advisory)).map(a => (
-            <SideBlock key={a.id} label={a.advisory ? `🛡 Advisory · ${a.role || 'agent'}` : 'Session'}>
+            <SideBlock key={a.id} label={a.advisory ? `🛡 ${a.name} · ${a.role || 'agent'}` : a.name}>
               <Row l="Mode" v={a.mode} />
               {a.branch && <Row l="Branch" v={a.branch} mono />}
               <Row l="Tokens" v={a.tokens_used.toLocaleString()} />
@@ -327,7 +327,7 @@ function TaskDetail() {
               {pastSessions.map(s => (
                 <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
                   <span style={{ fontSize: 11.5, color: 'var(--ink2)', flex: 1 }}>
-                    {s.advisory ? `🛡 ${s.role || 'advisory'}` : 'Session'} · {timeAgo(s.stopped_at)}
+                    {s.advisory ? `🛡 ${s.name} · ${s.role || 'advisory'}` : s.name} · {timeAgo(s.stopped_at)}
                   </span>
                   <button
                     onClick={() => navigate(`/agent/${s.id}`)}

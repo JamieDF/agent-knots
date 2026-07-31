@@ -20,6 +20,7 @@ from agent_knots.wastebin import WastebinStore
 def _entry_to_response(e) -> dict:
     return {
         "session_id": e.session_id,
+        "name": e.name,
         "task_id": e.task_id,
         "task_title": e.task_title,
         "project_id": e.project_id,

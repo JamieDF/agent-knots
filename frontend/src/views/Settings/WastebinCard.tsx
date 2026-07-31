@@ -75,7 +75,7 @@ export function WastebinCard() {
         >
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {e.task_title || e.session_id}
+              {e.task_title || e.name}
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 2 }}>
               {e.advisory && <Chip soft>advisory{e.role ? ` · ${e.role}` : ''}</Chip>}

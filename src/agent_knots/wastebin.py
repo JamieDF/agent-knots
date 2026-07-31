@@ -29,6 +29,7 @@ from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
 class WastebinEntry:
     """A snapshot of a session, taken the moment it was stopped."""
     session_id: str
+    name: str = ""                # human-readable display name ("sleepy-panda")
     task_id: str | None = None
     task_title: str = ""          # denormalized — the task may be deleted later
     project_id: str | None = None
@@ -54,6 +55,7 @@ class WastebinEntry:
 def _entry_from_dict(d: dict[str, Any]) -> WastebinEntry:
     return WastebinEntry(
         session_id=d["session_id"],
+        name=d.get("name", ""),
         task_id=d.get("task_id"),
         task_title=d.get("task_title", ""),
         project_id=d.get("project_id"),

@@ -151,6 +151,7 @@ def create_router(session_manager: SessionManager) -> APIRouter:
             "sessions": [
                 {
                     "id": e.session_id,
+                    "name": e.name,
                     "role": e.role,
                     "advisory": e.advisory,
                     "model": e.model,

@@ -90,6 +90,7 @@ def _agent_to_response(session) -> dict:
         }
     return {
         "id": session.id,
+        "name": session.name,
         "mode": session.mode,
         "task_id": session.task_id,
         "project_id": session.project_id,
@@ -113,6 +114,7 @@ def _wastebin_entry_to_agent_response(entry) -> dict:
     there's never a pending question (nothing left to answer)."""
     return {
         "id": entry.session_id,
+        "name": entry.name,
         "mode": entry.mode,
         "task_id": entry.task_id,
         "project_id": entry.project_id,
@@ -151,6 +153,7 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
             if pq and pq.get("event") and not pq["event"].is_set():
                 items.append({
                     "agent_id": s.id,
+                    "agent_name": s.name,
                     "task_id": s.task_id,
                     "question": pq.get("question", ""),
                     "options": pq.get("options"),

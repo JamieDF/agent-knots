@@ -287,8 +287,13 @@ function RunningAgentCard({ agent, task, onDeleted }: { agent: AgentInfo; task?:
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--ok)' }} />
         <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {task?.title || agent.id}
+          {task?.title || agent.name}
         </span>
+        {/* When a task title is the headline, agent.name still shows as
+            a small tag — the human-readable name is what's worth
+            recognizing an agent by across cards, not its raw hex id.
+            No task means the title above is already agent.name. */}
+        {task && <span style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>{agent.name}</span>}
         {task && <span style={{ fontSize: 10.5, fontFamily: 'var(--font-mono)', color: 'var(--mut)' }}>{task.progress_count}/{task.steps_count || task.criteria_count}</span>}
       </div>
 
