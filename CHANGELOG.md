@@ -87,6 +87,57 @@ All notable changes to agent-knots are documented here.
   A session started with no task now adopts the first task it creates
   or logs progress/status on, the same as one started with a task from
   the outset.
+- **Review, redesigned around tasks instead of raw git diffs.** The
+  Review screen used to be a flat, task-agnostic list of every
+  workspace's uncommitted changes — no connection at all to a task's
+  own "review" status, despite sharing the name. It's now a list of
+  tasks actually sitting in review; clicking one shows the task's own
+  details alongside its file changes, with per-file or all-at-once
+  approve/reject. Reject opens a dialog for a reason and sends it back
+  to the agent — see the pause/resume behavior below for how.
+- **Tasks entering review now pause their session instead of stopping
+  it.** A task reaching `review` used to auto-stop every session
+  working it, losing the whole conversation — reopening it later meant
+  starting fresh with no memory of what was actually discussed.
+  `review` now pauses (interrupts the current turn, switches to
+  assistant mode — the same mechanism the Autonomous toggle already
+  used) rather than stopping, so Review's reject flow can resume the
+  *exact same thread* with the reviewer's feedback instead of losing
+  all context. Verified live end to end: paused → rejected with a
+  reason → same session resumed and fixed it → re-entered review →
+  paused again → approved → committed, task moved to done, and *now*
+  the session actually stops (real work is done, not just paused).
+  `done`/`abandoned` still stop for real, as before.
+- **Loading spinner.** No screen ever indicated it was still loading —
+  an empty list and a not-yet-loaded list looked identical. Added a
+  `Spinner` primitive, shown on Task Detail's initial load and on the
+  Tasks Board/List views until their first fetch settles (not on every
+  background poll after that, so it doesn't flash over content that's
+  already there).
+
+### Fixed
+- **Wastebin reads were parsing full session transcripts just to list
+  entries, making Task Detail (and the Review task list, and the
+  Settings Wastebin card) noticeably slow.** Every wastebin read
+  parsed the *entire* stored history — up to tens of thousands of
+  events — even when the caller only needed small metadata fields.
+  Measured against real data: one `list()` call took 4.58 seconds with
+  a 2.3MB history file on disk. History now lives in a separate file
+  from the metadata YAML, only read when a session is actually being
+  reopened; existing large files self-migrate (split apart, once) on
+  their first read after upgrading. Post-migration: 0.014 seconds for
+  the same call.
+- **Task Detail showed the Start buttons for a beat before flipping to
+  "Watch X," every time.** The task and its live agents were fetched
+  as two separate sequential calls, so the page rendered before the
+  agents call had resolved. Fetched together now — the correct button
+  shows from the very first paint, no flash.
+- **Button/chip styling inconsistencies on Task Detail.** A handful of
+  buttons on this one screen used one-off padding/font-size values with
+  no reason behind them (e.g. one button at `padding: '6px 16px'` while
+  every other primary button on the page used `5px 12px`). Normalized
+  to match the rest of the screen; also dropped a couple of redundant
+  inline resets that just duplicated the global button CSS.
 
 ## [0.2.0] - 2026-07-28
 

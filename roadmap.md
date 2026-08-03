@@ -104,6 +104,21 @@
   cards now show a live summary of the agent's most recent action
   instead of just a static "working…"/"paused" word, and the "paused"
   label no longer contradicts an agent that's actively mid-turn
+- [x] Review, rebuilt around tasks — lists tasks actually sitting in
+  review (not raw git diffs across every workspace, which had no real
+  connection to a task's own review status), with per-file or
+  all-at-once approve/reject. A task entering review now pauses its
+  session instead of stopping it, so rejecting with a reason resumes
+  the exact same conversation instead of losing it; approving commits
+  and moves the task to done, and only then does the session actually
+  stop
+- [x] Wastebin performance — history no longer lives inline in the
+  small metadata file listed on every poll from three different
+  screens; existing large entries self-migrate on first read after
+  upgrading (measured: 4.58s → 0.014s for the same list() call)
+- [x] Loading spinner — Task Detail and the Tasks Board/List views show
+  one on first load instead of nothing, so "still loading" and
+  "genuinely empty" no longer look identical
 
 ## Next
 

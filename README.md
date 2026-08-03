@@ -68,8 +68,10 @@ way, `configured` is true before the wizard would even ask. See
   running in-process (container isolation is on the roadmap) and given a
   human-readable name (e.g. "sleepy-panda") instead of a raw id.
   Task-attached sessions get their own git branch, reused automatically
-  if you resume the task later, and auto-stop once their task reaches
-  review, done, or abandoned. A stopped session's full transcript is
+  if you resume the task later. A session pauses once its task reaches
+  review (so rejecting a change with feedback resumes the same
+  conversation instead of losing it) and stops for real once the task
+  reaches done or abandoned. A stopped session's full transcript is
   kept and can be reopened read-only afterward, not just while it's
   running.
 - **Multi-agent**: an advisory role (e.g. a read-only reviewer) can share a
@@ -83,6 +85,10 @@ way, `configured` is true before the wizard would even ask. See
   and a configurable Kanban board. A workspace-attached agent always knows
   which workspace it's in and can only create, read, or list tasks inside
   it.
+- **Review**: a dedicated screen for tasks sitting in review — see the
+  task's own details alongside its file changes, approve (per file or
+  all at once) to commit and move it to done, or reject with a reason
+  that goes straight back to the agent, same conversation.
 - **Vault**: AES-256-GCM encrypted credential store. Agents can use a
   credential in a tool call without the raw value ever appearing in their
   context.
