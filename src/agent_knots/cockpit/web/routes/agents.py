@@ -188,11 +188,12 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
             from agent_knots.config import wastebin_dir
             from agent_knots.wastebin import WastebinStore
 
-            entry = WastebinStore(wastebin_dir()).get(agent_id)
+            store = WastebinStore(wastebin_dir())
+            entry = store.get(agent_id)
             if entry is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
 
-            history = entry.history
+            history = store.get_history(agent_id)
             if not history or history[-1].get("type") != "ended":
                 history = [*history, {
                     "type": "ended", "session_id": agent_id, "timestamp": entry.stopped_at,
