@@ -8,13 +8,27 @@ directory it left behind. Every stop() now writes one entry here
 instead, giving the app its first real session history plus a place to
 browse/delete leftovers by hand, with an optional age-based sweep.
 
-One YAML file per session under wastebin_dir(), same layout as
-task/store.py's TaskStore — no locking needed, since each stop() only
-ever writes its own session's file, never contended by another.
+One YAML file per session under wastebin_dir() for metadata, same
+layout as task/store.py's TaskStore — no locking needed, since each
+stop() only ever writes its own session's file, never contended by
+another.
+
+The session's full event history is deliberately NOT in that YAML
+file — it's written to a sibling <id>.history.json instead. list()
+(Task Detail's "Past sessions", the Settings Wastebin card, the Review
+task list) only ever needs the small metadata fields; a real session's
+history can run to tens of thousands of events, and YAML-parsing a
+multi-megabyte file on every list() call (every 5s poll, from several
+different screens) was measured making Task Detail noticeably slow.
+Plain JSON, not YAML, for the history file too — it's not meant to be
+hand-edited, and json is substantially faster than PyYAML to parse at
+this size. Only the one thing that actually needs full history —
+reopening a stopped session's transcript — reads it, via get_history().
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 import time
 from dataclasses import asdict, dataclass, field
@@ -27,7 +41,8 @@ from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
 
 @dataclass
 class WastebinEntry:
-    """A snapshot of a session, taken the moment it was stopped."""
+    """A snapshot of a session, taken the moment it was stopped.
+    Metadata only — see get_history() for the event transcript."""
     session_id: str
     name: str = ""                # human-readable display name ("sleepy-panda")
     task_id: str | None = None
@@ -45,11 +60,6 @@ class WastebinEntry:
     cost_usd: float = 0.0
     started_at: float = 0.0
     stopped_at: float = field(default_factory=time.time)
-    # The session's full event history (serialize_event() dicts), so a
-    # stopped session can still be reopened and its transcript reviewed
-    # afterward instead of vanishing the moment it stops — see
-    # routes/agents.py's fallback in get_agent()/agent_events().
-    history: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _entry_from_dict(d: dict[str, Any]) -> WastebinEntry:
@@ -71,7 +81,6 @@ def _entry_from_dict(d: dict[str, Any]) -> WastebinEntry:
         cost_usd=d.get("cost_usd", 0.0),
         started_at=d.get("started_at", 0.0),
         stopped_at=d.get("stopped_at", 0.0),
-        history=d.get("history", []),
     )
 
 
@@ -83,17 +92,59 @@ class WastebinStore:
     def _path(self, session_id: str) -> Path:
         return self._dir / f"{session_id}.yaml"
 
-    def add(self, entry: WastebinEntry) -> None:
+    def _history_path(self, session_id: str) -> Path:
+        return self._dir / f"{session_id}.history.json"
+
+    def add(self, entry: WastebinEntry, history: list[dict[str, Any]] | None = None) -> None:
         atomic_write_yaml(self._path(entry.session_id), asdict(entry))
+        if history:
+            try:
+                self._history_path(entry.session_id).write_text(json.dumps(history))
+            except Exception:
+                pass
+
+    def _migrate_legacy_history(self, session_id: str, data: dict[str, Any]) -> None:
+        """Self-healing for entries written before history moved out of
+        the metadata YAML (see the module docstring) — the first read
+        of an old large file after upgrading splits its embedded
+        history out to the sibling file and rewrites the metadata
+        without it, so every read after that first one is back to
+        being cheap. Doesn't save the read that triggers it (yaml
+        parsing already happened by the time this runs), only the ones
+        after."""
+        legacy_history = data.pop("history", None)
+        if not legacy_history:
+            return
+        try:
+            if not self._history_path(session_id).exists():
+                self._history_path(session_id).write_text(json.dumps(legacy_history))
+            atomic_write_yaml(self._path(session_id), data)
+        except Exception:
+            pass
 
     def get(self, session_id: str) -> WastebinEntry | None:
         data = safe_read_yaml(self._path(session_id))
         if not isinstance(data, dict) or "session_id" not in data:
             return None
+        self._migrate_legacy_history(session_id, data)
         try:
             return _entry_from_dict(data)
         except KeyError:
             return None
+
+    def get_history(self, session_id: str) -> list[dict[str, Any]]:
+        """The session's full event transcript — a separate, potentially
+        large read from the metadata get()/list() above. Only call this
+        for the one session actually being reopened, never in a loop
+        over list()'s results."""
+        path = self._history_path(session_id)
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text())
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
 
     def list(
         self, retention_days: int = 0, *, protected_branches: set[str] = frozenset(),
@@ -112,6 +163,7 @@ class WastebinStore:
             data = safe_read_yaml(path)
             if not isinstance(data, dict) or "session_id" not in data:
                 continue
+            self._migrate_legacy_history(data["session_id"], data)
             try:
                 entries.append(_entry_from_dict(data))
             except KeyError:
@@ -132,7 +184,8 @@ class WastebinStore:
         return keep
 
     def delete(self, session_id: str, *, protected_branches: set[str] = frozenset()) -> None:
-        """Remove an entry and clean up its leftovers.
+        """Remove an entry (and its history file) and clean up its
+        leftovers.
 
         Force-deletes the branch (regardless of commits) only if it's
         set and not in protected_branches. rmtrees working_dir only if
@@ -163,3 +216,4 @@ class WastebinStore:
                 pass
 
         self._path(session_id).unlink(missing_ok=True)
+        self._history_path(session_id).unlink(missing_ok=True)

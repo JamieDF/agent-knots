@@ -4,13 +4,13 @@ import { enabledStages, stageForStatus } from '../../lib/stages'
 import { statusStyle } from '../../lib/statusColors'
 import { priorityColor } from '../../lib/priorityColors'
 import { useTaskList } from '../../lib/useTaskList'
-import { Card, Chip } from '../../components/primitives'
+import { Card, Chip, Spinner } from '../../components/primitives'
 
 /** List tab of the Tasks screen — stage filter chips + task rows. */
 function List({ reloadSignal }: { reloadSignal?: number } = {}) {
   const [stageFilter, setStageFilter] = useState<string | null>(null)
   const navigate = useNavigate()
-  const { tasks, allStages } = useTaskList(reloadSignal)
+  const { tasks, loading, allStages } = useTaskList(reloadSignal)
   const stages = enabledStages(allStages)
   const filtered = stageFilter
     ? tasks.filter(t => stageForStatus(allStages, t.status)?.key === stageFilter)
@@ -25,7 +25,11 @@ function List({ reloadSignal }: { reloadSignal?: number } = {}) {
         ))}
       </div>
 
-      {filtered.length === 0 && (
+      {loading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
+          <Spinner />
+        </div>
+      ) : filtered.length === 0 && (
         <div style={{ padding: 40, textAlign: 'center', color: 'var(--mut)', fontSize: 13 }}>
           No tasks yet. Create one to get started.
         </div>

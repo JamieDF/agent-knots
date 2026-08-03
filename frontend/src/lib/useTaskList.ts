@@ -13,6 +13,10 @@ const PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, 
  * the enabled stage config to group/filter by. */
 export function useTaskList(reloadSignal?: number) {
   const [tasks, setTasks] = useState<TaskSummary[]>([])
+  // Only true until the very first fetch settles — background polls
+  // refreshing an already-loaded list shouldn't flip this back on and
+  // flash a spinner over content that's already there.
+  const [loading, setLoading] = useState(true)
   const { workspace } = useWorkspaceScope()
   const allStages: Stage[] = useStages()
 
@@ -20,7 +24,9 @@ export function useTaskList(reloadSignal?: number) {
     try {
       const data = await fetchTasks({ limit: 200, project: workspace || undefined })
       setTasks(data.tasks.sort((a, b) => (PRIORITY_ORDER[a.priority] ?? 2) - (PRIORITY_ORDER[b.priority] ?? 2)))
-    } catch { /* ignore */ }
+    } catch { /* ignore */ } finally {
+      setLoading(false)
+    }
   }, [workspace])
 
   useEffect(() => {
@@ -31,5 +37,5 @@ export function useTaskList(reloadSignal?: number) {
 
   useEffect(() => { if (reloadSignal !== undefined) load() }, [reloadSignal]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { tasks, setTasks, load, workspace, allStages }
+  return { tasks, setTasks, load, loading, workspace, allStages }
 }

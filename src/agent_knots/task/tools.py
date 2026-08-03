@@ -422,18 +422,19 @@ async def _deferred_status_side_effects(
     awaited directly from the tool call that changed the status.
 
     That matters: the calling session can itself be among the ones
-    maybe_auto_stop_finished_sessions stops (an agent marking its own
-    task done is the whole point of this). SessionManager.stop()
-    cancels session._task and awaits it — a task cannot cancel-and-await
-    itself, so that call has to happen from a *different* asyncio Task
-    than the one running the tool call. Scheduling this whole function
-    (rather than awaiting it inline) is what provides that separation;
-    the ordering inside it (stop before firing new role-triggered
+    maybe_pause_or_stop_finished_sessions acts on (an agent marking its
+    own task review or done is the whole point of this). Both
+    SessionManager.stop() and the pause path's interrupt() cancel
+    session._task and await it — a task cannot cancel-and-await itself,
+    so that call has to happen from a *different* asyncio Task than the
+    one running the tool call. Scheduling this whole function (rather
+    than awaiting it inline) is what provides that separation; the
+    ordering inside it (pause/stop before firing new role-triggered
     sessions) is preserved exactly as the web route's version has it,
     since both steps run in this one task.
     """
     from agent_knots.task.lifecycle import (
-        maybe_auto_stop_finished_sessions,
+        maybe_pause_or_stop_finished_sessions,
         maybe_fire_role_triggers,
     )
 
@@ -441,7 +442,7 @@ async def _deferred_status_side_effects(
     task = store.get(task_id)
     if task is None:
         return
-    await maybe_auto_stop_finished_sessions(session_manager, new_status, task)
+    await maybe_pause_or_stop_finished_sessions(session_manager, new_status, task)
     maybe_fire_role_triggers(session_manager, old_status, new_status, task)
 
 

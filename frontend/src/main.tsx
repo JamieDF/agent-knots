@@ -36,6 +36,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="tasks" element={<Tasks />} />
           <Route path="tasks/:id" element={<TaskDetail />} />
           <Route path="review" element={<Review />} />
+          <Route path="review/:id" element={<Review />} />
           <Route path="workflows" element={<Workflows />} />
           {/* Vault folded into a Settings section (jump-to via the side
               nav's #vault anchor) instead of its own top-nav screen. */}

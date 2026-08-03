@@ -22,13 +22,23 @@ from agent_knots.workflows.models import Trigger, stage_for_status
 from agent_knots.workflows.store import RolesStore, StagesStore
 
 
-async def maybe_auto_stop_finished_sessions(
+async def maybe_pause_or_stop_finished_sessions(
     session_manager: Any, new_status: str, task: Task,
 ) -> None:
-    """Stop every session working this task once it reaches a status
-    that means this round of work is over — review, done, or
-    abandoned. Otherwise nothing else ever stops a finished session,
-    and its git branch / auto-provisioned workdir just sit there.
+    """React to a task leaving active work: pause on review, stop on
+    done/abandoned. Otherwise nothing else ever stops a finished
+    session, and its git branch / auto-provisioned workdir just sit
+    there.
+
+    review pauses rather than stops — set_autonomous(False) interrupts
+    the current turn and switches to assistant mode, but the session
+    stays alive in SessionManager._sessions with its full thread
+    intact. This is what lets the Review screen's reject flow resume
+    the *same* conversation (set_mode back to "agent" + send() the
+    reviewer's feedback) instead of losing all context and having to
+    start a fresh session. done/abandoned still do a real stop() —
+    that round of work is genuinely over, and a stop() is what leaves
+    the wastebin tombstone (with the full history) for later review.
 
     Safe to call even when one of the matching sessions is the caller's
     own currently-running session (the agent-tool path does exactly
@@ -37,8 +47,13 @@ async def maybe_auto_stop_finished_sessions(
     the one being stopped, cancelling it from here is a normal cross-task
     cancellation, not a task awaiting itself. See task/tools.py's
     _deferred_status_side_effects for why that distinction matters.
+    set_autonomous()'s interrupt() has the same property.
     """
-    if new_status not in ("review", "done", "abandoned"):
+    if new_status == "review":
+        for session in [s for s in session_manager.active if s.task_id == task.id]:
+            await session_manager.set_autonomous(session.id, False)
+        return
+    if new_status not in ("done", "abandoned"):
         return
     for session in [s for s in session_manager.active if s.task_id == task.id]:
         await session_manager.stop(session.id)

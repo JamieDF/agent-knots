@@ -215,23 +215,54 @@ silently discarded by session teardown.
 ### Wastebin
 
 Every `SessionManager.stop()` call, automatic or manual, writes a
-tombstone record (`wastebin.py`): task, branch, tokens, cost, the
-session's full serialized event history, and whether the session's
-working directory was one of the app's own auto-provisioned ones (only
-those get cleaned up on delete — a real repo path never does). A
-session auto-stops once its task reaches `review`, `done`, or
-`abandoned`. Wastebin entries are individually deletable and swept by a
-configurable retention setting; deleting an entry never force-deletes a
-branch a newer entry or a still-active session legitimately references.
+tombstone record (`wastebin.py`): task, branch, tokens, cost, and
+whether the session's working directory was one of the app's own
+auto-provisioned ones (only those get cleaned up on delete — a real
+repo path never does). A session stops for real once its task reaches
+`done` or `abandoned` — see "Pausing vs. stopping" below for `review`,
+which no longer stops it. Wastebin entries are individually deletable
+and swept by a configurable retention setting; deleting an entry never
+force-deletes a branch a newer entry or a still-active session
+legitimately references.
+
+The session's full serialized event history is *not* stored in the
+same metadata file — it lives in a sibling `<id>.history.json`,
+written alongside the tombstone but read separately
+(`WastebinStore.get_history()`). Metadata reads (`list()`/`get()`,
+polled from Task Detail's Past Sessions, the Review task list, and the
+Settings Wastebin card) never touch it, so they stay cheap regardless
+of how large a transcript is — a real session can run to tens of
+thousands of events, and parsing that inline on every poll from three
+different screens was measured making the whole app noticeably slow
+(4.58s for one `list()` call against a 2.3MB history file; 0.014s
+after splitting it out). Entries written before this split have their
+history embedded inline still; `get()`/`list()` self-migrate them —
+split the history out, rewrite the metadata without it — the first
+time each is read, so an existing install speeds back up automatically
+rather than needing a manual cleanup step.
 
 The persisted history is more than a cleanup record — `GET
 /api/agent/{id}` and the SSE events endpoint both fall back to the
 matching wastebin entry when `SessionManager.get()` returns nothing
-live, replaying the stored history (plus a synthetic `ended` event if
-one wasn't already broadcast before the tombstone was written) instead
-of 404ing. A stopped session can be reopened from Task Detail's "Past
-sessions" list and its full transcript reviewed read-only through the
-same Agent Thread UI a live session uses.
+live, replaying `get_history()`'s result (plus a synthetic `ended`
+event if one wasn't already broadcast before the tombstone was
+written) instead of 404ing. A stopped session can be reopened from
+Task Detail's "Past sessions" list and its full transcript reviewed
+read-only through the same Agent Thread UI a live session uses.
+
+### Pausing vs. stopping
+
+A task reaching `review` pauses every session working it
+(`SessionManager.set_autonomous(session_id, False)` — interrupts the
+current turn, switches to `assistant` mode) rather than stopping them.
+The session stays alive in `SessionManager._sessions` with its full
+thread intact. This is specifically what lets the Review screen's
+reject flow (`routes/review.py`) resume the *same* conversation with a
+reviewer's feedback — `set_mode(session_id, "agent")` + `send()` — 
+instead of losing all context and starting a fresh session from
+scratch. `done`/`abandoned` still do a real `stop()`, same as always;
+Review's approve flow, once every file is committed, moves the task to
+`done` itself and lets that trigger the real stop the normal way.
 
 ### Multi-agent
 
