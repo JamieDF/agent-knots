@@ -267,26 +267,44 @@ export async function updateRole(key: string, data: { model?: string; trigger?: 
 }
 
 // ── review ───────────────────────────────────────────────────────────────────
+// Task-keyed: one task in review, with its own file diffs and its own
+// approve/reject flow. Reject is a real "send it back" action — it
+// moves the task to in_progress and resumes its (usually still paused,
+// not stopped — see task/lifecycle.py) session with the feedback.
+
+export interface ReviewTask {
+  id: string; title: string; project: string; project_name: string
+  branch: string; session_id: string | null; session_name: string
+}
 
 export interface ReviewDiff {
-  workspace: string; workspace_name: string; file: string; added: number; deleted: number
-  branch: string | null
+  file: string; added: number; deleted: number
 }
 
-export async function fetchReviewDiffs(): Promise<{ diffs: ReviewDiff[] }> {
-  return apiFetch('/api/review/diffs')
+export async function fetchReviewTasks(): Promise<{ tasks: ReviewTask[] }> {
+  return apiFetch('/api/review/tasks')
 }
 
-export async function fetchReviewDiffText(workspace: string, file: string): Promise<{ diff: string }> {
-  return apiFetch(`/api/review/diff?workspace=${encodeURIComponent(workspace)}&file=${encodeURIComponent(file)}`)
+export async function fetchReviewDiffs(taskId: string): Promise<{ branch: string; diffs: ReviewDiff[] }> {
+  return apiFetch(`/api/review/diffs?task_id=${encodeURIComponent(taskId)}`)
 }
 
-export async function approveReview(workspace: string, file?: string, branch?: string | null): Promise<void> {
-  await apiFetch('/api/review/approve', jsonInit('POST', { workspace, file, branch }))
+export async function fetchReviewDiffText(taskId: string, file: string): Promise<{ diff: string }> {
+  return apiFetch(`/api/review/diff?task_id=${encodeURIComponent(taskId)}&file=${encodeURIComponent(file)}`)
 }
 
-export async function rejectReview(workspace: string, file?: string): Promise<void> {
-  await apiFetch('/api/review/reject', jsonInit('POST', { workspace, file }))
+export async function approveReview(
+  taskId: string, file?: string,
+): Promise<{ status: string; task_status?: string; done_error?: string }> {
+  return apiFetch('/api/review/approve', jsonInit('POST', { task_id: taskId, file }))
+}
+
+export async function rejectReview(
+  taskId: string, reason: string, approvedFiles: string[], file?: string,
+): Promise<{ status: string; task_status: string; session_id: string }> {
+  return apiFetch('/api/review/reject', jsonInit('POST', {
+    task_id: taskId, file, reason, approved_files: approvedFiles,
+  }))
 }
 
 // ── wastebin ────────────────────────────────────────────────────────────────

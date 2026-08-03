@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from agent_knots.wastebin import WastebinEntry, WastebinStore
+from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
 
 
 @pytest.fixture
@@ -101,6 +102,80 @@ class TestRetentionSweep:
             cwd=str(repo), capture_output=True, text=True,
         )
         assert "knots/some-task-abc123" in result.stdout
+
+
+class TestHistory:
+    """History lives in a separate <id>.history.json, not the metadata
+    YAML — list()/get() must stay cheap regardless of how large a
+    session's transcript is, since they're read on every poll from
+    several screens (Task Detail's Past Sessions, the Review task list,
+    the Settings Wastebin card)."""
+
+    def test_add_with_history_then_get_history_round_trips(self, store):
+        history = [{"type": "message", "session_id": "s1", "message": "hi"}]
+        store.add(WastebinEntry(session_id="s1"), history=history)
+        assert store.get_history("s1") == history
+
+    def test_get_history_empty_when_none_was_ever_written(self, store):
+        store.add(WastebinEntry(session_id="s1"))
+        assert store.get_history("s1") == []
+
+    def test_get_history_empty_for_unknown_session(self, store):
+        assert store.get_history("nonexistent") == []
+
+    def test_metadata_entry_has_no_history_attribute(self, store):
+        """Structural guarantee, not just a behavioral one — list()/get()
+        return WastebinEntry, which no longer has a history field at
+        all, so there's no way for either to accidentally deserialize
+        it even if a caller tried to read entry.history."""
+        store.add(WastebinEntry(session_id="s1"), history=[{"type": "message"}])
+        assert not hasattr(store.get("s1"), "history")
+        assert not hasattr(store.list()[0], "history")
+
+    def test_delete_removes_the_history_file_too(self, store, tmp_path):
+        store.add(WastebinEntry(session_id="s1"), history=[{"type": "message"}])
+        history_path = store._history_path("s1")
+        assert history_path.exists()
+        store.delete("s1")
+        assert not history_path.exists()
+
+    def test_list_does_not_require_a_history_file_to_exist(self, store):
+        """add() without a history arg (or with an empty list) writes no
+        history file at all — list() must not choke on that."""
+        store.add(WastebinEntry(session_id="s1"))
+        entries = store.list()
+        assert len(entries) == 1
+        assert store.get_history("s1") == []
+
+    def test_get_migrates_a_legacy_entry_with_embedded_history(self, store):
+        """Entries written before history moved out of the metadata
+        YAML (pre-migration) had it inline — get() must split it out to
+        the sibling file and strip it from the metadata on first read,
+        so every read after that one is back to being cheap."""
+        legacy = {
+            "session_id": "s1", "task_id": "t1", "task_title": "Old entry",
+            "history": [{"type": "message", "message": "from before the split"}],
+        }
+        atomic_write_yaml(store._path("s1"), legacy)
+
+        entry = store.get("s1")
+        assert entry is not None
+        assert entry.task_title == "Old entry"
+        assert not hasattr(entry, "history")
+        assert store.get_history("s1") == [{"type": "message", "message": "from before the split"}]
+
+        # The metadata file itself no longer has history embedded.
+        on_disk = safe_read_yaml(store._path("s1"))
+        assert "history" not in on_disk
+
+    def test_list_also_migrates_a_legacy_entry(self, store):
+        legacy = {"session_id": "s1", "history": [{"type": "message"}]}
+        atomic_write_yaml(store._path("s1"), legacy)
+
+        entries = store.list()
+        assert len(entries) == 1
+        assert store.get_history("s1") == [{"type": "message"}]
+        assert "history" not in safe_read_yaml(store._path("s1"))
 
 
 class TestDelete:

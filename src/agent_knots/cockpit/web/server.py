@@ -140,7 +140,7 @@ def create_app(
     app.include_router(mcp.create_router())
     app.include_router(tools.create_router())
     app.include_router(workflows.create_router())
-    app.include_router(review.create_router())
+    app.include_router(review.create_router(session_manager))
     app.include_router(fs.create_router())
     app.include_router(wastebin.create_router(session_manager))
 

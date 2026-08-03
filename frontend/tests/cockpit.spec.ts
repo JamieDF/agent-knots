@@ -895,10 +895,11 @@ test.describe('advisory agents', () => {
       expect(afterInProgress.assigned_to).toBe(writer.id)
 
       // review fires the reviewer — advisory, no branch of its own. It
-      // also auto-stops the writer (routes/tasks.py's auto-stop runs on
-      // the same PATCH, before role triggers create the reviewer — see
-      // task/lifecycle.py), so only the reviewer remains in the active
-      // agents list once this settles.
+      // also pauses the writer rather than stopping it (routes/tasks.py
+      // runs this on the same PATCH, before role triggers create the
+      // reviewer — see task/lifecycle.py) — the writer stays alive so
+      // the Review screen's reject flow can resume the same thread
+      // later, so both it and the new reviewer are in the active list.
       await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'review' } })
       let reviewer: any
       for (let i = 0; i < 20; i++) {
@@ -908,7 +909,9 @@ test.describe('advisory agents', () => {
         if (reviewer) break
       }
       expect(reviewer).toBeTruthy()
-      expect(agents.find((a: any) => a.id === writer.id)).toBeUndefined()
+      const pausedWriter = agents.find((a: any) => a.id === writer.id)
+      expect(pausedWriter).toBeTruthy()
+      expect(pausedWriter.mode).toBe('assistant')
       expect(reviewer.role).toBe('reviewer')
       expect(reviewer.branch).toBeNull()
 
@@ -918,11 +921,12 @@ test.describe('advisory agents', () => {
       const afterReview = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
       expect(afterReview.assigned_to).toBe(writer.id)
 
-      // The Task Detail screen renders one block per session, the
-      // advisory one visibly labelled as such.
+      // The Task Detail screen renders one block per session, labelled
+      // by the agent's human-readable name — the advisory one prefixed
+      // with a shield + its role.
       await page.goto(`${BASE}/tasks/${task.id}`)
-      await expect(page.locator('text=Session').first()).toBeVisible({ timeout: 5000 })
-      await expect(page.locator('text=🛡 Advisory · reviewer')).toBeVisible()
+      await expect(page.locator(`text=${writer.name}`).first()).toBeVisible({ timeout: 5000 })
+      await expect(page.getByText(/🛡 .+ · reviewer/)).toBeVisible()
       await expect(page.locator(`text=${writer.branch}`).first()).toBeVisible()
 
       for (const a of agents) {
@@ -1468,8 +1472,12 @@ test.describe('agent panel tabs', () => {
 
     // Task title/criteria are always visible in the left goal rail —
     // no tab click needed (that's the point of the Agent Thread redesign).
+    // The bare criterion text can also appear elsewhere on the page (a
+    // raw tool-output echo in chat, or the steering hook's "possible
+    // match" auto-log line) — the "○ " bullet prefix is unique to the
+    // rail's own rendering of an unmet criterion.
     await expect(page.locator('text=Panel review test').first()).toBeVisible({ timeout: 10000 })
-    await expect(page.locator('text=Should show in panel')).toBeVisible()
+    await expect(page.locator('text=○ Should show in panel')).toBeVisible()
 
     // Cleanup.
     await page.request.delete(`${BASE}/api/agent/${session.id}`).catch(() => {})
@@ -1572,11 +1580,12 @@ test.describe('review screen', () => {
     await authPage(page)
   })
 
-  test('shows a pending diff from a real git repo and approve commits it', async ({ page }) => {
+  test('list shows a task in review; detail shows its diff and approve commits + closes it out', async ({ page }) => {
     const { mkdtempSync, writeFileSync } = await import('fs')
     const { tmpdir } = await import('os')
     const { join } = await import('path')
     const { execSync } = await import('child_process')
+    const { createHash } = await import('crypto')
 
     const repo = mkdtempSync(join(tmpdir(), 'review-test-'))
     execSync('git init -q', { cwd: repo })
@@ -1585,27 +1594,50 @@ test.describe('review screen', () => {
     writeFileSync(join(repo, 'a.txt'), 'one\n')
     execSync('git add a.txt', { cwd: repo })
     execSync('git commit -q -m init', { cwd: repo })
-    writeFileSync(join(repo, 'a.txt'), 'one\ntwo\n')
 
     await page.request.post(`${BASE}/api/workspaces`, {
       data: { id: 'review-e2e', name: 'Review E2E', repository: repo },
     })
+    const created = await page.request.post(`${BASE}/api/tasks`, {
+      data: { title: 'Review page task', project: 'review-e2e' },
+    })
+    const task = await created.json()
+
+    // No live session on this task, so the review routes fall back to
+    // the deterministic branch name (gitutil.session_branch_name) —
+    // check the repo out onto it directly, matching a real task-scoped
+    // session's branch exactly.
+    const shortId = createHash('sha1').update(task.id).digest('hex').slice(0, 6)
+    const branch = `knots/review-page-task-${shortId}`
+    execSync(`git checkout -q -b ${branch}`, { cwd: repo })
+    writeFileSync(join(repo, 'a.txt'), 'one\ntwo\n')
+
+    await page.request.patch(`${BASE}/api/tasks/${task.id}`, { data: { status: 'review' } })
 
     await page.goto(`${BASE}/review`)
     await page.waitForTimeout(800)
-    await expect(page.locator('text=a.txt')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('text=1 pending')).toBeVisible()
+    await expect(page.locator('text=Review page task')).toBeVisible({ timeout: 5000 })
+
+    await page.click('text=Review page task')
+    await page.waitForTimeout(600)
+    expect(page.url()).toContain(`/review/${task.id}`)
+    await expect(page.locator('text=a.txt')).toBeVisible()
+    await expect(page.locator('text=1 file pending')).toBeVisible()
 
     // "Approve all" also matches a plain has-text("Approve") locator —
-    // target the per-diff "✓ Approve" button specifically.
-    await page.locator('button:has-text("✓ Approve")').click()
+    // target the per-file "Approve" button specifically.
+    await page.locator('button:has-text("Approve")').last().click()
     await page.waitForTimeout(500)
-    await expect(page.locator('text=Approved — committed')).toBeVisible()
+    await expect(page.locator('text=every file committed')).toBeVisible()
 
     const log = execSync('git log --oneline', { cwd: repo }).toString()
     expect(log.split('\n').filter(Boolean).length).toBe(2)
 
-    await page.request.delete(`${BASE}/api/workspaces/review-e2e`)
+    const updated = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()
+    expect(updated.status).toBe('done')
+
+    await page.request.delete(`${BASE}/api/tasks/${task.id}`).catch(() => {})
+    await page.request.delete(`${BASE}/api/workspaces/review-e2e`).catch(() => {})
   })
 
 })
@@ -2221,7 +2253,7 @@ test.describe('task to agent thread lifecycle', () => {
       // No session yet — header shows the two start buttons, not a thread link.
       await expect(page.locator('button:has-text("Start (watch)")')).toBeVisible()
       await expect(page.locator('button:has-text("Start headless")')).toBeVisible()
-      await expect(page.locator('button:has-text("Agent active")')).toHaveCount(0)
+      await expect(page.locator('button:has-text("● Watch")')).toHaveCount(0)
 
       await page.click('button:has-text("Start (watch)")')
       await page.waitForTimeout(1000)
@@ -2233,8 +2265,8 @@ test.describe('task to agent thread lifecycle', () => {
       await page.goto(`${BASE}/tasks/${task.id}`)
       await page.waitForTimeout(600)
 
-      await expect(page.locator('button:has-text("Agent active")')).toBeVisible()
-      await page.click('button:has-text("Agent active")')
+      await expect(page.locator('button:has-text("● Watch")')).toBeVisible()
+      await page.click('button:has-text("● Watch")')
       await page.waitForTimeout(400)
       expect(page.url()).toBe(threadUrl)
 
@@ -2270,7 +2302,7 @@ test.describe('task to agent thread lifecycle', () => {
 
       await page.reload()
       await page.waitForTimeout(500)
-      await expect(page.locator('button:has-text("Agent active")')).toBeVisible()
+      await expect(page.locator('button:has-text("● Watch")')).toBeVisible()
     } finally {
       await page.request.delete(`${BASE}/api/tasks/${task.id}`)
     }
@@ -2363,8 +2395,14 @@ test.describe('task to agent thread lifecycle', () => {
     await page.waitForTimeout(600)
     expect(page.url()).toBe(`${BASE}/`)
 
+    // Gone from the live list, but still reachable read-only — a
+    // stopped session's transcript is kept in the wastebin and can be
+    // reopened, not 404 (see routes/agents.py's wastebin fallback).
+    const liveAgents = (await (await page.request.get(`${BASE}/api/agents`)).json()).agents
+    expect(liveAgents.find((a: any) => a.id === session.id)).toBeUndefined()
     const agentsResp = await page.request.get(`${BASE}/api/agent/${session.id}`)
-    expect(agentsResp.status()).toBe(404)
+    expect(agentsResp.status()).toBe(200)
+    expect((await agentsResp.json()).running).toBe(false)
   })
 
   test('dragging the rail divider resizes the right rail and persists across reload', async ({ page }) => {

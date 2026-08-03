@@ -83,16 +83,22 @@ class UpdateRoleRequest(BaseModel):
     enabled: Optional[bool] = None
 
 
-class ReviewActionRequest(BaseModel):
-    workspace: str
-    file: Optional[str] = None  # omitted = every pending file in the workspace
-    # The branch the diff being approved was listed against. Approve
-    # checks the repo is still on this branch before committing — the
-    # working tree is shared across a workspace's sessions, so between
-    # listing a diff and clicking Approve, a different session could
-    # have taken over the repo and checked out a different branch.
-    # Omitted = skip the check (back-compat / non-branch-aware callers).
-    branch: str | None = None
+class ReviewApproveRequest(BaseModel):
+    task_id: str
+    file: Optional[str] = None  # omitted = every file still pending for this task
+
+
+class ReviewRejectRequest(BaseModel):
+    task_id: str
+    file: Optional[str] = None  # omitted = every file still pending for this task
+    reason: str
+    # Files already approved (and committed) earlier in this same
+    # review pass — the frontend already knows this from its own prior
+    # approve calls. Folded into the feedback message sent back to the
+    # agent so a mixed pass ("this one's fine, that one isn't") reads
+    # as one coherent note instead of the agent only hearing about the
+    # rejection.
+    approved_files: list[str] = []
 
 
 class UnlockVaultRequest(BaseModel):

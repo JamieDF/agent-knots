@@ -15,7 +15,7 @@ from agent_knots.cockpit.web.models import (
 from agent_knots.config import tasks_dir
 from agent_knots import provider as provider_module
 from agent_knots.session.manager import SessionManager
-from agent_knots.task.lifecycle import maybe_auto_stop_finished_sessions, maybe_fire_role_triggers
+from agent_knots.task.lifecycle import maybe_pause_or_stop_finished_sessions, maybe_fire_role_triggers
 from agent_knots.task.models import Priority, ReviewGate, Step, Task, TaskStatus, new_task_id
 from agent_knots.task.store import TaskStore
 
@@ -183,10 +183,10 @@ def create_router(session_manager: SessionManager) -> APIRouter:
         store.create(task)
         return _task_to_response(task, store)
 
-    async def _maybe_auto_stop_finished_sessions(new_status: str, task: Task) -> None:
+    async def _maybe_pause_or_stop_finished_sessions(new_status: str, task: Task) -> None:
         """Runs before _maybe_fire_role_triggers, not after — a
         transition into review that also fires a new advisory reviewer
-        must stop the *old* writer first, without racing the reviewer
+        must pause the *old* writer first, without racing the reviewer
         session that's about to be created (it doesn't exist yet at
         this point, since role triggers haven't fired).
 
@@ -194,7 +194,7 @@ def create_router(session_manager: SessionManager) -> APIRouter:
         task/lifecycle.py and task/tools.py's
         make_session_aware_task_tools.
         """
-        await maybe_auto_stop_finished_sessions(session_manager, new_status, task)
+        await maybe_pause_or_stop_finished_sessions(session_manager, new_status, task)
 
     def _maybe_fire_role_triggers(old_status: str, new_status: str, task: Task) -> None:
         """Shared with the agent-tool status-change path — see
@@ -232,7 +232,7 @@ def create_router(session_manager: SessionManager) -> APIRouter:
                 task = store.set_status(task_id, TaskStatus(body.status), actor="human")
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
-            await _maybe_auto_stop_finished_sessions(task.status.value, task)
+            await _maybe_pause_or_stop_finished_sessions(task.status.value, task)
             _maybe_fire_role_triggers(old_status, task.status.value, task)
 
         dirty = False

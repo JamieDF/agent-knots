@@ -491,25 +491,27 @@ class SessionManager:
 
             from agent_knots.events import serialize_event
 
-            WastebinStore(wastebin_dir()).add(WastebinEntry(
-                session_id=session.id,
-                name=session.name,
-                task_id=session.task_id,
-                task_title=task_title,
-                project_id=session.project_id,
-                branch=session.branch,
-                branch_base=session.branch_base,
-                working_dir=session.working_dir or "",
-                is_auto_workdir=is_auto_workdir,
-                role=session.role,
-                advisory=session.advisory,
-                mode=session.mode,
-                model=session.model,
-                tokens_used=session.tokens_used,
-                cost_usd=session.cost_usd,
-                started_at=session.started_at,
+            WastebinStore(wastebin_dir()).add(
+                WastebinEntry(
+                    session_id=session.id,
+                    name=session.name,
+                    task_id=session.task_id,
+                    task_title=task_title,
+                    project_id=session.project_id,
+                    branch=session.branch,
+                    branch_base=session.branch_base,
+                    working_dir=session.working_dir or "",
+                    is_auto_workdir=is_auto_workdir,
+                    role=session.role,
+                    advisory=session.advisory,
+                    mode=session.mode,
+                    model=session.model,
+                    tokens_used=session.tokens_used,
+                    cost_usd=session.cost_usd,
+                    started_at=session.started_at,
+                ),
                 history=[serialize_event(e) for e in session._history],
-            ))
+            )
         except Exception:
             pass
 

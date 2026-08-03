@@ -1196,12 +1196,16 @@ class TestAutoStopOnTerminalStatus:
         assert session_manager.get(session_id) is None
 
     @pytest.mark.asyncio
-    async def test_reaching_review_stops_the_session(self, authed_client, session_manager, monkeypatch):
+    async def test_reaching_review_pauses_rather_than_stops_the_session(self, authed_client, session_manager, monkeypatch):
+        """review pauses (interrupts + mode=assistant) instead of
+        stopping — the session stays alive so the Review screen's
+        reject flow can resume the same thread with feedback, rather
+        than losing the whole conversation and starting fresh."""
         monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
         monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
         monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
 
-        created = await authed_client.post("/api/tasks", json={"title": "Auto-stop on review"})
+        created = await authed_client.post("/api/tasks", json={"title": "Pause on review"})
         task_id = created.json()["id"]
         session = await authed_client.post(
             "/api/sessions", json={"prompt": "", "mode": "agent", "task_id": task_id},
@@ -1209,7 +1213,9 @@ class TestAutoStopOnTerminalStatus:
         session_id = session.json()["id"]
 
         await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "review"})
-        assert session_manager.get(session_id) is None
+        paused = session_manager.get(session_id)
+        assert paused is not None
+        assert paused.mode == "assistant"
 
     @pytest.mark.asyncio
     async def test_reaching_abandoned_stops_the_session(self, authed_client, session_manager, monkeypatch):
@@ -1246,19 +1252,19 @@ class TestAutoStopOnTerminalStatus:
         assert session_manager.get(session_id) is not None
 
     @pytest.mark.asyncio
-    async def test_auto_stop_does_not_kill_the_new_reviewer_it_just_fired(
+    async def test_pausing_writer_on_review_does_not_disturb_the_new_reviewer_it_just_fired(
         self, authed_client, session_manager, monkeypatch,
     ):
-        """The transition into 'review' both stops the old writer AND (if
-        the reviewer role is enabled) fires a brand new advisory
-        session. Ordering matters: auto-stop must run before the new
-        session exists, or it could catch and immediately kill it."""
+        """The transition into 'review' both pauses the old writer AND
+        (if the reviewer role is enabled) fires a brand new advisory
+        session. Ordering matters: the pause must run before the new
+        session exists, or it could catch and immediately pause it too."""
         monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
         monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
         monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
 
         await authed_client.patch("/api/roles/reviewer", json={"enabled": True})
-        created = await authed_client.post("/api/tasks", json={"title": "Review with auto-stop"})
+        created = await authed_client.post("/api/tasks", json={"title": "Review with pause"})
         task_id = created.json()["id"]
         writer = await authed_client.post(
             "/api/sessions", json={"prompt": "", "mode": "agent", "task_id": task_id},
@@ -1267,13 +1273,16 @@ class TestAutoStopOnTerminalStatus:
 
         await authed_client.patch(f"/api/tasks/{task_id}", json={"status": "review"})
 
-        assert session_manager.get(writer_id) is None
+        writer_session = session_manager.get(writer_id)
+        assert writer_session is not None
+        assert writer_session.mode == "assistant"
         for _ in range(10):
             await asyncio.sleep(0.05)
             reviewers = [s for s in session_manager.active if s.task_id == task_id and s.advisory]
             if reviewers:
                 break
-        assert reviewers, "the new advisory reviewer session must survive the same auto-stop call"
+        assert reviewers, "the new advisory reviewer session must survive the same pause call"
+        assert reviewers[0].mode == "agent", "the pause must not also catch the brand new reviewer session"
 
 
 class TestTaskAgentsAPI:
@@ -1315,23 +1324,16 @@ class TestTaskAgentsAPI:
 
 
 class TestReviewAPI:
-    @pytest.mark.asyncio
-    async def test_list_diffs_empty_when_no_workspaces(self, authed_client):
-        resp = await authed_client.get("/api/review/diffs")
-        assert resp.status_code == 200
-        assert resp.json()["diffs"] == []
+    """Review is now task-keyed, not workspace-keyed — every test sets
+    up a task assigned to a workspace/repo, checked out on the exact
+    branch _task_repo_and_branch falls back to when there's no live
+    session (gitutil.session_branch_name), since these tests never
+    start a real agent session."""
 
-    @pytest.mark.asyncio
-    async def test_list_diffs_skips_workspace_without_git_repo(self, authed_client, tmp_path):
-        non_repo = tmp_path / "not-a-repo"
-        non_repo.mkdir()
-        await authed_client.post("/api/workspaces", json={"id": "w1", "name": "W1", "repository": str(non_repo)})
-        resp = await authed_client.get("/api/review/diffs")
-        assert resp.json()["diffs"] == []
+    async def _reviewable_task(self, authed_client, tmp_path, ws_id, title="Review test task"):
+        from agent_knots.gitutil import session_branch_name
 
-    @pytest.mark.asyncio
-    async def test_list_diffs_from_real_git_repo(self, authed_client, tmp_path):
-        repo = tmp_path / "repo"
+        repo = tmp_path / ws_id
         repo.mkdir()
         subprocess.run(["git", "init"], cwd=repo, capture_output=True)
         subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
@@ -1339,10 +1341,37 @@ class TestReviewAPI:
         (repo / "a.txt").write_text("one\n")
         subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
         subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+
+        await authed_client.post("/api/workspaces", json={"id": ws_id, "name": ws_id, "repository": str(repo)})
+        task = (await authed_client.post("/api/tasks", json={"title": title, "project": ws_id})).json()
+        branch = session_branch_name(task["id"], title, "")
+        subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=repo, capture_output=True)
+
+        resp = await authed_client.patch(f"/api/tasks/{task['id']}", json={"status": "review"})
+        assert resp.status_code == 200
+        return task, repo, branch
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_empty_when_none_in_review(self, authed_client):
+        resp = await authed_client.get("/api/review/tasks")
+        assert resp.status_code == 200
+        assert resp.json()["tasks"] == []
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_includes_a_task_in_review(self, authed_client, tmp_path):
+        task, _repo, branch = await self._reviewable_task(authed_client, tmp_path, "rt1")
+        tasks = (await authed_client.get("/api/review/tasks")).json()["tasks"]
+        assert len(tasks) == 1
+        assert tasks[0]["id"] == task["id"]
+        assert tasks[0]["branch"] == branch
+        assert tasks[0]["project"] == "rt1"
+
+    @pytest.mark.asyncio
+    async def test_list_diffs_from_real_git_repo(self, authed_client, tmp_path):
+        task, repo, _branch = await self._reviewable_task(authed_client, tmp_path, "rt2")
         (repo / "a.txt").write_text("one\ntwo\n")
 
-        await authed_client.post("/api/workspaces", json={"id": "w2", "name": "W2", "repository": str(repo)})
-        resp = await authed_client.get("/api/review/diffs")
+        resp = await authed_client.get("/api/review/diffs", params={"task_id": task["id"]})
         diffs = resp.json()["diffs"]
         assert len(diffs) == 1
         assert diffs[0]["file"] == "a.txt"
@@ -1350,32 +1379,38 @@ class TestReviewAPI:
 
     @pytest.mark.asyncio
     async def test_approve_commits_the_file(self, authed_client, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        subprocess.run(["git", "init"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True)
-        (repo / "a.txt").write_text("one\n")
-        subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+        task, repo, _branch = await self._reviewable_task(authed_client, tmp_path, "rt3")
         (repo / "a.txt").write_text("one\ntwo\n")
 
-        await authed_client.post("/api/workspaces", json={"id": "w3", "name": "W3", "repository": str(repo)})
-        resp = await authed_client.post("/api/review/approve", json={"workspace": "w3", "file": "a.txt"})
+        resp = await authed_client.post("/api/review/approve", json={"task_id": task["id"], "file": "a.txt"})
         assert resp.status_code == 200
         assert resp.json()["status"] == "committed"
 
         # No longer a pending diff, and git log shows the new commit.
-        diffs = (await authed_client.get("/api/review/diffs")).json()["diffs"]
+        diffs = (await authed_client.get("/api/review/diffs", params={"task_id": task["id"]})).json()["diffs"]
         assert diffs == []
         log = subprocess.run(["git", "log", "--oneline"], cwd=repo, capture_output=True, text=True)
         assert log.stdout.count("\n") == 2
 
     @pytest.mark.asyncio
-    async def test_reject_does_not_discard_changes(self, authed_client, tmp_path):
-        """Reject must never run a destructive git operation — it only
-        acknowledges. Confirmed by checking the file is untouched."""
-        repo = tmp_path / "repo"
+    async def test_approve_all_moves_task_to_done_when_criteria_met(self, authed_client, tmp_path):
+        task, repo, _branch = await self._reviewable_task(authed_client, tmp_path, "rt4")
+        (repo / "a.txt").write_text("one\ntwo\n")
+
+        resp = await authed_client.post("/api/review/approve", json={"task_id": task["id"]})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "committed"
+        assert body["task_status"] == "done"
+
+        updated = (await authed_client.get(f"/api/tasks/{task['id']}")).json()
+        assert updated["status"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_approve_all_refused_stays_in_review_when_criteria_unmet(self, authed_client, tmp_path):
+        from agent_knots.gitutil import session_branch_name
+
+        repo = tmp_path / "rt5"
         repo.mkdir()
         subprocess.run(["git", "init"], cwd=repo, capture_output=True)
         subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
@@ -1383,21 +1418,70 @@ class TestReviewAPI:
         (repo / "a.txt").write_text("one\n")
         subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
         subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
+
+        await authed_client.post("/api/workspaces", json={"id": "rt5", "name": "rt5", "repository": str(repo)})
+        task = (await authed_client.post(
+            "/api/tasks", json={"title": "Needs criteria", "project": "rt5", "acceptance_criteria": ["Must pass"]},
+        )).json()
+        branch = session_branch_name(task["id"], "Needs criteria", "")
+        subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=repo, capture_output=True)
+        await authed_client.patch(f"/api/tasks/{task['id']}", json={"status": "review"})
         (repo / "a.txt").write_text("one\ntwo\n")
 
-        await authed_client.post("/api/workspaces", json={"id": "w4", "name": "W4", "repository": str(repo)})
-        resp = await authed_client.post("/api/review/reject", json={"workspace": "w4", "file": "a.txt"})
+        resp = await authed_client.post("/api/review/approve", json={"task_id": task["id"]})
         assert resp.status_code == 200
-        assert resp.json()["status"] == "rejected"
+        body = resp.json()
+        assert body["status"] == "committed"  # the commit itself still stands
+        assert body["task_status"] == "review"
+        assert "done_error" in body
+
+        updated = (await authed_client.get(f"/api/tasks/{task['id']}")).json()
+        assert updated["status"] == "review"
+
+    @pytest.mark.asyncio
+    async def test_reject_does_not_discard_changes_and_moves_task_back_to_in_progress(
+        self, authed_client, monkeypatch, tmp_path,
+    ):
+        """Reject must never run a destructive git operation — confirmed
+        by checking the file is untouched — but unlike the old
+        workspace-wide queue's version, it's a real "send it back":
+        the task moves back to in_progress. No live session here, so
+        this also exercises reject's start-a-fresh-session fallback."""
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        task, repo, _branch = await self._reviewable_task(authed_client, tmp_path, "rt6")
+        (repo / "a.txt").write_text("one\ntwo\n")
+
+        resp = await authed_client.post(
+            "/api/review/reject", json={"task_id": task["id"], "file": "a.txt", "reason": "wrong approach"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "rejected"
+        assert body["task_status"] == "in_progress"
 
         # The uncommitted edit must still be there — reject didn't discard it.
         assert (repo / "a.txt").read_text() == "one\ntwo\n"
-        diffs = (await authed_client.get("/api/review/diffs")).json()["diffs"]
+        diffs = (await authed_client.get("/api/review/diffs", params={"task_id": task["id"]})).json()["diffs"]
         assert len(diffs) == 1
 
+        updated = (await authed_client.get(f"/api/tasks/{task['id']}")).json()
+        assert updated["status"] == "in_progress"
+
     @pytest.mark.asyncio
-    async def test_list_diffs_includes_the_current_branch(self, authed_client, tmp_path):
-        repo = tmp_path / "repo"
+    async def test_reject_resumes_the_same_paused_session_with_feedback(
+        self, authed_client, session_manager, monkeypatch, tmp_path,
+    ):
+        """The whole point of pausing (not stopping) on review: reject
+        picks the *same* thread back up with the reviewer's feedback,
+        rather than starting a fresh session and losing all context."""
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        repo = tmp_path / "rt7"
         repo.mkdir()
         subprocess.run(["git", "init"], cwd=repo, capture_output=True)
         subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
@@ -1405,85 +1489,64 @@ class TestReviewAPI:
         (repo / "a.txt").write_text("one\n")
         subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
         subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "checkout", "-q", "-b", "knots/some-session"], cwd=repo, capture_output=True)
+
+        await authed_client.post("/api/workspaces", json={"id": "rt7", "name": "rt7", "repository": str(repo)})
+        task = (await authed_client.post(
+            "/api/tasks", json={"title": "Resume test", "project": "rt7"},
+        )).json()
+        session = (await authed_client.post(
+            "/api/sessions", json={"prompt": "", "mode": "agent", "task_id": task["id"], "project_id": "rt7"},
+        )).json()
+        session_id = session["id"]
+
         (repo / "a.txt").write_text("one\ntwo\n")
+        await authed_client.patch(f"/api/tasks/{task['id']}", json={"status": "review"})
+        assert session_manager.get(session_id).mode == "assistant"  # paused
 
-        await authed_client.post("/api/workspaces", json={"id": "w5", "name": "W5", "repository": str(repo)})
-        diffs = (await authed_client.get("/api/review/diffs")).json()["diffs"]
-        assert len(diffs) == 1
-        assert diffs[0]["branch"] == "knots/some-session"
-
-    @pytest.mark.asyncio
-    async def test_approve_with_matching_branch_succeeds(self, authed_client, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        subprocess.run(["git", "init"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True)
-        (repo / "a.txt").write_text("one\n")
-        subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "checkout", "-q", "-b", "knots/s1"], cwd=repo, capture_output=True)
-        (repo / "a.txt").write_text("one\ntwo\n")
-
-        await authed_client.post("/api/workspaces", json={"id": "w6", "name": "W6", "repository": str(repo)})
         resp = await authed_client.post(
-            "/api/review/approve", json={"workspace": "w6", "file": "a.txt", "branch": "knots/s1"},
+            "/api/review/reject", json={"task_id": task["id"], "file": "a.txt", "reason": "needs work"},
         )
         assert resp.status_code == 200
-        assert resp.json()["status"] == "committed"
+        assert resp.json()["session_id"] == session_id  # same session, not a new one
+
+        resumed = session_manager.get(session_id)
+        assert resumed is not None
+        assert resumed.mode == "agent"
+
+    @pytest.mark.asyncio
+    async def test_approve_or_reject_on_task_not_in_review_400s(self, authed_client, tmp_path):
+        repo = tmp_path / "rt8"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, capture_output=True)
+        await authed_client.post("/api/workspaces", json={"id": "rt8", "name": "rt8", "repository": str(repo)})
+        task = (await authed_client.post("/api/tasks", json={"title": "Not in review", "project": "rt8"})).json()
+
+        approve = await authed_client.post("/api/review/approve", json={"task_id": task["id"]})
+        assert approve.status_code == 400
+        reject = await authed_client.post("/api/review/reject", json={"task_id": task["id"], "reason": "x"})
+        assert reject.status_code == 400
 
     @pytest.mark.asyncio
     async def test_approve_with_stale_branch_conflicts_and_does_not_commit(self, authed_client, tmp_path):
-        """Regression guard for the review-queue's blind spot: the working
-        tree is shared across a workspace's sessions, so a diff listed
-        against one branch could belong to a different session's work by
-        the time Approve is clicked, if another session took over the
-        repo and checked out a different branch in between. Approve must
-        refuse rather than commit onto whatever's checked out now."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        subprocess.run(["git", "init"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True)
-        (repo / "a.txt").write_text("one\n")
-        subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "checkout", "-q", "-b", "knots/s2"], cwd=repo, capture_output=True)
+        """Regression guard: the working tree is shared across a
+        workspace's sessions, so the branch a task's diffs live on
+        could change out from under a review action if something else
+        takes over the repo in between. Approve must refuse rather
+        than commit onto whatever's checked out now."""
+        task, repo, branch = await self._reviewable_task(authed_client, tmp_path, "rt9")
         (repo / "a.txt").write_text("one\ntwo\n")
+        subprocess.run(["git", "checkout", "-q", "-b", "some-other-branch"], cwd=repo, capture_output=True)
 
-        await authed_client.post("/api/workspaces", json={"id": "w7", "name": "W7", "repository": str(repo)})
-        resp = await authed_client.post(
-            "/api/review/approve", json={"workspace": "w7", "file": "a.txt", "branch": "knots/a-different-session"},
-        )
+        resp = await authed_client.post("/api/review/approve", json={"task_id": task["id"], "file": "a.txt"})
         assert resp.status_code == 409
 
-        # Nothing was committed — the diff is still pending.
-        diffs = (await authed_client.get("/api/review/diffs")).json()["diffs"]
+        subprocess.run(["git", "checkout", "-q", branch], cwd=repo, capture_output=True)
+        diffs = (await authed_client.get("/api/review/diffs", params={"task_id": task["id"]})).json()["diffs"]
         assert len(diffs) == 1
 
     @pytest.mark.asyncio
-    async def test_approve_without_branch_skips_the_check(self, authed_client, tmp_path):
-        """Omitting branch entirely (older/non-branch-aware callers) must
-        behave exactly as before this feature — no check, just commit."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        subprocess.run(["git", "init"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, capture_output=True)
-        (repo / "a.txt").write_text("one\n")
-        subprocess.run(["git", "add", "a.txt"], cwd=repo, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, capture_output=True)
-        (repo / "a.txt").write_text("one\ntwo\n")
-
-        await authed_client.post("/api/workspaces", json={"id": "w8", "name": "W8", "repository": str(repo)})
-        resp = await authed_client.post("/api/review/approve", json={"workspace": "w8", "file": "a.txt"})
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "committed"
-
-    @pytest.mark.asyncio
-    async def test_approve_unknown_workspace_404s(self, authed_client):
-        resp = await authed_client.post("/api/review/approve", json={"workspace": "nonexistent"})
+    async def test_approve_unknown_task_404s(self, authed_client):
+        resp = await authed_client.post("/api/review/approve", json={"task_id": "nonexistent"})
         assert resp.status_code == 404
 
 
