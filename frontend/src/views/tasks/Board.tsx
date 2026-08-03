@@ -5,6 +5,7 @@ import { enabledStages, stageForStatus, type Stage } from '../../lib/stages'
 import { priorityColor } from '../../lib/priorityColors'
 import { useTaskList } from '../../lib/useTaskList'
 import TaskDialog from '../../components/TaskDialog'
+import { Spinner } from '../../components/primitives'
 
 /** Board tab of the Tasks screen — stage-driven columns backed by the
  * real Workflows stage config. */
@@ -15,7 +16,7 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
   const [dragOverStage, setDragOverStage] = useState<string | null>(null)
   const [moveError, setMoveError] = useState<string | null>(null)
   const navigate = useNavigate()
-  const { tasks, setTasks, load, workspace, allStages } = useTaskList(reloadSignal)
+  const { tasks, setTasks, load, loading, workspace, allStages } = useTaskList(reloadSignal)
 
   const handleMove = async (taskId: string, newStatus: string) => {
     try {
@@ -38,6 +39,14 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
   // stage here preserves that order within each column.
   const tasksForStage = (stageKey: string) =>
     tasks.filter(t => stageForStatus(allStages, t.status)?.key === stageKey)
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 60, flex: 1 }}>
+        <Spinner />
+      </div>
+    )
+  }
 
   return (
 	    <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 12, flex: 1, minHeight: 0 }}>

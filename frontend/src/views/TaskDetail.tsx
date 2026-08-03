@@ -8,7 +8,7 @@ import { useWorkspaceScope } from '../lib/workspaceContext'
 import { statusStyle } from '../lib/statusColors'
 import { priorityColor } from '../lib/priorityColors'
 import { timeAgo } from '../lib/format'
-import { Card, Chip, SectionLabel } from '../components/primitives'
+import { Card, Chip, SectionLabel, Spinner } from '../components/primitives'
 import DeskLayout from '../components/DeskLayout'
 import TaskDialog from '../components/TaskDialog'
 
@@ -33,20 +33,33 @@ function TaskDetail() {
   const [related, setRelated] = useState<TDetail[]>([])
   const [error, setError] = useState('')
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     if (!id) return
-    fetchTask(id).then(t => {
+    try {
+      // Fetched together, not task-then-agents sequentially — otherwise
+      // the page renders with task loaded but agents still empty for a
+      // beat, showing the Start buttons before flipping to "Watch" once
+      // the agents call catches up. Whether an agent is already on this
+      // task needs to be known from the very first render, not a moment
+      // after it.
+      const [t, agentsRes, historyRes] = await Promise.all([
+        fetchTask(id),
+        fetchTaskAgents(id).catch(() => ({ agents: [] })),
+        fetchTaskHistory(id).catch(() => ({ sessions: [] })),
+      ])
       setTask(t)
+      setAgents(agentsRes.agents)
+      setPastSessions(historyRes.sessions)
       setLoading(false)
-      fetchTaskAgents(id).then(r => setAgents(r.agents)).catch(() => setAgents([]))
-      fetchTaskHistory(id).then(r => setPastSessions(r.sessions)).catch(() => setPastSessions([]))
       if (t.dependencies.length > 0) {
-        Promise.all(t.dependencies.map(d => fetchTask(d).catch(() => null)))
-          .then(rs => setRelated(rs.filter((r): r is TDetail => r !== null)))
+        const rs = await Promise.all(t.dependencies.map(d => fetchTask(d).catch(() => null)))
+        setRelated(rs.filter((r): r is TDetail => r !== null))
       } else {
         setRelated([])
       }
-    }).catch(() => setLoading(false))
+    } catch {
+      setLoading(false)
+    }
   }, [id])
 
   // Poll so progress/status an agent writes while this page is open
@@ -94,7 +107,7 @@ function TaskDetail() {
     navigate('/tasks')
   }
 
-  if (loading) return <DeskLayout width={880}><Card>Loading…</Card></DeskLayout>
+  if (loading) return <DeskLayout width={880}><Card style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner /></Card></DeskLayout>
   if (!task) return <DeskLayout width={880}><Card>Task not found.</Card></DeskLayout>
 
   const stepsDone = task.steps.filter(s => s.status === 'done').length
@@ -200,7 +213,7 @@ function TaskDetail() {
         <Card style={{ marginBottom: 20, background: 'var(--acc-soft)', border: '1px solid var(--acc)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 13, color: 'var(--ink)' }}>🛡 Auto-review queued — all criteria must be met before this can complete.</span>
-            <button onClick={handleRunReview} style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}>
+            <button onClick={handleRunReview} style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}>
               Run review now
             </button>
           </div>
@@ -331,7 +344,7 @@ function TaskDetail() {
                   </span>
                   <button
                     onClick={() => navigate(`/agent/${s.id}`)}
-                    style={{ fontSize: 11, fontWeight: 600, color: 'var(--acc)' }}
+                    style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--acc)' }}
                   >
                     Watch {s.name} →
                   </button>
@@ -425,7 +438,7 @@ function PendingQuestionCard({ agentId, pq, onAnswered }: { agentId: string; pq:
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
           {pq.options.map((o, i) => (
             <button key={i} disabled={sending} onClick={() => handleAnswer(o)}
-              style={{ fontSize: 12, padding: '5px 12px', borderRadius: 8, background: 'var(--acc-soft)', color: 'var(--acc)', fontWeight: 600, border: 'none', cursor: 'pointer', fontFamily: 'inherit', opacity: sending ? 0.6 : 1 }}
+              style={{ fontSize: 12.5, padding: '5px 12px', borderRadius: 8, background: 'var(--acc-soft)', color: 'var(--acc)', fontWeight: 600, opacity: sending ? 0.6 : 1 }}
             >{o}</button>
           ))}
         </div>
@@ -439,8 +452,11 @@ function PendingQuestionCard({ agentId, pq, onAnswered }: { agentId: string; pq:
           disabled={sending}
           style={{ flex: 1, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--line2)', background: 'var(--card2)', color: 'var(--ink)', fontSize: 12.5, outline: 'none', fontFamily: 'inherit', opacity: sending ? 0.6 : 1 }}
         />
+        {/* Same padding as every other primary-action button in this
+            file (header Edit/Delete/Start/Watch, Run review now) — was
+            6px 16px here, an unexplained one-off. */}
         <button onClick={() => handleAnswer(answer)} disabled={sending || !answer.trim()}
-          style={{ padding: '6px 16px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', border: 'none', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', opacity: sending || !answer.trim() ? 0.6 : 1 }}
+          style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', whiteSpace: 'nowrap', opacity: sending || !answer.trim() ? 0.6 : 1 }}
         >Answer</button>
       </div>
     </Card>

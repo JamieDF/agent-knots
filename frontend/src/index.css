@@ -142,3 +142,9 @@ code {
   padding: 1px 4px;
   border-radius: 3px;
 }
+
+/* Spinner primitive (components/primitives/Spinner.tsx) — inline
+   styles can't declare @keyframes, so this lives here. */
+@keyframes knots-spin {
+  to { transform: rotate(360deg); }
+}
