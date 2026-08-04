@@ -78,7 +78,10 @@ def create_router(session_manager: Any) -> APIRouter:
     @router.get("/api/review/tasks")
     async def list_review_tasks():
         """Tasks sitting in review, each with the workspace/branch its
-        diffs live on and its (still paused, usually) session."""
+        diffs live on, its (still paused, usually) session, and a
+        summary of pending changes (file count + total +/- lines) so the
+        review list can show what changed without a second fetch per
+        task."""
         tasks = TaskStore(_tasks_dir()).list(status="review")
         items = []
         for task in tasks:
@@ -87,14 +90,36 @@ def create_router(session_manager: Any) -> APIRouter:
             )
             branch = (session.branch if session and session.branch else None) or session_branch_name(task.id, task.title, "")
             proj = ProjectStore(_projects_dir()).get(task.project) if task.project else None
+
+            # Diff stats — total file count + added/deleted across all
+            # pending files. Best-effort: if the repo/branch isn't
+            # resolvable (e.g. workspace removed), zeros rather than 500.
+            file_count = 0
+            total_added = 0
+            total_deleted = 0
+            try:
+                repo, _br, _sess = _task_repo_and_branch(task, session_manager)
+                stat = _git_diff_stat(repo)
+                file_count = len(stat)
+                total_added = sum(f["added"] for f in stat)
+                total_deleted = sum(f["deleted"] for f in stat)
+            except HTTPException:
+                pass
+
             items.append({
                 "id": task.id,
                 "title": task.title,
+                "priority": task.priority.value,
                 "project": task.project,
                 "project_name": proj.name if proj else "",
                 "branch": branch,
                 "session_id": session.id if session else None,
                 "session_name": session.name if session else "",
+                "session_running": bool(session and session.running),
+                "session_error": (session._last_error if session else ""),
+                "file_count": file_count,
+                "added": total_added,
+                "deleted": total_deleted,
             })
         return {"tasks": items}
 

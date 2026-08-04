@@ -278,8 +278,11 @@ export async function updateRole(key: string, data: { model?: string; trigger?: 
 // not stopped — see task/lifecycle.py) session with the feedback.
 
 export interface ReviewTask {
-  id: string; title: string; project: string; project_name: string
+  id: string; title: string; priority: string
+  project: string; project_name: string
   branch: string; session_id: string | null; session_name: string
+  session_running: boolean; session_error: string
+  file_count: number; added: number; deleted: number
 }
 
 export interface ReviewDiff {

@@ -6,6 +6,8 @@ import {
   fetchReviewTasks, fetchReviewDiffs, fetchReviewDiffText, approveReview, rejectReview, fetchTask,
   type ReviewTask, type ReviewDiff, type TaskDetail as TDetail,
 } from '../lib/api'
+import { priorityColor } from '../lib/priorityColors'
+import { computeAgentState, AGENT_STATE_TOKENS } from '../lib/agentState'
 
 type FileStatus = 'pending' | 'committed'
 
@@ -21,6 +23,9 @@ function Review() {
 function ReviewTaskList() {
   const navigate = useNavigate()
   const [tasks, setTasks] = useState<ReviewTask[]>([])
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  // Cached diffs per task — fetched on first expand, reused after.
+  const [diffsByTask, setDiffsByTask] = useState<Record<string, ReviewDiff[]>>({})
 
   const load = useCallback(() => {
     fetchReviewTasks().then(r => setTasks(r.tasks)).catch(() => {})
@@ -31,6 +36,17 @@ function ReviewTaskList() {
     const interval = setInterval(load, 5000)
     return () => clearInterval(interval)
   }, [load])
+
+  const handleExpand = async (taskId: string) => {
+    if (expandedId === taskId) { setExpandedId(null); return }
+    setExpandedId(taskId)
+    if (!diffsByTask[taskId]) {
+      try {
+        const res = await fetchReviewDiffs(taskId)
+        setDiffsByTask(prev => ({ ...prev, [taskId]: res.diffs }))
+      } catch { /* ignore — the accordion just shows nothing */ }
+    }
+  }
 
   return (
     <DeskLayout width={850}>
@@ -43,19 +59,83 @@ function ReviewTaskList() {
         <Card><div style={{ textAlign: 'center', padding: 20, color: 'var(--mut)', fontSize: 13 }}>Nothing waiting on review.</div></Card>
       )}
 
-      {tasks.map(t => (
-        <div key={t.id} onClick={() => navigate(`/review/${t.id}`)} style={{ cursor: 'pointer', marginBottom: 10 }}>
-          <Card>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--ink)', flex: 1 }}>{t.title}</span>
-              {t.project_name && <Chip mono>{t.project_name}</Chip>}
+      {tasks.map(t => {
+        const agentState = computeAgentState(!!t.session_id, t.session_running, t.session_error)
+        const st = agentState ? AGENT_STATE_TOKENS[agentState] : null
+        const isOpen = expandedId === t.id
+        const diffs = diffsByTask[t.id] || []
+
+        return (
+          <div
+            key={t.id}
+            className="ak-review-card"
+            style={{
+              background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 14,
+              boxShadow: 'var(--shadow)', marginBottom: 10, overflow: 'hidden',
+              borderLeft: `3px solid ${priorityColor(t.priority)}`,
+              transition: 'box-shadow 0.12s ease',
+            }}
+          >
+            {/* Clickable head — expands the accordion */}
+            <div
+              onClick={() => handleExpand(t.id)}
+              style={{ cursor: 'pointer', padding: '14px 16px' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: 12, color: 'var(--mut)', transition: 'transform 0.15s', transform: isOpen ? 'rotate(90deg)' : 'none' }}>▸</span>
+                <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)', flex: 1 }}>{t.title}</span>
+                {t.project_name && <Chip mono>{t.project_name}</Chip>}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                  <span style={{ color: 'var(--ok)' }}>+{t.added}</span>
+                  <span style={{ color: 'var(--err)' }}>−{t.deleted}</span>
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: 14, alignItems: 'center', fontSize: 11.5, paddingLeft: 20 }}>
+                <span style={{ color: 'var(--ink2)' }}>{t.file_count} file{t.file_count !== 1 ? 's' : ''}</span>
+                <span style={{ color: 'var(--mut2)' }}>·</span>
+                {st ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '2px 7px', borderRadius: 6, background: st.soft }}>
+                    <span className={agentState === 'running' ? 'ak-pulse' : undefined} style={{ width: 6, height: 6, borderRadius: '50%', background: st.color, color: st.color, flexShrink: 0, position: 'relative' }} />
+                    <span style={{ fontWeight: 600, color: st.color }}>{t.session_name}</span>
+                    <span style={{ color: 'var(--mut)' }}>· {st.label}</span>
+                  </span>
+                ) : (
+                  <span style={{ color: 'var(--mut)' }}>no active session</span>
+                )}
+                <span style={{ flex: 1 }} />
+                {/* Review files → opens the full per-file approve/reject screen.
+                    stopPropagation so it doesn't also toggle the accordion. */}
+                <button
+                  onClick={e => { e.stopPropagation(); navigate(`/review/${t.id}`) }}
+                  title="Open full per-file review"
+                  style={{ fontSize: 11.5, fontWeight: 600, padding: '4px 12px', borderRadius: 7, border: 'none', cursor: 'pointer', background: 'var(--acc)', color: 'var(--acc-ink)' }}
+                >Review files →</button>
+              </div>
             </div>
-            <div style={{ fontSize: 11, color: 'var(--mut)', marginTop: 6, fontFamily: 'var(--font-mono)' }}>
-              {t.branch}{t.session_name && ` · ${t.session_name}`}
-            </div>
-          </Card>
-        </div>
-      ))}
+
+            {/* Accordion body — inline diff preview, expanded on click */}
+            {isOpen && (
+              <div style={{ borderTop: '1px solid var(--line)', padding: '12px 16px' }}>
+                {diffs.length === 0 && (
+                  <div style={{ fontSize: 12.5, color: 'var(--mut)' }}>No pending changes.</div>
+                )}
+                {diffs.map(d => (
+                  <div key={d.file} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', borderBottom: '1px solid var(--line)' }}>
+                    <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--ink)' }}>{d.file}</span>
+                    <span style={{ fontSize: 11, color: 'var(--ok)', fontFamily: 'var(--font-mono)' }}>+{d.added}</span>
+                    <span style={{ fontSize: 11, color: 'var(--err)', fontFamily: 'var(--font-mono)' }}>−{d.deleted}</span>
+                  </div>
+                ))}
+                {diffs.length > 0 && (
+                  <div style={{ fontSize: 11, color: 'var(--mut)', paddingTop: 8 }}>
+                    Open full review to see line-by-line diffs and approve/reject per file.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
     </DeskLayout>
   )
 }

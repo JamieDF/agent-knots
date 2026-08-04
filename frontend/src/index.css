@@ -245,3 +245,10 @@ code {
 @media (hover: none) {
   .ak-list-action { opacity: 1; }
 }
+
+/* Review list cards — hover lift matching the board/list cards. */
+.ak-review-card { transition: box-shadow 0.12s ease, transform 0.12s ease; }
+.ak-review-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
