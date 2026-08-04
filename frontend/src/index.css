@@ -252,3 +252,12 @@ code {
   transform: translateY(-2px);
   box-shadow: var(--shadow-lg);
 }
+
+/* Dashboard queue items — hover background + split-button reveal,
+   same interaction as the board card. */
+.ak-queue-item:hover { background: var(--card2); }
+.ak-queue-item:hover .ak-queue-split,
+.ak-queue-item:focus-within .ak-queue-split { opacity: 1; }
+@media (hover: none) {
+  .ak-queue-split { opacity: 1; }
+}

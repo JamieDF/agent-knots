@@ -67,7 +67,11 @@ function NewSessionDialog({ open, onClose, defaultWorkspace }: Props) {
         task_id: taskId || undefined,
       })
       onClose()
-      navigate(`/agent/${session.id}`)
+      // Autonomous = background start: the agent self-directs from its
+      // task, so there's nothing to watch in real time — stay on the
+      // dashboard and let it show up as a running agent card. Guided =
+      // opens the thread, since you're the one driving it.
+      if (mode !== 'agent') navigate(`/agent/${session.id}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start')
     } finally {
