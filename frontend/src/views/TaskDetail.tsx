@@ -114,8 +114,8 @@ function TaskDetail() {
     navigate('/tasks')
   }
 
-  if (loading) return <DeskLayout width={880}><Card style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner /></Card></DeskLayout>
-  if (!task) return <DeskLayout width={880}><Card>Task not found.</Card></DeskLayout>
+  if (loading) return <DeskLayout scale="narrow"><Card style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner /></Card></DeskLayout>
+  if (!task) return <DeskLayout scale="narrow"><Card>Task not found.</Card></DeskLayout>
 
   const stepsDone = task.steps.filter(s => s.status === 'done').length
   const metSet = new Set(task.criteria_met)
@@ -134,7 +134,7 @@ function TaskDetail() {
   const stageIndex = LIFECYCLE.indexOf(task.status === 'blocked' ? 'in_progress' : task.status === 'planned' ? 'open' : task.status)
 
   return (
-    <DeskLayout width={880}>
+    <DeskLayout scale="narrow">
       {/* Header — title-led. The bar carries the task's identity (title +
           status/project chips); priority lives in the Metadata side block.
           The right-hand action zone is either a single primary Start (idle),

@@ -69,7 +69,7 @@ function Dashboard() {
   if (configured === null) return null
 
   return (
-    <DeskLayout width={850}>
+    <DeskLayout scale="narrow">
       {showWizard && (
         <SetupWizard
           onComplete={() => { setConfigured(true); setShowWizard(false) }}

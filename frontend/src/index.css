@@ -29,6 +29,12 @@
   --font: 'DM Sans', system-ui, sans-serif;
   --font-mono: 'DM Mono', monospace;
 
+  /* Content width — the base width for every DeskLayout-wrapped view.
+     Responsive by default (never wider than the viewport minus padding),
+     overridable from Accessibility settings. DeskLayout multiplies this
+     by a per-view scale factor (narrow/normal/wide). */
+  --content-width: min(1000px, calc(100vw - 40px));
+
   /* Compatibility aliases — the old dark-only token names, used
      throughout views/components not yet migrated to the Atelier
      primitives (Board, Tasks, TaskDetail, Settings). Drop each alias as

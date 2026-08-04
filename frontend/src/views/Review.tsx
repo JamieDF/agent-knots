@@ -49,7 +49,7 @@ function ReviewTaskList() {
   }
 
   return (
-    <DeskLayout width={850}>
+    <DeskLayout scale="narrow">
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
         <div style={{ fontSize: 18, fontWeight: 700 }}>Review</div>
         <Chip color="var(--warn-ink)" soft>{tasks.length} waiting</Chip>
@@ -207,10 +207,10 @@ function ReviewTaskDetail({ taskId }: { taskId: string }) {
     }
   }
 
-  if (!task) return <DeskLayout width={1040}><Card>Loading…</Card></DeskLayout>
+  if (!task) return <DeskLayout scale="normal"><Card>Loading…</Card></DeskLayout>
 
   return (
-    <DeskLayout width={1040}>
+    <DeskLayout scale="normal">
       <button onClick={() => navigate('/review')} style={{ color: 'var(--ink2)', fontSize: 13, marginBottom: 14 }}>← Review</button>
 
       {doneMessage && (

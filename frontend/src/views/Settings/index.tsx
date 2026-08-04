@@ -83,7 +83,7 @@ function SettingsPage() {
   }, [])
 
   return (
-    <DeskLayout width={1040} ref={scrollRef}>
+    <DeskLayout scale="normal" ref={scrollRef}>
       <div style={{ display: 'flex', gap: 28, alignItems: 'flex-start' }}>
         <nav style={{ position: 'sticky', top: 0, width: 150, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
           {SECTIONS.map(s => (

@@ -1,18 +1,29 @@
 import { forwardRef, type ReactNode } from 'react'
 
+type Scale = 'narrow' | 'normal' | 'wide'
+
+// Each scale is a multiplier on the base --content-width CSS variable.
+// Kept tight (±5%) so switching tabs doesn't jarringly resize — the
+// Board gets a touch more room for its kanban columns, focused screens
+// a touch less, but they're all visibly the same column.
+const SCALE_MULTIPLIER: Record<Scale, number> = {
+  narrow: 0.95,
+  normal: 1.0,
+  wide: 1.08,
+}
+
 interface Props {
   children: ReactNode
-  width?: 420 | 800 | 850 | 880 | 900 | 1000 | 1040 | 1240 | 1280
+  scale?: Scale
 }
 
 /** The dotted-grid "desk" background + centered-column page scaffold used
- * by every Atelier screen. Width follows the per-screen values from the
- * design handoff (Dashboard 850, Task Detail 880, Tasks list 1000, board
- * 1240, Thread 1280, Vault locked 420 / unlocked 900, Settings 800/1040
- * — 1040 when a side section nav sits alongside the 800px column).
+ * by every Atelier screen. Width is driven by the --content-width CSS
+ * variable (responsive + customizable) times a per-view scale factor.
  * Forwards a ref to the scrollable outer div so pages with in-page
  * navigation (Settings) can scroll-spy / scrollIntoView within it. */
-const DeskLayout = forwardRef<HTMLDivElement, Props>(function DeskLayout({ children, width = 850 }, ref) {
+const DeskLayout = forwardRef<HTMLDivElement, Props>(function DeskLayout({ children, scale = 'normal' }, ref) {
+  const maxWidth = `calc(var(--content-width) * ${SCALE_MULTIPLIER[scale]})`
   return (
     <div
       ref={ref}
@@ -28,7 +39,7 @@ const DeskLayout = forwardRef<HTMLDivElement, Props>(function DeskLayout({ child
     >
       <div
         style={{
-          maxWidth: width,
+          maxWidth,
           margin: '0 auto',
           padding: '28px 20px 60px',
         }}

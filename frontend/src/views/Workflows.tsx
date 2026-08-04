@@ -50,7 +50,7 @@ function Workflows() {
   }
 
   return (
-    <DeskLayout width={880}>
+    <DeskLayout scale="narrow">
       {/* Current workflow diagram */}
       <Card style={{ marginBottom: 16 }}>
         <div style={{ marginBottom: 12 }}><SectionLabel>Current workflow</SectionLabel></div>
