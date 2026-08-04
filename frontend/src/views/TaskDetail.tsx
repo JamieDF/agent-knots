@@ -6,6 +6,7 @@ import {
 } from '../lib/api'
 import { useWorkspaceScope } from '../lib/workspaceContext'
 import { statusStyle } from '../lib/statusColors'
+import { computeAgentState, AGENT_STATE_TOKENS } from '../lib/agentState'
 import { timeAgo } from '../lib/format'
 import { useClickOutside } from '../lib/useClickOutside'
 import { Card, Chip, SectionLabel, Spinner } from '../components/primitives'
@@ -123,24 +124,12 @@ function TaskDetail() {
   // fetchTaskAgents) is the accurate signal for whether someone's
   // actually still on this task right now.
   const activeWriter = agents.find(a => !a.advisory)
-  // Three-state indicator on the watch card:
-  //   running (turn in flight)       → green, pulsing
-  //   errored (last turn threw)      → red, static
-  //   idle (between turns, paused,   → amber, static
-  //         awaiting review, or asking a question)
-  // "stopped" never reaches here — a stopped session drops out of the
-  // live agents list and into the Past sessions block below.
-  type AgentState = 'running' | 'idle' | 'error'
-  const agentState: AgentState = activeWriter
-    ? activeWriter.error ? 'error' : activeWriter.running ? 'running' : 'idle'
-    : 'idle'
-  // No --err-soft token in the palette, so the error card's tint is mixed
-  // from --err directly (matching how the watch card's border is built).
-  const STATE_TOKEN: Record<AgentState, { color: string; soft: string; label: string }> = {
-    running: { color: 'var(--ok)', soft: 'var(--ok-soft)', label: 'running' },
-    idle: { color: 'var(--warn-ink)', soft: 'var(--warn-soft)', label: 'waiting' },
-    error: { color: 'var(--err)', soft: 'color-mix(in srgb, var(--err) 14%, var(--card))', label: 'errored' },
-  }
+  // Three-state indicator on the watch card (green/amber/red), shared
+  // with the Board's task card via lib/agentState so both surfaces agree.
+  const agentState = activeWriter
+    ? computeAgentState(true, activeWriter.running, activeWriter.error)
+    : null
+  const st = agentState ? AGENT_STATE_TOKENS[agentState] : null
 
   const stageIndex = LIFECYCLE.indexOf(task.status === 'blocked' ? 'in_progress' : task.status === 'planned' ? 'open' : task.status)
 
@@ -170,23 +159,20 @@ function TaskDetail() {
           </div>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          {activeWriter ? (() => {
-            const st = STATE_TOKEN[agentState]
-            return (
-              <button
-                onClick={() => navigate(`/agent/${activeWriter.id}`)}
-                title={`Open ${activeWriter.name}'s thread · ${st.label}`}
-                style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '4px 6px 4px 11px', borderRadius: 9, cursor: 'pointer', background: st.soft, border: `1px solid color-mix(in srgb, ${st.color} 35%, transparent)` }}
-              >
-                <span
-                  className={agentState === 'running' ? 'ak-pulse' : undefined}
-                  style={{ width: 8, height: 8, borderRadius: '50%', background: st.color, color: st.color, flexShrink: 0, position: 'relative' }}
-                />
-                <span style={{ fontSize: 12.5, fontWeight: 700, color: st.color }}>{activeWriter.name}</span>
-                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--acc-ink)', background: st.color, padding: '3px 9px', borderRadius: 6, display: 'inline-flex', alignItems: 'center', gap: 4 }}>Watch →</span>
-              </button>
-            )
-          })() : (
+          {activeWriter && st ? (
+            <button
+              onClick={() => navigate(`/agent/${activeWriter.id}`)}
+              title={`Open ${activeWriter.name}'s thread · ${st.label}`}
+              style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '4px 6px 4px 11px', borderRadius: 9, cursor: 'pointer', background: st.soft, border: `1px solid color-mix(in srgb, ${st.color} 35%, transparent)` }}
+            >
+              <span
+                className={agentState === 'running' ? 'ak-pulse' : undefined}
+                style={{ width: 8, height: 8, borderRadius: '50%', background: st.color, color: st.color, flexShrink: 0, position: 'relative' }}
+              />
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: st.color }}>{activeWriter.name}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--acc-ink)', background: st.color, padding: '3px 9px', borderRadius: 6, display: 'inline-flex', alignItems: 'center', gap: 4 }}>Watch →</span>
+            </button>
+          ) : (
             <button
               onClick={() => handleStart(false)}
               disabled={task.unmet_dependencies.length > 0}

@@ -66,8 +66,13 @@ export interface TaskSummary {
   id: string; title: string; status: string; priority: string
   tags: string[]; project: string; assigned_to: string
   created_at: number; updated_at: number
-  progress_count: number; steps_count: number; criteria_count: number
+  progress_count: number; steps_count: number; steps_done: number
+  criteria_count: number
   blocked_by_deps: boolean
+  // Writer session's live state, joined in by /api/tasks so a board card
+  // can show the same green/amber/red dot as Task Detail without a second
+  // fetch per task. Empty/false when no writer is active.
+  agent_name: string; agent_running: boolean; agent_error: string
 }
 
 export interface TaskDetail {

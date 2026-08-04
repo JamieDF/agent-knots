@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTask, createSession, type TaskSummary } from '../../lib/api'
-import { enabledStages, stageForStatus, type Stage } from '../../lib/stages'
+import { enabledStages, stageForStatus } from '../../lib/stages'
 import { priorityColor } from '../../lib/priorityColors'
+import { computeAgentState, AGENT_STATE_TOKENS } from '../../lib/agentState'
 import { useTaskList } from '../../lib/useTaskList'
 import TaskDialog from '../../components/TaskDialog'
 import { Spinner } from '../../components/primitives'
@@ -10,7 +11,6 @@ import { Spinner } from '../../components/primitives'
 /** Board tab of the Tasks screen — stage-driven columns backed by the
  * real Workflows stage config. */
 function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
-  const [expandedId, setExpandedId] = useState<string | null>(null)
   const [dialogStatus, setDialogStatus] = useState<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverStage, setDragOverStage] = useState<string | null>(null)
@@ -30,13 +30,11 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
 
   const handleStart = async (task: TaskSummary, headless: boolean) => {
     const session = await createSession({ prompt: '', mode: 'agent', task_id: task.id, project_id: workspace || undefined })
-    if (headless) load() // refresh so the card picks up its new "AGENT" badge
+    if (headless) load()
     else navigate(`/agent/${session.id}`)
   }
 
   const stages = enabledStages(allStages)
-  // useTaskList already returns tasks priority-sorted, so filtering by
-  // stage here preserves that order within each column.
   const tasksForStage = (stageKey: string) =>
     tasks.filter(t => stageForStatus(allStages, t.status)?.key === stageKey)
 
@@ -57,8 +55,6 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
 	            key={stage.key}
 	            onDragOver={e => { e.preventDefault(); setDragOverStage(stage.key) }}
 	            onDragLeave={e => {
-	              // Only clear if we're actually leaving the column, not
-	              // just entering a child card — check the relatedTarget.
 	              const el = e.currentTarget as HTMLElement
 	              if (!el.contains(e.relatedTarget as Node)) {
 	                setDragOverStage(prev => prev === stage.key ? null : prev)
@@ -93,15 +89,12 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
                 <TaskCard
                   key={task.id}
                   task={task}
-                  expanded={expandedId === task.id}
                   dragging={draggingId === task.id}
                   onDragStart={() => setDraggingId(task.id)}
                   onDragEnd={() => { setDraggingId(null); setDragOverStage(null) }}
-                  onExpand={() => setExpandedId(expandedId === task.id ? null : task.id)}
-                  onMove={s => handleMove(task.id, s)}
-                  onDetails={() => navigate(`/tasks/${task.id}`)}
-                  onStart={headless => handleStart(task, headless)}
-                  allStages={allStages}
+                  onOpen={() => navigate(`/tasks/${task.id}`)}
+                  onStart={(headless: boolean) => handleStart(task, headless)}
+                  onOpenAgent={() => navigate(`/agent/${task.assigned_to}`)}
                 />
               ))}
               {items.length === 0 && (
@@ -134,38 +127,54 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
   )
 }
 
-function TaskCard({ task, expanded, dragging, onDragStart, onDragEnd, onExpand, onMove, onDetails, onStart, allStages }: {
+/** A board card. The whole card is a click target for Task Detail; a
+ * hover-revealed ▶ starts an agent (or jumps to the thread if one's
+ * already running). Priority is the left-border color only — no text.
+ * Drag-and-drop handles stage moves, so there are no stage buttons.
+ *
+ * The agent strip reuses the same green/amber/red dot as TaskDetail so
+ * the live state reads the same everywhere. */
+function TaskCard({ task, dragging, onDragStart, onDragEnd, onOpen, onStart, onOpenAgent }: {
   task: TaskSummary
-  expanded: boolean
   dragging: boolean
   onDragStart: () => void
   onDragEnd: () => void
-  onExpand: () => void
-  onMove: (status: string) => void
-  onDetails: () => void
+  onOpen: () => void
   onStart: (headless: boolean) => void
-  allStages: Stage[]
+  onOpenAgent: () => void
 }) {
-  const stages = enabledStages(allStages)
+  // agent_name is populated only when the writer is in session_manager
+  // .active — task.assigned_to is never cleared on stop, so it can name
+  // a session that died long ago. Key the strip off the live join, not
+  // the stale id.
+  const agentState = computeAgentState(!!task.agent_name, task.agent_running, task.agent_error)
+  const st = agentState ? AGENT_STATE_TOKENS[agentState] : null
+  const canStart = !task.assigned_to && !task.blocked_by_deps
+
   return (
     <div
-      onClick={onExpand}
+      className="ak-card"
       draggable
       onDragStart={e => { e.dataTransfer.setData('text/plain', task.id); e.dataTransfer.effectAllowed = 'move'; onDragStart() }}
       onDragEnd={onDragEnd}
+      onClick={onOpen}
+      title="Open task"
       style={{
+        position: 'relative',
         background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 10,
         borderLeft: `3px solid ${priorityColor(task.priority)}`,
-        padding: '10px 12px', cursor: 'grab', boxShadow: 'var(--shadow)',
+        padding: '11px 12px', cursor: 'pointer', boxShadow: 'var(--shadow)',
         opacity: dragging ? 0.4 : 1,
+        transition: 'box-shadow 0.12s ease, transform 0.12s ease',
       }}
     >
-      <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)', marginBottom: 6, lineHeight: 1.35 }}>{task.title}</div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', marginBottom: 7, lineHeight: 1.35, paddingRight: 22 }}>{task.title}</div>
+
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--mut)' }}>{task.id}</span>
-        {task.assigned_to && (
-          <span style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 6, background: 'var(--ok-soft)', color: 'var(--ok)' }}>AGENT</span>
+        {task.project && (
+          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--ink2)', background: 'var(--card2)', padding: '1.5px 6px', borderRadius: 6 }}>{task.project}</span>
         )}
+        {/* Status badges — only the ones the column doesn't already imply. */}
         {task.status === 'blocked' && (
           <span style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 6, background: 'var(--warn-soft)', color: 'var(--warn-ink)' }}>⚠ BLOCKED</span>
         )}
@@ -175,39 +184,95 @@ function TaskCard({ task, expanded, dragging, onDragStart, onDragEnd, onExpand, 
         {task.status === 'planned' && (
           <span style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 6, background: 'var(--acc-soft)', color: 'var(--acc)' }}>PLANNED</span>
         )}
-        <span style={{ marginLeft: 'auto', fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', color: priorityColor(task.priority) }}>{task.priority}</span>
+        {/* Step progress pips — only if the task has steps. */}
+        {task.steps_count > 0 && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+            {Array.from({ length: task.steps_count }, (_, i) => (
+              <span key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: i < task.steps_done ? 'var(--ok)' : 'var(--line2)' }} />
+            ))}
+            <span style={{ fontSize: 10, color: 'var(--mut)', fontFamily: 'var(--font-mono)', marginLeft: 2 }}>{task.steps_done}/{task.steps_count}</span>
+          </span>
+        )}
       </div>
 
-      {expanded && (
-        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)' }} onClick={e => e.stopPropagation()}>
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
-            {stages.map(s => (
-              <button
-                key={s.key}
-                onClick={() => onMove(s.statuses[0])}
-                style={{
-                  fontSize: 10, padding: '2px 7px', borderRadius: 6,
-                  background: stageForStatus(allStages, task.status)?.key === s.key ? 'var(--acc-soft)' : 'var(--card2)',
-                  color: stageForStatus(allStages, task.status)?.key === s.key ? 'var(--acc)' : 'var(--mut)',
-                }}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <button onClick={onDetails} style={{ fontSize: 11.5, color: 'var(--acc)', fontWeight: 600 }}>Details →</button>
-            {!task.assigned_to && !task.blocked_by_deps && (
-              <>
-                <button onClick={() => onStart(false)} title="Start and open the thread now" style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'var(--ok-soft)', color: 'var(--ok)', fontWeight: 600 }}>
-                  ▶ Start (watch)
-                </button>
-                <button onClick={() => onStart(true)} title="Start in the background — open the thread later from this card or Task Detail" style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'var(--card2)', color: 'var(--ink2)', fontWeight: 600 }}>
-                  ⏵ Start headless
-                </button>
-              </>
-            )}
-          </div>
+      {/* Live agent strip — same green/amber/red dot as TaskDetail.
+          Given its own inset tinted background so it reads as a distinct
+          footer section even at rest, not just on hover. */}
+      {st && (
+        <div
+          onClick={e => { e.stopPropagation(); onOpenAgent() }}
+          title={`Open ${task.agent_name}'s thread · ${st.label}`}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 7,
+            marginTop: 9, marginLeft: -12, marginRight: -12, marginBottom: -11,
+            padding: '7px 12px',
+            background: st.soft,
+            borderBottomLeftRadius: 10, borderBottomRightRadius: 10,
+            borderTop: '1px solid var(--line)',
+          }}
+        >
+          <span
+            className={agentState === 'running' ? 'ak-pulse' : undefined}
+            style={{ width: 7, height: 7, borderRadius: '50%', background: st.color, color: st.color, flexShrink: 0, position: 'relative' }}
+          />
+          <span style={{ fontSize: 11, fontWeight: 600, color: st.color }}>{task.agent_name}</span>
+          <span style={{ fontSize: 11, color: 'var(--mut)' }}>· {st.label}</span>
+        </div>
+      )}
+
+      {/* Hover-revealed action. When an agent is live, it's a single
+          button jumping to the thread. When idle, it's a split button:
+          a ▶ that on hover fans out into Start (watch) + Start headless.
+          See .ak-card-action / .ak-split in index.css for the reveal. */}
+      {st ? (
+        <button
+          className="ak-card-action"
+          onClick={e => { e.stopPropagation(); onOpenAgent() }}
+          title="Open thread"
+          style={{
+            position: 'absolute', right: 8, top: 9,
+            width: 24, height: 24, borderRadius: 6, padding: 0,
+            background: st.color, color: 'var(--acc-ink)',
+            fontSize: 10, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', boxShadow: 'var(--shadow)', border: 'none',
+          }}
+        >→</button>
+      ) : (
+        <div className="ak-card-action ak-split" style={{ position: 'absolute', right: 8, top: 9, display: 'flex', gap: 0 }}>
+          <button
+            onClick={e => { e.stopPropagation(); onStart(false) }}
+            title="Start and open the thread"
+            disabled={!canStart}
+            style={{
+              width: 24, height: 24, padding: 0, border: 'none',
+              background: 'var(--acc)', color: 'var(--acc-ink)',
+              fontSize: 10, fontWeight: 700, cursor: canStart ? 'pointer' : 'not-allowed',
+              borderRadius: '6px 0 0 6px',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: 'var(--shadow)',
+            }}
+          >▶</button>
+          {/* Headless half — hidden until the card is hovered (see
+              .ak-split-headless in index.css). Uses opacity + transform
+              rather than width:0 so the button stays a real layout
+              element the browser can hover/click even mid-transition.
+              🤖 = the agent going off to work on its own (autonomous). */}
+          <button
+            className="ak-split-headless"
+            onClick={e => { e.stopPropagation(); onStart(true) }}
+            title="Start in the background (headless)"
+            disabled={!canStart}
+            style={{
+              height: 24, padding: 0,
+              border: 'none', background: 'var(--card2)', color: 'var(--ink2)',
+              fontSize: 11, fontWeight: 700, cursor: canStart ? 'pointer' : 'not-allowed',
+              borderRadius: '0 6px 6px 0',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              whiteSpace: 'nowrap',
+              boxShadow: 'var(--shadow)',
+            }}
+          >🤖</button>
         </div>
       )}
     </div>

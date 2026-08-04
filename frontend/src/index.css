@@ -175,3 +175,73 @@ code {
 @media (prefers-reduced-motion: reduce) {
   .ak-pulse::after { animation: none; }
 }
+
+/* Board task card — the hover-revealed start/open action button. Inline
+   styles can't express :hover on a sibling/child, so the card carries
+   .ak-card and the action carries .ak-card-action; the action is hidden
+   until the card is hovered or focused (keyboard accessibility), with a
+   fast fade. Touch devices get it always-visible since there's no hover.
+   The hover also lifts the card (translateY + stronger shadow) so the
+   whole thing feels interactive and the two sections read as one unit
+   that's been "picked up". */
+.ak-card-action {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.ak-card:hover,
+.ak-card:focus-within {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+.ak-card:hover .ak-card-action,
+.ak-card:focus-within .ak-card-action {
+  opacity: 1;
+}
+@media (hover: none) {
+  .ak-card-action { opacity: 1; }
+}
+
+/* Board card split-button — the headless (🤖) half. Collapsed via
+   opacity + max-width:0 + a slight translateX so it's visually tucked
+   behind the ▶ at rest, then fans out on card hover. Uses max-width +
+   opacity (not width:0 + overflow:hidden) so the button remains a
+   real, hoverable layout element throughout the transition — width:0
+   made it invisible to the browser's own hit-testing. */
+.ak-split-headless {
+  width: 26px;
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(4px);
+  overflow: hidden;
+  transition: max-width 0.14s ease, opacity 0.14s ease, transform 0.14s ease;
+}
+.ak-card:hover .ak-split-headless,
+.ak-card:focus-within .ak-split-headless {
+  max-width: 26px;
+  opacity: 1;
+  transform: translateX(0);
+}
+@media (hover: none) {
+  .ak-split-headless {
+    max-width: 26px;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* List view rows — hover background + the split-button reveal, matching
+   the board card's interaction. The row carries .ak-list-row, the action
+   carries .ak-list-action. Touch devices show it always. */
+.ak-list-row { position: relative; transition: background 0.1s; }
+.ak-list-row:hover { background: var(--card2); }
+.ak-list-action {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.ak-list-row:hover .ak-list-action,
+.ak-list-row:focus-within .ak-list-action {
+  opacity: 1;
+}
+@media (hover: none) {
+  .ak-list-action { opacity: 1; }
+}
