@@ -148,3 +148,30 @@ code {
 @keyframes knots-spin {
   to { transform: rotate(360deg); }
 }
+
+/* Live-agent pulse — the dot on TaskDetail's "watch card" when an
+   agent is actively working a task. A second ring scales out and fades
+   to draw the eye without being as noisy as a full badge blink. Uses
+   currentColor so the ring matches whatever state color the dot has
+   (today only green/running pulses, but this keeps it token-driven).
+   Honors prefers-reduced-motion. */
+@keyframes knots-pulse {
+  0% { transform: scale(.7); opacity: .5; }
+  100% { transform: scale(2); opacity: 0; }
+}
+.ak-pulse {
+  /* The dot's fill comes from its inline style (the state color); the
+     ::after ring inherits via currentColor, so set color = fill. */
+}
+.ak-pulse::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .4;
+  animation: knots-pulse 1.6s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ak-pulse::after { animation: none; }
+}

@@ -2250,12 +2250,12 @@ test.describe('task to agent thread lifecycle', () => {
       await page.goto(`${BASE}/tasks/${task.id}`)
       await page.waitForTimeout(500)
 
-      // No session yet — header shows the two start buttons, not a thread link.
-      await expect(page.locator('button:has-text("Start (watch)")')).toBeVisible()
-      await expect(page.locator('button:has-text("Start headless")')).toBeVisible()
-      await expect(page.locator('button:has-text("● Watch")')).toHaveCount(0)
+      // No session yet — header shows the primary Start button, not a
+      // watch card. (Headless start is behind the kebab now.)
+      await expect(page.locator('button:has-text("▶ Start")')).toBeVisible()
+      await expect(page.locator('button:has-text("Watch")')).toHaveCount(0)
 
-      await page.click('button:has-text("Start (watch)")')
+      await page.click('button:has-text("▶ Start")')
       await page.waitForTimeout(1000)
       const threadUrl = page.url()
       expect(threadUrl).toMatch(/\/agent\/[a-f0-9]+$/)
@@ -2265,8 +2265,8 @@ test.describe('task to agent thread lifecycle', () => {
       await page.goto(`${BASE}/tasks/${task.id}`)
       await page.waitForTimeout(600)
 
-      await expect(page.locator('button:has-text("● Watch")')).toBeVisible()
-      await page.click('button:has-text("● Watch")')
+      await expect(page.locator('button:has-text("Watch")')).toBeVisible()
+      await page.click('button:has-text("Watch")')
       await page.waitForTimeout(400)
       expect(page.url()).toBe(threadUrl)
 
@@ -2289,6 +2289,10 @@ test.describe('task to agent thread lifecycle', () => {
       await page.waitForTimeout(500)
       const detailUrl = page.url()
 
+      // Headless start is behind the header kebab now — open it, then
+      // click the revealed "Start headless" menu item.
+      await page.click('button[title="More"]')
+      await page.waitForTimeout(200)
       await page.click('button:has-text("Start headless")')
       await page.waitForTimeout(1000)
 
@@ -2302,7 +2306,7 @@ test.describe('task to agent thread lifecycle', () => {
 
       await page.reload()
       await page.waitForTimeout(500)
-      await expect(page.locator('button:has-text("● Watch")')).toBeVisible()
+      await expect(page.locator('button:has-text("Watch")')).toBeVisible()
     } finally {
       await page.request.delete(`${BASE}/api/tasks/${task.id}`)
     }
@@ -2319,7 +2323,7 @@ test.describe('task to agent thread lifecycle', () => {
 
       await page.goto(`${BASE}/tasks/${task.id}`)
       await page.waitForTimeout(500)
-      await page.click('button:has-text("Start (watch)")')
+      await page.click('button:has-text("▶ Start")')
       await page.waitForTimeout(1000)
 
       let current = await (await page.request.get(`${BASE}/api/tasks/${task.id}`)).json()

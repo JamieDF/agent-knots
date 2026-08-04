@@ -497,6 +497,72 @@ class TestSessionManager:
         assert "Cancelled" in s._history[-1].message
         assert not any(e.type == EventType.ENDED for e in s._history)
 
+    @pytest.mark.asyncio
+    async def test_last_error_set_when_turn_raises(self, sessions_dir):
+        """A turn that ends in an exception sets _last_error so the UI can
+        show a red indicator on an errored-but-alive session."""
+        mgr = SessionManager(sessions_dir)
+        s = Session(mode="agent")
+
+        class BoomAgent:
+            async def stream_async(self, prompt):
+                raise RuntimeError("kaboom")
+                yield {}  # pragma: no cover — makes this an async generator
+
+        s._agent = BoomAgent()
+        mgr._sessions[s.id] = s
+        s._task = asyncio.create_task(mgr._run_agent(s, s._agent, "go"))
+        await asyncio.sleep(0.05)
+
+        assert s._last_error == "kaboom"
+        assert s._history[-1].type == EventType.ERROR
+        # Session stays alive — error doesn't end it.
+        assert s.id in mgr._sessions
+
+    @pytest.mark.asyncio
+    async def test_last_error_cleared_on_successful_turn(self, sessions_dir):
+        """A clean finish wipes any prior error — the indicator shouldn't
+        stay red after the agent recovers."""
+        mgr = SessionManager(sessions_dir)
+        s = Session(mode="agent")
+        s._last_error = "previous boom"
+
+        class OkAgent:
+            async def stream_async(self, prompt):
+                return
+                yield {}  # pragma: no cover — makes this an async generator
+
+        s._agent = OkAgent()
+        mgr._sessions[s.id] = s
+        s._task = asyncio.create_task(mgr._run_agent(s, s._agent, "go"))
+        await asyncio.sleep(0.05)
+
+        assert s._last_error == ""
+
+    @pytest.mark.asyncio
+    async def test_send_clears_last_error_before_next_turn(self, sessions_dir):
+        """send() is a fresh start — drop the error from the previous
+        failed turn before the new one begins."""
+        mgr = SessionManager(sessions_dir)
+        s = Session(mode="agent")
+        s._last_error = "previous boom"
+
+        class HangAgent:
+            async def stream_async(self, prompt):
+                while True:
+                    await asyncio.sleep(10)
+                    yield {}
+
+        s._agent = HangAgent()
+        mgr._sessions[s.id] = s
+
+        await mgr.send(s.id, "try again")
+        await asyncio.sleep(0.05)
+
+        # send() cleared it; the new (hanging) turn hasn't errored.
+        assert s._last_error == ""
+        assert s.running
+
 
 class TestSessionManagerStart:
     """Tests for SessionManager.start() — the core assembly path that had

@@ -31,7 +31,7 @@ function jsonInit(method: string, body?: unknown): RequestInit {
 
 export interface AgentInfo {
   id: string; name: string; mode: string; task_id: string | null; project_id: string | null
-  tokens_used: number; cost_usd: number; running: boolean
+  tokens_used: number; cost_usd: number; running: boolean; error: string
   model: string; started_at: number
   pending_question: { question: string; options: string[] | null } | null
   branch: string | null; advisory: boolean; role: string
