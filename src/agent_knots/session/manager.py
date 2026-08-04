@@ -172,6 +172,11 @@ class Session:
     # answer (str), question (str), options (list[str] | None). The tool
     # blocks on the Event; the /api/agent/{id}/answer endpoint sets it.
     _pending_question: dict | None = field(default=None, repr=False)
+    # Last turn's error message, if it ended in an exception. Surfaced via
+    # _agent_to_response so the UI can show a red indicator on an errored
+    # (but still alive) session. Cleared at the start of the next turn — a
+    # successful send() is a fresh start, not a continuation of the error.
+    _last_error: str = field(default="", repr=False)
 
     @property
     def running(self) -> bool:
@@ -578,6 +583,10 @@ class SessionManager:
             message=message,
         ))
 
+        # A new turn is a fresh start — drop any error from the previous
+        # turn so the UI's indicator doesn't stay red once work resumes.
+        session._last_error = ""
+
         session._task = asyncio.create_task(
             self._run_agent(session, session._agent, message)
         )
@@ -726,6 +735,10 @@ class SessionManager:
 
             if session._cancel_kind is CancelKind.NONE:
                 finished = True
+                # A clean finish clears any prior error — the indicator
+                # should go green/amber, not stay red from a previous
+                # failed turn that's since recovered.
+                session._last_error = ""
                 # A turn finishing is NOT the session ending — send() can
                 # still start another turn afterward (multi-turn chat).
                 # EventType.ENDED is reserved for stop()/cancellation, so
@@ -752,6 +765,7 @@ class SessionManager:
                         message="Agent cancelled.",
                     ))
         except Exception as exc:
+            session._last_error = str(exc)
             session._broadcast(Event(
                 type=EventType.ERROR,
                 session_id=session.id,

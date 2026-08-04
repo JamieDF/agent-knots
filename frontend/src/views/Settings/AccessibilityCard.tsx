@@ -1,5 +1,8 @@
 import { Card, Field, SectionLabel, inputStyle } from '../../components/primitives'
-import { useAccessibility, FONT_FAMILIES, FONT_SCALES, type FontFamilyKey, type FontScale } from '../../theme/AccessibilityContext'
+import {
+  useAccessibility, FONT_FAMILIES, FONT_SCALES, CONTENT_WIDTHS,
+  type FontFamilyKey, type FontScale, type ContentWidthKey,
+} from '../../theme/AccessibilityContext'
 
 const FONT_SCALE_LABELS: Record<FontScale, string> = {
   0.875: 'Small',
@@ -10,7 +13,7 @@ const FONT_SCALE_LABELS: Record<FontScale, string> = {
 }
 
 export function AccessibilityCard() {
-  const { fontScale, setFontScale, fontFamily, setFontFamily } = useAccessibility()
+  const { fontScale, setFontScale, fontFamily, setFontFamily, contentWidth, setContentWidth } = useAccessibility()
 
   return (
     <Card>
@@ -50,6 +53,26 @@ export function AccessibilityCard() {
             <option key={key} value={key}>{FONT_FAMILIES[key].label}</option>
           ))}
         </select>
+      </Field>
+
+      <div style={{ height: 14 }} />
+
+      <Field label="Content width">
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {(Object.keys(CONTENT_WIDTHS) as ContentWidthKey[]).map(key => (
+            <button
+              key={key}
+              onClick={() => setContentWidth(key)}
+              style={{
+                padding: '6px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600,
+                background: contentWidth === key ? 'var(--acc)' : 'var(--card2)',
+                color: contentWidth === key ? 'var(--acc-ink)' : 'var(--ink2)',
+              }}
+            >
+              {CONTENT_WIDTHS[key].label}
+            </button>
+          ))}
+        </div>
       </Field>
     </Card>
   )

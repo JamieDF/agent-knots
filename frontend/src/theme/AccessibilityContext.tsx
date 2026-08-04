@@ -11,14 +11,25 @@ export const FONT_FAMILIES: Record<FontFamilyKey, { label: string; stack: string
 export const FONT_SCALES = [0.875, 1, 1.125, 1.25, 1.375] as const
 export type FontScale = (typeof FONT_SCALES)[number]
 
+export type ContentWidthKey = 'compact' | 'comfortable' | 'wide'
+
+export const CONTENT_WIDTHS: Record<ContentWidthKey, { label: string; value: string }> = {
+  compact: { label: 'Compact', value: 'min(820px, calc(100vw - 40px))' },
+  comfortable: { label: 'Comfortable', value: 'min(1000px, calc(100vw - 40px))' },
+  wide: { label: 'Wide', value: 'min(1200px, calc(100vw - 40px))' },
+}
+
 const SCALE_KEY = 'agent-knots-font-scale'
 const FAMILY_KEY = 'agent-knots-font-family'
+const WIDTH_KEY = 'agent-knots-content-width'
 
 interface AccessibilityContextValue {
   fontScale: FontScale
   setFontScale: (scale: FontScale) => void
   fontFamily: FontFamilyKey
   setFontFamily: (family: FontFamilyKey) => void
+  contentWidth: ContentWidthKey
+  setContentWidth: (width: ContentWidthKey) => void
 }
 
 const AccessibilityContext = createContext<AccessibilityContextValue | null>(null)
@@ -31,6 +42,11 @@ function getStoredScale(): FontScale {
 function getStoredFamily(): FontFamilyKey {
   const stored = localStorage.getItem(FAMILY_KEY)
   return stored && stored in FONT_FAMILIES ? (stored as FontFamilyKey) : 'default'
+}
+
+function getStoredContentWidth(): ContentWidthKey {
+  const stored = localStorage.getItem(WIDTH_KEY)
+  return stored && stored in CONTENT_WIDTHS ? (stored as ContentWidthKey) : 'comfortable'
 }
 
 /** Text size and font family, applied globally rather than per-component.
@@ -50,6 +66,7 @@ function getStoredFamily(): FontFamilyKey {
 export function AccessibilityProvider({ children }: { children: ReactNode }) {
   const [fontScale, setFontScale] = useState<FontScale>(getStoredScale)
   const [fontFamily, setFontFamily] = useState<FontFamilyKey>(getStoredFamily)
+  const [contentWidth, setContentWidth] = useState<ContentWidthKey>(getStoredContentWidth)
 
   useEffect(() => {
     const root = document.getElementById('root')
@@ -62,8 +79,13 @@ export function AccessibilityProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(FAMILY_KEY, fontFamily)
   }, [fontFamily])
 
+  useEffect(() => {
+    document.body.style.setProperty('--content-width', CONTENT_WIDTHS[contentWidth].value)
+    localStorage.setItem(WIDTH_KEY, contentWidth)
+  }, [contentWidth])
+
   return (
-    <AccessibilityContext.Provider value={{ fontScale, setFontScale, fontFamily, setFontFamily }}>
+    <AccessibilityContext.Provider value={{ fontScale, setFontScale, fontFamily, setFontFamily, contentWidth, setContentWidth }}>
       {children}
     </AccessibilityContext.Provider>
   )

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   fetchTask, updateTask, deleteTask, toggleCriterion, createSession, fetchTaskAgents, fetchTaskHistory, answerAgent,
@@ -6,8 +6,9 @@ import {
 } from '../lib/api'
 import { useWorkspaceScope } from '../lib/workspaceContext'
 import { statusStyle } from '../lib/statusColors'
-import { priorityColor } from '../lib/priorityColors'
+import { computeAgentState, AGENT_STATE_TOKENS } from '../lib/agentState'
 import { timeAgo } from '../lib/format'
+import { useClickOutside } from '../lib/useClickOutside'
 import { Card, Chip, SectionLabel, Spinner } from '../components/primitives'
 import DeskLayout from '../components/DeskLayout'
 import TaskDialog from '../components/TaskDialog'
@@ -28,6 +29,12 @@ function TaskDetail() {
   const [task, setTask] = useState<TDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [showEdit, setShowEdit] = useState(false)
+  // The kebab menu in the header. useRef + useClickOutside mirrors the
+  // pattern in NotificationBell/WorkspaceSwitcher so it closes on an
+  // outside mousedown without each call site re-rolling the listener.
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useClickOutside(menuRef, menuOpen, () => setMenuOpen(false))
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [pastSessions, setPastSessions] = useState<PastSession[]>([])
   const [related, setRelated] = useState<TDetail[]>([])
@@ -107,8 +114,8 @@ function TaskDetail() {
     navigate('/tasks')
   }
 
-  if (loading) return <DeskLayout width={880}><Card style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner /></Card></DeskLayout>
-  if (!task) return <DeskLayout width={880}><Card>Task not found.</Card></DeskLayout>
+  if (loading) return <DeskLayout scale="narrow"><Card style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spinner /></Card></DeskLayout>
+  if (!task) return <DeskLayout scale="narrow"><Card>Task not found.</Card></DeskLayout>
 
   const stepsDone = task.steps.filter(s => s.status === 'done').length
   const metSet = new Set(task.criteria_met)
@@ -117,50 +124,96 @@ function TaskDetail() {
   // fetchTaskAgents) is the accurate signal for whether someone's
   // actually still on this task right now.
   const activeWriter = agents.find(a => !a.advisory)
+  // Three-state indicator on the watch card (green/amber/red), shared
+  // with the Board's task card via lib/agentState so both surfaces agree.
+  const agentState = activeWriter
+    ? computeAgentState(true, activeWriter.running, activeWriter.error)
+    : null
+  const st = agentState ? AGENT_STATE_TOKENS[agentState] : null
 
   const stageIndex = LIFECYCLE.indexOf(task.status === 'blocked' ? 'in_progress' : task.status === 'planned' ? 'open' : task.status)
 
   return (
-    <DeskLayout width={880}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-        <button onClick={() => navigate('/tasks')} style={{ color: 'var(--ink2)', fontSize: 16 }}>←</button>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--mut)' }}>{task.id}</span>
-        <Chip color={statusStyle(task.status).color} soft>{statusStyle(task.status).label}</Chip>
-        <Chip color={priorityColor(task.priority)} soft>{task.priority}</Chip>
-        {task.project && <Chip mono>{task.project}</Chip>}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          {activeWriter ? (
+    <DeskLayout scale="narrow">
+      {/* Header — title-led. The bar carries the task's identity (title +
+          status/project chips); priority lives in the Metadata side block.
+          The right-hand action zone is either a single primary Start (idle),
+          or a green "watch card" when an agent is live — the thing you most
+          want to do (jump to the thread) becomes the whole action zone.
+          Rare + destructive actions (headless, edit, delete) sit behind a
+          kebab so Delete is never a mis-click away from Start. */}
+      <Card
+        raised
+        style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, padding: '10px 14px' }}
+      >
+        <button
+          onClick={() => navigate('/tasks')}
+          title="Back to tasks"
+          style={{ color: 'var(--ink2)', fontSize: 17, width: 30, height: 30, borderRadius: 8, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+        >←</button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.title}</span>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <Chip color={statusStyle(task.status).color} soft>{statusStyle(task.status).label}</Chip>
+            {task.project && <Chip mono>{task.project}</Chip>}
+          </div>
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {activeWriter && st ? (
             <button
               onClick={() => navigate(`/agent/${activeWriter.id}`)}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--ok-soft)', color: 'var(--ok)' }}
+              title={`Open ${activeWriter.name}'s thread · ${st.label}`}
+              style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '4px 6px 4px 11px', borderRadius: 9, cursor: 'pointer', background: st.soft, border: `1px solid color-mix(in srgb, ${st.color} 35%, transparent)` }}
             >
-              ● Watch {activeWriter.name} →
+              <span
+                className={agentState === 'running' ? 'ak-pulse' : undefined}
+                style={{ width: 8, height: 8, borderRadius: '50%', background: st.color, color: st.color, flexShrink: 0, position: 'relative' }}
+              />
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: st.color }}>{activeWriter.name}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--acc-ink)', background: st.color, padding: '3px 9px', borderRadius: 6, display: 'inline-flex', alignItems: 'center', gap: 4 }}>Watch →</span>
             </button>
           ) : (
-            <>
-              <button
-                onClick={() => handleStart(false)}
-                disabled={task.unmet_dependencies.length > 0}
-                title={task.unmet_dependencies.length > 0 ? 'Blocked by unfinished dependencies — see below' : 'Start and open the thread now'}
-                style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: task.unmet_dependencies.length > 0 ? 0.5 : 1, cursor: task.unmet_dependencies.length > 0 ? 'not-allowed' : 'pointer' }}
-              >
-                ▶ Start (watch)
-              </button>
-              <button
-                onClick={() => handleStart(true)}
-                disabled={task.unmet_dependencies.length > 0}
-                title={task.unmet_dependencies.length > 0 ? 'Blocked by unfinished dependencies — see below' : 'Start in the background — open the thread later'}
-                style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)', opacity: task.unmet_dependencies.length > 0 ? 0.5 : 1, cursor: task.unmet_dependencies.length > 0 ? 'not-allowed' : 'pointer' }}
-              >
-                ⏵ Start headless
-              </button>
-            </>
+            <button
+              onClick={() => handleStart(false)}
+              disabled={task.unmet_dependencies.length > 0}
+              title={task.unmet_dependencies.length > 0 ? 'Blocked by unfinished dependencies — see below' : 'Start and open the thread now'}
+              style={{ padding: '6px 13px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: task.unmet_dependencies.length > 0 ? 0.5 : 1, cursor: task.unmet_dependencies.length > 0 ? 'not-allowed' : 'pointer' }}
+            >
+              ▶ Start
+            </button>
           )}
-          <button onClick={() => setShowEdit(true)} style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--ink2)', background: 'var(--card2)' }}>Edit</button>
-          <button onClick={handleDelete} style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--err)', background: 'var(--card2)' }}>✕ Delete</button>
+          <div ref={menuRef} style={{ position: 'relative' }}>
+            <button
+              onClick={() => setMenuOpen(o => !o)}
+              title="More"
+              style={{ width: 32, height: 30, borderRadius: 8, background: 'var(--card2)', color: 'var(--ink2)', fontSize: 16, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+            >⋯</button>
+            {menuOpen && (
+              <div style={{ position: 'absolute', right: 0, top: 36, minWidth: 172, zIndex: 200, background: 'var(--card)', border: '1px solid var(--line2)', borderRadius: 10, boxShadow: 'var(--shadow)', padding: 5 }}>
+                {/* Headless start only makes sense when there's no active
+                    writer (you can't start a second writer on the same
+                    task) and the task isn't blocked. */}
+                {!activeWriter && (
+                  <button
+                    onClick={() => { setMenuOpen(false); handleStart(true) }}
+                    disabled={task.unmet_dependencies.length > 0}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', border: 'none', background: 'transparent', cursor: task.unmet_dependencies.length > 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 500, color: 'var(--ink2)', borderRadius: 7, textAlign: 'left', opacity: task.unmet_dependencies.length > 0 ? 0.5 : 1 }}
+                  >⏵ Start headless</button>
+                )}
+                <button
+                  onClick={() => { setMenuOpen(false); setShowEdit(true) }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 500, color: 'var(--ink2)', borderRadius: 7, textAlign: 'left' }}
+                >✎ Edit task</button>
+                <div style={{ height: 1, background: 'var(--line)', margin: '4px 6px' }} />
+                <button
+                  onClick={() => { setMenuOpen(false); handleDelete() }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', border: 'none', background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 500, color: 'var(--err)', borderRadius: 7, textAlign: 'left' }}
+                >✕ Delete task</button>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      </Card>
 
       {/* Agent pending question — answerable from here, no need to open the thread.
           Any agent on the task can block, not just the writer, so this scans all of them. */}
@@ -222,13 +275,14 @@ function TaskDetail() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 220px', gap: 20 }}>
         <div>
-          {/* Title + tags */}
-          <div style={{ marginBottom: 20 }}>
-            <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--ink)', marginBottom: 8 }}>{task.title}</h1>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {/* Tags — title now lives in the header bar, so this is just the
+              tag row. Kept as its own block so an empty tags list doesn't
+              leave a gap (marginBottom only applied when there are tags). */}
+          {task.tags.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 20 }}>
               {task.tags.map(tag => <Chip key={tag}>{tag}</Chip>)}
             </div>
-          </div>
+          )}
 
           {task.description && (
             <Section label="Description">
@@ -373,6 +427,12 @@ function TaskDetail() {
             </SideBlock>
           )}
           <SideBlock label="Metadata">
+            {/* Priority lives here rather than as a chip in the header —
+                the header carries status + project (identity), while
+                priority is a property you check occasionally, not glance
+                at. Colored to match the priority's accent so it still
+                reads at a glance. */}
+            <Row l="Priority" v={task.priority} />
             <Row l="Created" v={ts(task.created_at)} />
             <Row l="Updated" v={timeAgo(task.updated_at)} />
           </SideBlock>

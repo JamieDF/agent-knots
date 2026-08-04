@@ -31,7 +31,7 @@ function jsonInit(method: string, body?: unknown): RequestInit {
 
 export interface AgentInfo {
   id: string; name: string; mode: string; task_id: string | null; project_id: string | null
-  tokens_used: number; cost_usd: number; running: boolean
+  tokens_used: number; cost_usd: number; running: boolean; error: string
   model: string; started_at: number
   pending_question: { question: string; options: string[] | null } | null
   branch: string | null; advisory: boolean; role: string
@@ -66,8 +66,13 @@ export interface TaskSummary {
   id: string; title: string; status: string; priority: string
   tags: string[]; project: string; assigned_to: string
   created_at: number; updated_at: number
-  progress_count: number; steps_count: number; criteria_count: number
+  progress_count: number; steps_count: number; steps_done: number
+  criteria_count: number
   blocked_by_deps: boolean
+  // Writer session's live state, joined in by /api/tasks so a board card
+  // can show the same green/amber/red dot as Task Detail without a second
+  // fetch per task. Empty/false when no writer is active.
+  agent_name: string; agent_running: boolean; agent_error: string
 }
 
 export interface TaskDetail {
@@ -273,8 +278,11 @@ export async function updateRole(key: string, data: { model?: string; trigger?: 
 // not stopped — see task/lifecycle.py) session with the feedback.
 
 export interface ReviewTask {
-  id: string; title: string; project: string; project_name: string
+  id: string; title: string; priority: string
+  project: string; project_name: string
   branch: string; session_id: string | null; session_name: string
+  session_running: boolean; session_error: string
+  file_count: number; added: number; deleted: number
 }
 
 export interface ReviewDiff {

@@ -29,6 +29,12 @@
   --font: 'DM Sans', system-ui, sans-serif;
   --font-mono: 'DM Mono', monospace;
 
+  /* Content width — the base width for every DeskLayout-wrapped view.
+     Responsive by default (never wider than the viewport minus padding),
+     overridable from Accessibility settings. DeskLayout multiplies this
+     by a per-view scale factor (narrow/normal/wide). */
+  --content-width: min(1000px, calc(100vw - 40px));
+
   /* Compatibility aliases — the old dark-only token names, used
      throughout views/components not yet migrated to the Atelier
      primitives (Board, Tasks, TaskDetail, Settings). Drop each alias as
@@ -147,4 +153,117 @@ code {
    styles can't declare @keyframes, so this lives here. */
 @keyframes knots-spin {
   to { transform: rotate(360deg); }
+}
+
+/* Live-agent pulse — the dot on TaskDetail's "watch card" when an
+   agent is actively working a task. A second ring scales out and fades
+   to draw the eye without being as noisy as a full badge blink. Uses
+   currentColor so the ring matches whatever state color the dot has
+   (today only green/running pulses, but this keeps it token-driven).
+   Honors prefers-reduced-motion. */
+@keyframes knots-pulse {
+  0% { transform: scale(.7); opacity: .5; }
+  100% { transform: scale(2); opacity: 0; }
+}
+.ak-pulse {
+  /* The dot's fill comes from its inline style (the state color); the
+     ::after ring inherits via currentColor, so set color = fill. */
+}
+.ak-pulse::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .4;
+  animation: knots-pulse 1.6s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ak-pulse::after { animation: none; }
+}
+
+/* Board task card — the hover-revealed start/open action button. Inline
+   styles can't express :hover on a sibling/child, so the card carries
+   .ak-card and the action carries .ak-card-action; the action is hidden
+   until the card is hovered or focused (keyboard accessibility), with a
+   fast fade. Touch devices get it always-visible since there's no hover.
+   The hover also lifts the card (translateY + stronger shadow) so the
+   whole thing feels interactive and the two sections read as one unit
+   that's been "picked up". */
+.ak-card-action {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.ak-card:hover,
+.ak-card:focus-within {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+.ak-card:hover .ak-card-action,
+.ak-card:focus-within .ak-card-action {
+  opacity: 1;
+}
+@media (hover: none) {
+  .ak-card-action { opacity: 1; }
+}
+
+/* Board card split-button — the headless (🤖) half. Collapsed via
+   opacity + max-width:0 + a slight translateX so it's visually tucked
+   behind the ▶ at rest, then fans out on card hover. Uses max-width +
+   opacity (not width:0 + overflow:hidden) so the button remains a
+   real, hoverable layout element throughout the transition — width:0
+   made it invisible to the browser's own hit-testing. */
+.ak-split-headless {
+  width: 26px;
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(4px);
+  overflow: hidden;
+  transition: max-width 0.14s ease, opacity 0.14s ease, transform 0.14s ease;
+}
+.ak-card:hover .ak-split-headless,
+.ak-card:focus-within .ak-split-headless {
+  max-width: 26px;
+  opacity: 1;
+  transform: translateX(0);
+}
+@media (hover: none) {
+  .ak-split-headless {
+    max-width: 26px;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* List view rows — hover background + the split-button reveal, matching
+   the board card's interaction. The row carries .ak-list-row, the action
+   carries .ak-list-action. Touch devices show it always. */
+.ak-list-row { position: relative; transition: background 0.1s; }
+.ak-list-row:hover { background: var(--card2); }
+.ak-list-action {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.ak-list-row:hover .ak-list-action,
+.ak-list-row:focus-within .ak-list-action {
+  opacity: 1;
+}
+@media (hover: none) {
+  .ak-list-action { opacity: 1; }
+}
+
+/* Review list cards — hover lift matching the board/list cards. */
+.ak-review-card { transition: box-shadow 0.12s ease, transform 0.12s ease; }
+.ak-review-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Dashboard queue items — hover background + split-button reveal,
+   same interaction as the board card. */
+.ak-queue-item:hover { background: var(--card2); }
+.ak-queue-item:hover .ak-queue-split,
+.ak-queue-item:focus-within .ak-queue-split { opacity: 1; }
+@media (hover: none) {
+  .ak-queue-split { opacity: 1; }
 }

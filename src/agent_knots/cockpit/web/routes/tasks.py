@@ -92,29 +92,46 @@ def create_router(session_manager: SessionManager) -> APIRouter:
         project: str = Query(""),
         limit: int = Query(0),
     ):
-        """List tasks with optional filters."""
+        """List tasks with optional filters.
+
+        The agent_name/agent_running/agent_error fields join against the
+        live sessions so a board card can show the same green/amber/red
+        status dot as Task Detail without a second fetch per task. Only
+        the writer (non-advisory) session is considered — advisory agents
+        are observers and don't represent the task's active state.
+        """
         store = TaskStore(tasks_dir())
         tasks = store.list(status=status, project=project, limit=limit)
-        return {
-            "tasks": [
-                {
-                    "id": t.id,
-                    "title": t.title,
-                    "status": t.status.value,
-                    "priority": t.priority.value,
-                    "tags": t.tags,
-                    "project": t.project,
-                    "assigned_to": t.assigned_to,
-                    "created_at": t.created_at,
-                    "updated_at": t.updated_at,
-                    "progress_count": len(t.progress),
-                    "steps_count": len(t.steps),
-                    "criteria_count": len(t.acceptance_criteria),
-                    "blocked_by_deps": len(store.unmet_dependencies(t)) > 0,
-                }
-                for t in tasks
-            ]
-        }
+        # Index live sessions by task_id once rather than scanning the
+        # full active list inside the per-task loop below.
+        writers_by_task: dict[str, object] = {}
+        for s in session_manager.active:
+            if s.task_id and not s.advisory:
+                writers_by_task[s.task_id] = s
+
+        def _summary(t):
+            w = writers_by_task.get(t.id)
+            return {
+                "id": t.id,
+                "title": t.title,
+                "status": t.status.value,
+                "priority": t.priority.value,
+                "tags": t.tags,
+                "project": t.project,
+                "assigned_to": t.assigned_to,
+                "created_at": t.created_at,
+                "updated_at": t.updated_at,
+                "progress_count": len(t.progress),
+                "steps_count": len(t.steps),
+                "steps_done": sum(1 for s in t.steps if s.status.value == "done"),
+                "criteria_count": len(t.acceptance_criteria),
+                "blocked_by_deps": len(store.unmet_dependencies(t)) > 0,
+                "agent_name": w.name if w else "",
+                "agent_running": bool(w and w.running),
+                "agent_error": (w._last_error if w else ""),
+            }
+
+        return {"tasks": [_summary(t) for t in tasks]}
 
     @router.get("/api/tasks/{task_id}")
     async def get_task(task_id: str):
