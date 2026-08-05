@@ -18,6 +18,7 @@ def _workspace_to_response(w: Project) -> dict:
         "description": w.description,
         "repository": w.repository,
         "runtime": w.runtime,
+        "provider": w.provider,
         "tags": w.tags,
         "auto_assign": w.auto_assign,
         "max_concurrent": w.max_concurrent,
@@ -73,6 +74,7 @@ def create_router() -> APIRouter:
             description=body.description,
             repository=body.repository,
             runtime=body.runtime,
+            provider=body.provider,
             tags=body.tags,
             auto_assign=body.auto_assign,
             max_concurrent=body.max_concurrent,
@@ -95,6 +97,8 @@ def create_router() -> APIRouter:
             ws.repository = body.repository
         if body.runtime is not None:
             ws.runtime = body.runtime
+        if body.provider is not None:
+            ws.provider = body.provider
         if body.tags is not None:
             ws.tags = body.tags
         if body.auto_assign is not None:

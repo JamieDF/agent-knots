@@ -15,6 +15,7 @@ class Project:
     repository: str = ""
     default_branch: str = "main"
     runtime: str = ""           # "inprocess" or "" (use global)
+    provider: str = ""          # named provider profile, or "" (use global)
     tags: list[str] = field(default_factory=list)
     # Config-only for now — no scheduler enforces these yet. Surfaced on
     # the Dashboard's "Up next" queue per the Atelier design (auto-assign

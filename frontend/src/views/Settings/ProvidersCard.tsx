@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Card, Chip, Field, SectionLabel, inputStyle } from '../../components/primitives'
-import { addProvider, deleteProvider, fetchSettings, setDefaultProvider, type ProviderInfo } from '../../lib/api'
+import { Card, Chip, Field, SectionLabel, Spinner, inputStyle } from '../../components/primitives'
+import { addProvider, deleteProvider, fetchSettings, setDefaultProvider, updateProviderModel, fetchProviderModels, type ProviderInfo, type ProviderModel } from '../../lib/api'
 import { PROVIDER_PRESETS } from '../../lib/providerPresets'
 import { accentTextBtnStyle, deleteBtnStyle, FormDialog } from './shared'
 
 export function ProvidersCard() {
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [showAdd, setShowAdd] = useState(false)
+  const [expandedProvider, setExpandedProvider] = useState<string | null>(null)
 
   const load = useCallback(() => { fetchSettings().then(s => setProviders(s.providers)).catch(() => {}) }, [])
   useEffect(() => { load() }, [load])
@@ -16,11 +17,6 @@ export function ProvidersCard() {
     try {
       await deleteProvider(name)
     } catch (e) {
-      // Expected for the synthetic "default" row (legacy single-provider
-      // config, not a real saved profile) — nothing to delete
-      // server-side. Still logged, not silently swallowed, since a real
-      // network/server failure would look identical to the user
-      // otherwise (the row just disappears from the list either way).
       console.warn(`Failed to delete provider "${name}":`, e)
     }
     load()
@@ -38,20 +34,111 @@ export function ProvidersCard() {
       )}
 
       {providers.map(p => (
-        <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', minWidth: 90 }}>{p.name}</span>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--ink2)', flex: 1 }}>{p.model}</span>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--mut)', flex: 1 }}>{p.base_url || '—'}</span>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.key_set ? 'var(--ok)' : 'var(--mut)' }} title={p.key_set ? 'key set' : 'no key'} />
-          {p.is_default ? <Chip color="var(--acc)" soft>DEFAULT</Chip> : (
-            <button onClick={() => handleSetDefault(p.name)} style={{ fontSize: 11, fontWeight: 600, color: 'var(--acc)' }}>Set default</button>
-          )}
-          <button onClick={() => handleDelete(p.name)} style={deleteBtnStyle}>✕</button>
-        </div>
+        <ProviderRow
+          key={p.name}
+          provider={p}
+          expanded={expandedProvider === p.name}
+          onToggleExpand={() => setExpandedProvider(expandedProvider === p.name ? null : p.name)}
+          onSetDefault={() => handleSetDefault(p.name)}
+          onDelete={() => handleDelete(p.name)}
+          onModelChanged={load}
+        />
       ))}
 
       <AddProviderDialog open={showAdd} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />
     </Card>
+  )
+}
+
+/** A single provider row with an expandable model browser beneath it.
+ *  Clicking the chevron fetches the provider's available models from its
+ *  API (GET /v1/models) and lists them inline — click "Use" to set that
+ *  model as the provider's active model. */
+function ProviderRow({ provider: p, expanded, onToggleExpand, onSetDefault, onDelete, onModelChanged }: {
+  provider: ProviderInfo
+  expanded: boolean
+  onToggleExpand: () => void
+  onSetDefault: () => void
+  onDelete: () => void
+  onModelChanged: () => void
+}) {
+  const [models, setModels] = useState<ProviderModel[] | null>(null)
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [modelError, setModelError] = useState('')
+
+  const handleExpand = async () => {
+    onToggleExpand()
+    if (!expanded && models === null) {
+      setLoadingModels(true)
+      setModelError('')
+      try {
+        const res = await fetchProviderModels(p.name)
+        setModels(res.models.sort((a, b) => a.id.localeCompare(b.id)))
+      } catch (e) {
+        setModelError(e instanceof Error ? e.message : 'Failed to fetch models')
+        setModels([])
+      } finally {
+        setLoadingModels(false)
+      }
+    }
+  }
+
+  const handleUseModel = async (modelId: string) => {
+    await updateProviderModel(p.name, modelId)
+    onModelChanged()
+  }
+
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+        {/* Expand toggle — only show if the provider has a key (can't query without one) */}
+        {p.key_set ? (
+          <button
+            onClick={handleExpand}
+            title="Browse available models"
+            style={{ fontSize: 10, color: 'var(--mut)', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', cursor: 'pointer', transition: 'transform 0.15s', transform: expanded ? 'rotate(90deg)' : 'none' }}
+          >▸</button>
+        ) : (
+          <span style={{ width: 18 }} />
+        )}
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', minWidth: 90 }}>{p.name}</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--ink2)', flex: 1 }}>{p.model}</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--mut)', flex: 1 }}>{p.base_url || '—'}</span>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: p.key_set ? 'var(--ok)' : 'var(--mut)' }} title={p.key_set ? 'key set' : 'no key'} />
+        {p.is_default ? <Chip color="var(--acc)" soft>DEFAULT</Chip> : (
+          <button onClick={onSetDefault} style={{ fontSize: 11, fontWeight: 600, color: 'var(--acc)' }}>Set default</button>
+        )}
+        <button onClick={onDelete} style={deleteBtnStyle}>✕</button>
+      </div>
+
+      {/* Expanded model browser */}
+      {expanded && (
+        <div style={{ padding: '8px 0 12px 28px', borderBottom: '1px solid var(--line)', background: 'var(--card2)' }}>
+          {loadingModels && <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}><Spinner /> <span style={{ fontSize: 12, color: 'var(--mut)' }}>Fetching models…</span></div>}
+          {modelError && <div style={{ fontSize: 12, color: 'var(--err)', padding: '4px 0' }}>{modelError}</div>}
+          {models && models.length > 0 && (
+            <>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--mut2)', marginBottom: 6 }}>{models.length} models available</div>
+              <div style={{ maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {models.map(m => (
+                  <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 6px', borderRadius: 6, background: m.id === p.model ? 'var(--acc-soft)' : 'transparent' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: m.id === p.model ? 'var(--acc)' : 'var(--ink2)', flex: 1 }}>{m.id}</span>
+                    {m.id === p.model ? (
+                      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--acc)', textTransform: 'uppercase' }}>active</span>
+                    ) : (
+                      <button onClick={() => handleUseModel(m.id)} style={{ fontSize: 10, fontWeight: 600, color: 'var(--acc)', background: 'none', border: 'none', cursor: 'pointer' }}>Use</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+          {models && models.length === 0 && !modelError && !loadingModels && (
+            <div style={{ fontSize: 12, color: 'var(--mut)' }}>No models returned.</div>
+          )}
+        </div>
+      )}
+    </>
   )
 }
 

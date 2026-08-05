@@ -564,6 +564,107 @@ class TestSessionManager:
         assert s.running
 
 
+class TestProviderResolution:
+    """Tests for SessionManager._resolve_provider_for_session — the
+    tiered provider lookup: role > workspace > global fallback."""
+
+    def test_no_override_returns_none(self, tmp_path, monkeypatch):
+        """No role or workspace provider set → None (fall through to
+        global default / env vars)."""
+        monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+        result = SessionManager._resolve_provider_for_session("", None)
+        assert result is None
+
+    def test_role_provider_wins_over_workspace(self, tmp_path, monkeypatch):
+        """Role has a provider, workspace has a different one — role
+        wins (most specific)."""
+        monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+        # Set up a settings file with two provider profiles.
+        from agent_knots.settings import AgentSettings, ProviderProfile, Settings, save as save_settings
+        from agent_knots.config import settings_file
+        save_settings(Settings(
+            agent=AgentSettings(api_key="global-key"),
+            providers=[
+                ProviderProfile(name="role-prov", model="role-model", api_key="role-key", base_url="http://role"),
+                ProviderProfile(name="ws-prov", model="ws-model", api_key="ws-key", base_url="http://ws"),
+            ],
+        ))
+        # Set up a workspace with a provider.
+        from agent_knots.project.store import ProjectStore
+        from agent_knots.project.models import Project
+        from agent_knots.config import projects_dir
+        store = ProjectStore(projects_dir())
+        store.create(Project(id="ws1", name="Test", provider="ws-prov"))
+        # Set up a role with a provider.
+        from agent_knots.workflows.store import RolesStore
+        from agent_knots.config import roles_file
+        from agent_knots.workflows.models import Role, Trigger
+        rs = RolesStore(roles_file())
+        rs.update("reviewer", provider="role-prov")
+
+        result = SessionManager._resolve_provider_for_session("reviewer", "ws1")
+        assert result is not None
+        model, key, url = result
+        assert model == "role-model"
+        assert key == "role-key"
+        assert url == "http://role"
+
+    def test_workspace_provider_used_when_no_role_override(self, tmp_path, monkeypatch):
+        """No role provider set → workspace provider is used."""
+        monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+        from agent_knots.settings import AgentSettings, ProviderProfile, Settings, save as save_settings
+        save_settings(Settings(
+            agent=AgentSettings(api_key="global-key"),
+            providers=[
+                ProviderProfile(name="ws-prov", model="ws-model", api_key="ws-key", base_url="http://ws"),
+            ],
+        ))
+        from agent_knots.project.store import ProjectStore
+        from agent_knots.project.models import Project
+        from agent_knots.config import projects_dir
+        ProjectStore(projects_dir()).create(Project(id="ws1", name="Test", provider="ws-prov"))
+
+        result = SessionManager._resolve_provider_for_session("", "ws1")
+        assert result is not None
+        model, key, url = result
+        assert model == "ws-model"
+        assert key == "ws-key"
+        assert url == "http://ws"
+
+    def test_role_model_overrides_profile_model(self, tmp_path, monkeypatch):
+        """A role can pick a provider profile but swap just the model."""
+        monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+        from agent_knots.settings import AgentSettings, ProviderProfile, Settings, save as save_settings
+        save_settings(Settings(
+            agent=AgentSettings(api_key="global-key"),
+            providers=[
+                ProviderProfile(name="prov", model="profile-model", api_key="key", base_url="http://prov"),
+            ],
+        ))
+        from agent_knots.workflows.store import RolesStore
+        from agent_knots.config import roles_file
+        rs = RolesStore(roles_file())
+        rs.update("reviewer", provider="prov", model="custom-model")
+
+        result = SessionManager._resolve_provider_for_session("reviewer", None)
+        assert result is not None
+        model, key, url = result
+        assert model == "custom-model"
+        assert key == "key"
+
+    def test_nonexistent_profile_returns_none(self, tmp_path, monkeypatch):
+        """Profile name doesn't match any saved profile → None (fall
+        through to global)."""
+        monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+        from agent_knots.project.store import ProjectStore
+        from agent_knots.project.models import Project
+        from agent_knots.config import projects_dir
+        ProjectStore(projects_dir()).create(Project(id="ws1", name="Test", provider="nonexistent"))
+
+        result = SessionManager._resolve_provider_for_session("", "ws1")
+        assert result is None
+
+
 class TestSessionManagerStart:
     """Tests for SessionManager.start() — the core assembly path that had
     zero coverage. No task_description is passed in any of these, so the

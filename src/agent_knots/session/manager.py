@@ -299,8 +299,20 @@ class SessionManager:
                 "Install with: pip install strands-agents"
             )
 
-        # Resolve provider config from CLI/env/settings.
+        # Resolve provider config. Tiered: explicit args (CLI) > role
+        # override > workspace override > global default > env vars.
+        # The role/workspace tiers look up a named provider profile and
+        # feed its model/key/url as the "explicit" tier so they outrank
+        # the global default. Env vars still win over everything (they
+        # are handled inside resolve_provider itself).
         from agent_knots.provider import resolve_provider
+
+        if not model and not api_key and not base_url and (role or project_id):
+            # No explicit override — check role then workspace for a
+            # named provider profile.
+            resolved = self._resolve_provider_for_session(role, project_id)
+            if resolved:
+                model, api_key, base_url = resolved
 
         provider = resolve_provider(model=model, api_key=api_key, base_url=base_url)
         if not provider.is_configured:
@@ -1383,6 +1395,49 @@ class SessionManager:
                 return proj.runtime
         from agent_knots.session.runtime import get_runtime_type
         return get_runtime_type()
+
+    @staticmethod
+    def _resolve_provider_for_session(
+        role_key: str, project_id: str | None,
+    ) -> tuple[str, str, str | None] | None:
+        """Resolve a provider profile by name from the tiered config:
+        role override > workspace override. Returns (model, api_key,
+        base_url) from the named profile, or None if neither tier has a
+        provider set (fall through to global default / env vars).
+
+        Mirrors _resolve_runtime_type's pattern: most specific wins.
+        """
+        from agent_knots.provider import resolve_provider_profile
+
+        # Role tier — a role-triggered session (Planner/Builder/Reviewer)
+        # can specify its own provider for e.g. a cheaper review model.
+        if role_key:
+            from agent_knots.workflows.store import RolesStore
+            from agent_knots.config import roles_file
+
+            roles = RolesStore(roles_file()).list()
+            role = next((r for r in roles if r.key == role_key), None)
+            if role and role.provider:
+                cfg = resolve_provider_profile(role.provider)
+                if cfg:
+                    # role.model overrides the profile's model if set —
+                    # lets a role pick a profile but swap just the model.
+                    m = role.model or cfg.model
+                    return (m, cfg.api_key, cfg.base_url)
+
+        # Workspace tier — a workspace can default to a specific provider
+        # so all sessions in it use it without per-session config.
+        if project_id:
+            from agent_knots.project.store import ProjectStore
+            from agent_knots.config import projects_dir as _projects_dir
+
+            proj = ProjectStore(_projects_dir()).get(project_id)
+            if proj and proj.provider:
+                cfg = resolve_provider_profile(proj.provider)
+                if cfg:
+                    return (cfg.model, cfg.api_key, cfg.base_url)
+
+        return None
 
 
 def _parse_tool_input(raw: str) -> dict:

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Dialog, Field, inputStyle } from './primitives'
 import FolderPicker from './FolderPicker'
-import { createWorkspace, updateWorkspace, fetchGitInfo, type Workspace } from '../lib/api'
+import { createWorkspace, updateWorkspace, fetchGitInfo, fetchSettings, type Workspace, type ProviderInfo } from '../lib/api'
 
 interface Props {
   workspace: Workspace | null
@@ -19,9 +19,15 @@ function WorkspaceDialog({ workspace, onClose, onSaved }: Props) {
   const [name, setName] = useState(workspace?.name || '')
   const [repository, setRepository] = useState(workspace?.repository || '')
   const [runtime, setRuntime] = useState(workspace?.runtime || '')
+  const [provider, setProvider] = useState(workspace?.provider || '')
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [showPicker, setShowPicker] = useState(false)
   const [githubUrl, setGithubUrl] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    fetchSettings().then(s => setProviders(s.providers)).catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (!repository.trim()) { setGithubUrl(null); return }
@@ -36,10 +42,10 @@ function WorkspaceDialog({ workspace, onClose, onSaved }: Props) {
     setSaving(true)
     try {
       if (workspace) {
-        await updateWorkspace(workspace.id, { name, repository, runtime })
+        await updateWorkspace(workspace.id, { name, repository, runtime, provider })
       } else {
         if (!name.trim()) return
-        await createWorkspace({ name: name.trim(), repository, runtime })
+        await createWorkspace({ name: name.trim(), repository, runtime, provider })
       }
       onSaved()
     } finally {
@@ -78,6 +84,12 @@ function WorkspaceDialog({ workspace, onClose, onSaved }: Props) {
           <select aria-label="Runtime" value={runtime} onChange={e => setRuntime(e.target.value)} style={inputStyle}>
             <option value="">(use global)</option>
             <option value="inprocess">In-process</option>
+          </select>
+        </Field>
+        <Field label="Provider">
+          <select aria-label="Provider" value={provider} onChange={e => setProvider(e.target.value)} style={inputStyle}>
+            <option value="">(use global default)</option>
+            {providers.map(p => <option key={p.name} value={p.name}>{p.name} ({p.model})</option>)}
           </select>
         </Field>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>

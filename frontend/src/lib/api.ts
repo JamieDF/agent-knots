@@ -216,7 +216,7 @@ export async function toggleTool(name: string): Promise<{ enabled: boolean }> {
 // ── workspaces ──────────────────────────────────────────────────────────────
 
 export interface Workspace {
-  id: string; name: string; description: string; repository: string; runtime: string; tags: string[]
+  id: string; name: string; description: string; repository: string; runtime: string; provider: string; tags: string[]
   auto_assign: boolean; max_concurrent: number; archived: boolean
   created_at: number
 }
@@ -229,11 +229,11 @@ export async function fetchWorkspace(id: string): Promise<Workspace> {
   return apiFetch(`/api/workspaces/${id}`)
 }
 
-export async function createWorkspace(data: { id?: string; name: string; description?: string; repository?: string; runtime?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number }) {
+export async function createWorkspace(data: { id?: string; name: string; description?: string; repository?: string; runtime?: string; provider?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number }) {
   return apiFetch<any>('/api/workspaces', jsonInit('POST', data))
 }
 
-export async function updateWorkspace(id: string, data: { name?: string; description?: string; repository?: string; runtime?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number; archived?: boolean }) {
+export async function updateWorkspace(id: string, data: { name?: string; description?: string; repository?: string; runtime?: string; provider?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number; archived?: boolean }) {
   return apiFetch<any>(`/api/workspaces/${id}`, jsonInit('PATCH', data))
 }
 
@@ -260,14 +260,14 @@ export async function toggleStage(key: string, enabled: boolean): Promise<{ stag
 
 export interface RoleInfo {
   key: string; name: string; icon: string; description: string
-  model: string; trigger: string; prompt: string; tools: string[]; enabled: boolean
+  model: string; provider: string; trigger: string; prompt: string; tools: string[]; enabled: boolean
 }
 
 export async function fetchRoles(): Promise<{ roles: RoleInfo[] }> {
   return apiFetch('/api/roles')
 }
 
-export async function updateRole(key: string, data: { model?: string; trigger?: string; prompt?: string; enabled?: boolean }): Promise<RoleInfo> {
+export async function updateRole(key: string, data: { model?: string; provider?: string; trigger?: string; prompt?: string; enabled?: boolean }): Promise<RoleInfo> {
   return apiFetch(`/api/roles/${key}`, jsonInit('PATCH', data))
 }
 
@@ -336,6 +336,18 @@ export async function deleteProvider(name: string): Promise<{ providers: Provide
 
 export async function setDefaultProvider(name: string): Promise<void> {
   await apiFetch(`/api/settings/providers/${encodeURIComponent(name)}/default`, { method: 'POST' })
+}
+
+export interface ProviderModel {
+  id: string; owned_by?: string
+}
+
+export async function fetchProviderModels(name: string): Promise<{ models: ProviderModel[] }> {
+  return apiFetch(`/api/settings/providers/${encodeURIComponent(name)}/models`)
+}
+
+export async function updateProviderModel(name: string, model: string): Promise<void> {
+  await apiFetch(`/api/settings/providers/${encodeURIComponent(name)}`, jsonInit('PATCH', { model }))
 }
 
 export async function saveIntegrations(data: { github_pr_on_review?: boolean; phone_push?: boolean }): Promise<void> {

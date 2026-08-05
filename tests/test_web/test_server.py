@@ -884,7 +884,7 @@ class TestWorkspaceAPI:
         assert resp.status_code == 200
         assert resp.json() == {
             "id": "ws-single", "name": "Single WS", "description": "", "repository": "/tmp/x",
-            "runtime": "", "tags": [], "auto_assign": False, "max_concurrent": 2, "archived": False,
+            "runtime": "", "provider": "", "tags": [], "auto_assign": False, "max_concurrent": 2, "archived": False,
             "created_at": resp.json()["created_at"],
         }
 
