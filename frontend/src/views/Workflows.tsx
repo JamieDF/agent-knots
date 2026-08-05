@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import DeskLayout from '../components/DeskLayout'
 import { Card, Chip, Toggle, SectionLabel, Dialog, Field, inputStyle } from '../components/primitives'
 import {
-  fetchStages, toggleStage, fetchRoles, updateRole,
-  type StageInfo, type RoleInfo,
+  fetchStages, toggleStage, fetchRoles, updateRole, fetchSettings,
+  type StageInfo, type RoleInfo, type ProviderInfo,
 } from '../lib/api'
 
 const TRIGGER_LABELS: Record<string, string> = {
@@ -144,14 +144,20 @@ function Workflows() {
 
 function RoleConfigDialog({ role, onClose, onSaved }: { role: RoleInfo; onClose: () => void; onSaved: () => void }) {
   const [model, setModel] = useState(role.model)
+  const [provider, setProvider] = useState(role.provider || '')
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [trigger, setTrigger] = useState(role.trigger)
   const [prompt, setPrompt] = useState(role.prompt)
   const [saving, setSaving] = useState(false)
 
+  useEffect(() => {
+    fetchSettings().then(s => setProviders(s.providers)).catch(() => {})
+  }, [])
+
   const handleSave = async () => {
     setSaving(true)
     try {
-      await updateRole(role.key, { model, trigger, prompt })
+      await updateRole(role.key, { model, provider, trigger, prompt })
       onSaved()
     } finally {
       setSaving(false)
@@ -162,8 +168,14 @@ function RoleConfigDialog({ role, onClose, onSaved }: { role: RoleInfo; onClose:
     <Dialog open onClose={onClose} width={460}>
       <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>{role.icon} Configure {role.name}</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <Field label="Provider">
+          <select aria-label="Provider" value={provider} onChange={e => setProvider(e.target.value)} style={inputStyle}>
+            <option value="">(use workspace/global default)</option>
+            {providers.map(p => <option key={p.name} value={p.name}>{p.name} ({p.model})</option>)}
+          </select>
+        </Field>
         <Field label="Model">
-          <input aria-label="Model" value={model} onChange={e => setModel(e.target.value)} placeholder="(use global default)" style={inputStyle} />
+          <input aria-label="Model" value={model} onChange={e => setModel(e.target.value)} placeholder="(use provider's default)" style={inputStyle} />
         </Field>
         <Field label="Trigger">
           <select aria-label="Trigger" value={trigger} onChange={e => setTrigger(e.target.value)} style={inputStyle}>

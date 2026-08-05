@@ -29,7 +29,7 @@ def _stage_from_dict(d: dict[str, Any]) -> Stage:
 def _role_to_dict(r: Role) -> dict[str, Any]:
     return {
         "key": r.key, "name": r.name, "icon": r.icon, "description": r.description,
-        "model": r.model, "trigger": r.trigger.value, "prompt": r.prompt,
+        "model": r.model, "provider": r.provider, "trigger": r.trigger.value, "prompt": r.prompt,
         "tools": r.tools, "enabled": r.enabled, "advisory": r.advisory,
     }
 
@@ -37,7 +37,8 @@ def _role_to_dict(r: Role) -> dict[str, Any]:
 def _role_from_dict(d: dict[str, Any]) -> Role:
     return Role(
         key=d["key"], name=d["name"], icon=d.get("icon", ""), description=d.get("description", ""),
-        model=d.get("model", ""), trigger=Trigger(d.get("trigger", "manual")),
+        model=d.get("model", ""), provider=d.get("provider", ""),
+        trigger=Trigger(d.get("trigger", "manual")),
         prompt=d.get("prompt", ""), tools=d.get("tools", []), enabled=d.get("enabled", False),
         advisory=d.get("advisory", False),
     )

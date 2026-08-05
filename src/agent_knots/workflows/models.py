@@ -42,6 +42,7 @@ class Role:
     icon: str
     description: str
     model: str = ""  # "" = use the global default model
+    provider: str = ""  # named provider profile, or "" (use workspace/global)
     trigger: Trigger = Trigger.MANUAL
     prompt: str = ""
     # Tool names this role's session is restricted to (see

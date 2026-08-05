@@ -97,3 +97,27 @@ def _load_settings() -> dict[str, str]:
         "api_key": s.agent.api_key,
         "base_url": s.agent.base_url,
     }
+
+
+def resolve_provider_profile(name: str) -> ProviderConfig | None:
+    """Look up a named provider profile from settings.yaml and return it
+    as a ProviderConfig, or None if the profile doesn't exist.
+
+    Used by the tiered provider resolution in SessionManager (per-role
+    and per-workspace overrides reference a profile by name rather than
+    duplicating keys). A profile with no api_key is returned as-is — the
+    caller (resolve_provider / start) handles the "not configured" check.
+    """
+    if not name:
+        return None
+    from agent_knots.settings import load as load_settings
+
+    s = load_settings()
+    for profile in s.providers:
+        if profile.name == name:
+            return ProviderConfig(
+                model=profile.model or s.agent.default_model,
+                api_key=profile.api_key,
+                base_url=profile.base_url or None,
+            )
+    return None

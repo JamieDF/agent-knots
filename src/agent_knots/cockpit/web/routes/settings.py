@@ -131,6 +131,33 @@ def create_router() -> APIRouter:
         settings.save(s)
         return {"providers": _providers_to_response(s)}
 
+    @router.patch("/api/settings/providers/{name}")
+    @raises_as(404)
+    async def update_provider(name: str, body: dict):
+        """Update a saved provider profile's fields (model, api_key,
+        base_url). Used by the model browser's "Use" button to set the
+        active model without re-entering the key."""
+        s = settings.load()
+        profile = next((p for p in s.providers if p.name == name), None)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="Provider not found")
+        if "model" in body:
+            profile.model = body["model"]
+        if "base_url" in body:
+            profile.base_url = body["base_url"]
+        # Only update the key if a real value is provided (not masked).
+        if "api_key" in body and body["api_key"] and not body["api_key"].endswith("..."):
+            profile.api_key = body["api_key"]
+        # If this provider is the active default, sync the agent config
+        # so the change takes effect immediately.
+        if s.default_provider == name:
+            s.agent.default_model = profile.model
+            s.agent.base_url = profile.base_url
+            if "api_key" in body and body["api_key"] and not body["api_key"].endswith("..."):
+                s.agent.api_key = profile.api_key
+        settings.save(s)
+        return {"providers": _providers_to_response(s)}
+
     @router.post("/api/settings/providers/{name}/default")
     async def set_default_provider(name: str):
         """Make a saved provider profile the active one — copies its
@@ -146,6 +173,38 @@ def create_router() -> APIRouter:
         s.default_provider = name
         settings.save(s)
         return {"status": "ok", "default_provider": name}
+
+    @router.get("/api/settings/providers/{name}/models")
+    @raises_as(400)
+    async def list_provider_models(name: str):
+        """Query a saved provider's API for its available models via the
+        OpenAI-compatible GET /v1/models endpoint. Bypasses Strands (which
+        has no model-listing surface) and constructs an openai client
+        directly from the profile's key/url.
+
+        Will fail cleanly on providers that aren't OpenAI-compatible
+        (e.g. Anthropic's native API) — surfaced as a 400 with a message
+        the frontend shows to the user.
+        """
+        s = settings.load()
+        profile = next((p for p in s.providers if p.name == name), None)
+        if profile is None:
+            raise HTTPException(status_code=404, detail="Provider not found")
+        if not profile.api_key:
+            raise HTTPException(status_code=400, detail="Provider has no API key set")
+
+        from openai import AsyncOpenAI
+
+        base_url = profile.base_url or "https://api.openai.com/v1"
+        client = AsyncOpenAI(api_key=profile.api_key, base_url=base_url)
+        try:
+            response = await client.models.list()
+            return {"models": [{"id": m.id, "owned_by": m.owned_by} for m in response.data]}
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not list models from {name}: {e}",
+            )
 
     @router.put("/api/integrations")
     async def save_integrations(body: SaveIntegrationsRequest):

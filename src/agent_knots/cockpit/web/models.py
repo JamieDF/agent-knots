@@ -78,6 +78,7 @@ class ToggleRequest(BaseModel):
 
 class UpdateRoleRequest(BaseModel):
     model: Optional[str] = None
+    provider: Optional[str] = None
     trigger: Optional[str] = None
     prompt: Optional[str] = None
     enabled: Optional[bool] = None
@@ -153,6 +154,7 @@ class CreateWorkspaceRequest(BaseModel):
     description: str = ""
     repository: str = ""
     runtime: str = ""
+    provider: str = ""
     tags: list = []
     auto_assign: bool = False
     max_concurrent: int = 2
@@ -163,6 +165,7 @@ class UpdateWorkspaceRequest(BaseModel):
     description: Optional[str] = None
     repository: Optional[str] = None
     runtime: Optional[str] = None
+    provider: Optional[str] = None
     tags: Optional[list] = None
     auto_assign: Optional[bool] = None
     max_concurrent: Optional[int] = None

@@ -11,7 +11,7 @@ from agent_knots.workflows.store import RolesStore, StagesStore
 def _role_to_response(role) -> dict:
     return {
         "key": role.key, "name": role.name, "icon": role.icon, "description": role.description,
-        "model": role.model, "trigger": role.trigger.value, "prompt": role.prompt,
+        "model": role.model, "provider": role.provider, "trigger": role.trigger.value, "prompt": role.prompt,
         "tools": role.tools, "enabled": role.enabled,
     }
 
