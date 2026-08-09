@@ -68,7 +68,7 @@ function Board({ reloadSignal }: { reloadSignal?: number } = {}) {
 	              if (taskId) handleMove(taskId, stage.statuses[0])
 	            }}
 	            style={{
-	              flex: '1 1 0', minWidth: 230, maxWidth: 250, display: 'flex', flexDirection: 'column',
+	              flex: '1 1 0', minWidth: 260, maxWidth: 290, display: 'flex', flexDirection: 'column',
 	              borderRadius: 12, transition: 'background 0.1s',
 	              background: dragOverStage === stage.key ? 'var(--acc-soft)' : undefined,
 	            }}

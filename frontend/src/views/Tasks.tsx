@@ -30,7 +30,7 @@ function Tasks() {
   }
 
   return (
-    <DeskLayout scale={view === 'board' ? 'wide' : 'normal'}>
+    <DeskLayout scale={view === 'board' ? 'full' : 'normal'}>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
         <div style={{ display: 'flex', gap: 2, padding: 3, borderRadius: 10, background: 'var(--card2)' }}>
           {(['board', 'list'] as const).map(v => (
