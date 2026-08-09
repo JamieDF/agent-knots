@@ -1,15 +1,17 @@
 import { forwardRef, type ReactNode } from 'react'
 
-type Scale = 'narrow' | 'normal' | 'wide'
+type Scale = 'narrow' | 'normal' | 'wide' | 'full'
 
 // Each scale is a multiplier on the base --content-width CSS variable.
 // Kept tight (±5%) so switching tabs doesn't jarringly resize — the
 // Board gets a touch more room for its kanban columns, focused screens
-// a touch less, but they're all visibly the same column.
+// a touch less, but they're all visibly the same column. 'full' removes
+// the cap entirely for the multi-column board view.
 const SCALE_MULTIPLIER: Record<Scale, number> = {
   narrow: 0.95,
   normal: 1.0,
   wide: 1.08,
+  full: 0, // 0 = no max-width cap, fills available space
 }
 
 interface Props {
@@ -23,7 +25,7 @@ interface Props {
  * Forwards a ref to the scrollable outer div so pages with in-page
  * navigation (Settings) can scroll-spy / scrollIntoView within it. */
 const DeskLayout = forwardRef<HTMLDivElement, Props>(function DeskLayout({ children, scale = 'normal' }, ref) {
-  const maxWidth = `calc(var(--content-width) * ${SCALE_MULTIPLIER[scale]})`
+  const maxWidth = SCALE_MULTIPLIER[scale] === 0 ? 'none' : `calc(var(--content-width) * ${SCALE_MULTIPLIER[scale]})`
   return (
     <div
       ref={ref}
