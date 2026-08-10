@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from agent_knots.gitutil import (
+    _git_diff_for_file,
+    _git_diff_stat,
     branch_exists,
     clone_into,
     commits_ahead,
@@ -135,6 +137,54 @@ class TestCloneInto:
         assert not result.ok
         assert "already exists" in result.failed_reason
         assert (dest / "existing.txt").read_text() == "do not clobber me\n"
+
+
+class TestDiffStat:
+    """Review derives its file list from these, and approve stages with
+    `git add -A` — so anything add -A would commit has to show up here,
+    or a reviewer approves changes they were never shown."""
+
+    def test_reports_tracked_modifications(self, repo):
+        (repo / "README.md").write_text("hello\nworld\n")
+        stat = _git_diff_stat(repo)
+        assert [s["path"] for s in stat] == ["README.md"]
+        assert stat[0]["added"] == 1
+
+    def test_reports_untracked_files(self, repo):
+        """The regression: an agent creating a new file is the most
+        common thing that happens, and `git diff` doesn't mention it at
+        all — so review showed nothing while approve committed it."""
+        (repo / "new_module.py").write_text("def f():\n    return 1\n")
+        stat = _git_diff_stat(repo)
+        assert [s["path"] for s in stat] == ["new_module.py"]
+        assert stat[0]["added"] == 2
+        assert stat[0]["deleted"] == 0
+
+    def test_reports_tracked_and_untracked_together(self, repo):
+        (repo / "README.md").write_text("changed\n")
+        (repo / "extra.txt").write_text("new\n")
+        assert {s["path"] for s in _git_diff_stat(repo)} == {"README.md", "extra.txt"}
+
+    def test_ignores_gitignored_files(self, repo):
+        """Kept in step with `git add -A`, which also skips ignored
+        files — otherwise review would list junk that never gets
+        committed."""
+        (repo / ".gitignore").write_text("*.pyc\n__pycache__/\n")
+        _git(repo, "add", ".gitignore")
+        _git(repo, "commit", "-qm", "ignore rules")
+        (repo / "__pycache__").mkdir()
+        (repo / "__pycache__" / "mod.pyc").write_bytes(b"\x00binary")
+
+        assert _git_diff_stat(repo) == []
+
+    def test_diff_text_for_an_untracked_file(self, repo):
+        (repo / "fresh.txt").write_text("line one\n")
+        diff = _git_diff_for_file(repo, "fresh.txt")
+        assert "+line one" in diff
+
+    def test_diff_text_for_a_tracked_file(self, repo):
+        (repo / "README.md").write_text("hello\nextra\n")
+        assert "+extra" in _git_diff_for_file(repo, "README.md")
 
 
 class TestInitRepo:

@@ -1896,6 +1896,86 @@ class TestReviewWithoutGit:
         assert resp.json()["task_status"] == "done"
 
 
+class TestReviewSeesUntrackedFiles:
+    """Found by running a real agent: it created one new file, and
+    Review reported zero pending changes — while approve's `git add -A`
+    committed it anyway. The reviewer approved something they were
+    never shown."""
+
+    @pytest.mark.asyncio
+    async def test_a_new_file_from_the_agent_shows_up_in_review(self, authed_client, tmp_path):
+        from agent_knots.gitutil import session_branch_name
+
+        repo = tmp_path / "ws"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        (repo / "README.md").write_text("seed\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+        await authed_client.post("/api/workspaces", json={
+            "id": "untracked-ws", "name": "untracked-ws", "repository": str(repo),
+        })
+        task = (await authed_client.post(
+            "/api/tasks", json={"title": "Make a thing", "project": "untracked-ws"},
+        )).json()
+        branch = session_branch_name(task["id"], "Make a thing", "")
+        subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=repo, check=True)
+        await authed_client.patch(f"/api/tasks/{task['id']}", json={"status": "review"})
+
+        # Exactly what an agent does: create a brand-new file, no commit.
+        (repo / "greet.py").write_text("def greet(name):\n    return name\n")
+
+        diffs = (await authed_client.get(
+            "/api/review/diffs", params={"task_id": task["id"]},
+        )).json()
+        assert [d["file"] for d in diffs["diffs"]] == ["greet.py"]
+        assert diffs["diffs"][0]["added"] == 2
+
+        listed = (await authed_client.get("/api/review/tasks")).json()["tasks"]
+        assert next(t for t in listed if t["id"] == task["id"])["file_count"] == 1
+
+        text = (await authed_client.get(
+            "/api/review/diff", params={"task_id": task["id"], "file": "greet.py"},
+        )).json()["diff"]
+        assert "+def greet(name):" in text
+
+    @pytest.mark.asyncio
+    async def test_ignored_files_stay_out_of_review(self, authed_client, tmp_path):
+        """`git add -A` skips ignored files, so review must too —
+        otherwise it lists junk that approve never commits."""
+        from agent_knots.gitutil import session_branch_name
+
+        repo = tmp_path / "ws2"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        (repo / ".gitignore").write_text("__pycache__/\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+        await authed_client.post("/api/workspaces", json={
+            "id": "ignored-ws", "name": "ignored-ws", "repository": str(repo),
+        })
+        task = (await authed_client.post(
+            "/api/tasks", json={"title": "Ignored", "project": "ignored-ws"},
+        )).json()
+        branch = session_branch_name(task["id"], "Ignored", "")
+        subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=repo, check=True)
+        await authed_client.patch(f"/api/tasks/{task['id']}", json={"status": "review"})
+
+        (repo / "__pycache__").mkdir()
+        (repo / "__pycache__" / "x.pyc").write_bytes(b"\x00")
+
+        diffs = (await authed_client.get(
+            "/api/review/diffs", params={"task_id": task["id"]},
+        )).json()
+        assert diffs["diffs"] == []
+
+
 class TestFeedbackMessage:
     """The prose sent back to the agent on reject."""
 

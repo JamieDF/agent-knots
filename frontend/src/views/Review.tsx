@@ -180,9 +180,14 @@ function ReviewTaskDetail({ taskId }: { taskId: string }) {
 
   const approvedFiles = Object.entries(statuses).filter(([, s]) => s === 'committed').map(([f]) => f)
   const pending = diffs.filter(d => statuses[d.file] !== 'committed')
-  // Without a repo there are no files to gate on, and gating anyway is
-  // exactly what used to strand these tasks in review permanently.
-  const canAct = hasRepo ? pending.length > 0 : true
+  // A task in review can ALWAYS be actioned. Gating these buttons on
+  // pending files is what used to strand tasks in review with no way
+  // out — and it happened two ways: a workspace that isn't a git repo
+  // (no diffs by definition), and an agent that committed its own work
+  // to the branch (nothing left uncommitted to show). The API handles
+  // both: approve with nothing pending skips straight to closing the
+  // task out. Only the labels differ.
+  const perFile = hasRepo && pending.length > 0
 
   const handleExpand = async (file: string) => {
     if (expanded === file) { setExpanded(null); return }
@@ -283,22 +288,20 @@ function ReviewTaskDetail({ taskId }: { taskId: string }) {
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <SectionLabel>
-                {hasRepo ? `${pending.length} file${pending.length !== 1 ? 's' : ''} pending` : 'Task review'}
+                {perFile ? `${pending.length} file${pending.length !== 1 ? 's' : ''} pending` : 'Task review'}
               </SectionLabel>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button
                   onClick={() => { setRejectTarget('all'); setReason('') }}
-                  disabled={!canAct}
-                  style={{ padding: '6px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--err)', background: 'var(--card2)', opacity: canAct ? 1 : 0.5 }}
+                  style={{ padding: '6px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--err)', background: 'var(--card2)' }}
                 >
-                  {hasRepo ? 'Reject all' : 'Reject'}
+                  {perFile ? 'Reject all' : 'Reject'}
                 </button>
                 <button
                   onClick={() => handleApprove()}
-                  disabled={!canAct}
-                  style={{ padding: '6px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: canAct ? 1 : 0.5 }}
+                  style={{ padding: '6px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)' }}
                 >
-                  {hasRepo ? 'Approve all' : 'Approve'}
+                  {perFile ? 'Approve all' : 'Approve'}
                 </button>
               </div>
             </div>
@@ -306,7 +309,7 @@ function ReviewTaskDetail({ taskId }: { taskId: string }) {
             {diffs.length === 0 && (
               <div style={{ fontSize: 12.5, color: 'var(--mut)', lineHeight: 1.5 }}>
                 {hasRepo
-                  ? 'No pending changes.'
+                  ? 'No uncommitted changes — the agent may have already committed its work to the branch. Check the branch history, then approve to close the task out, or reject to send it back.'
                   : "This workspace isn't a git repository, so there are no file diffs. Review the task's details and acceptance criteria on the left, then approve or reject."}
               </div>
             )}
@@ -358,7 +361,7 @@ function ReviewTaskDetail({ taskId }: { taskId: string }) {
 
       <Dialog open={rejectTarget !== null} onClose={() => setRejectTarget(null)} width={440}>
         <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4, color: 'var(--ink)' }}>
-          Reject {rejectTarget === 'all' ? (hasRepo ? 'all remaining files' : 'this task') : rejectTarget}?
+          Reject {rejectTarget === 'all' ? (perFile ? 'all remaining files' : 'this task') : rejectTarget}?
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--mut)', marginBottom: 14 }}>
           Nothing is discarded — the agent's session resumes with this feedback and keeps working.

@@ -33,11 +33,9 @@ def _run_git(repo: Path, args: list[str], timeout: int = 10) -> subprocess.Compl
     )
 
 
-def _git_diff_stat(repo: Path) -> list[dict]:
-    """Per-file added/deleted line counts for uncommitted changes."""
-    result = _run_git(repo, ["diff", "--numstat"])
+def _parse_numstat(stdout: str) -> list[dict]:
     items = []
-    for line in result.stdout.splitlines():
+    for line in stdout.splitlines():
         parts = line.split("\t")
         if len(parts) == 3:
             added, deleted, path = parts
@@ -49,8 +47,57 @@ def _git_diff_stat(repo: Path) -> list[dict]:
     return items
 
 
+def _git_untracked(repo: Path) -> list[str]:
+    """Untracked, non-ignored files — exactly the set `git add -A` would
+    pick up beyond tracked modifications."""
+    result = _run_git(repo, ["ls-files", "--others", "--exclude-standard"])
+    if result.returncode != 0:
+        return []
+    return [p for p in result.stdout.splitlines() if p.strip()]
+
+
+def _git_diff_stat(repo: Path) -> list[dict]:
+    """Per-file added/deleted line counts for uncommitted changes.
+
+    Covers tracked modifications AND untracked (non-ignored) files.
+    The untracked half matters more than it sounds: `git diff` ignores
+    them entirely, but Review's approve runs `git add -A`, so leaving
+    them out meant the most common thing an agent does — creating a new
+    file — was invisible in review while still being committed by it.
+    Reviewers could approve a change they were never shown. Filtering
+    with --exclude-standard keeps this set exactly aligned with what
+    `git add -A` would actually stage.
+    """
+    items = _parse_numstat(_run_git(repo, ["diff", "--numstat"]).stdout)
+    for path in _git_untracked(repo):
+        # --no-index against /dev/null gives the added-line count, and
+        # reports "-" for binary the same way a tracked diff would.
+        # It exits 1 whenever there *is* a difference, so returncode
+        # can't be used as a failure signal here.
+        stat = _parse_numstat(
+            _run_git(repo, ["diff", "--no-index", "--numstat", "--", "/dev/null", path]).stdout,
+        )
+        items.append({
+            "path": path,
+            "added": stat[0]["added"] if stat else 0,
+            "deleted": 0,
+        })
+    return items
+
+
 def _git_diff_for_file(repo: Path, path: str) -> str:
-    return _run_git(repo, ["diff", "--", path]).stdout
+    """Unified diff for one uncommitted file.
+
+    Falls back to a --no-index diff against /dev/null for untracked
+    files, which plain `git diff` renders as empty — the reviewer needs
+    to see the contents of a file approve is about to commit.
+    """
+    diff = _run_git(repo, ["diff", "--", path]).stdout
+    if diff.strip():
+        return diff
+    if path in _git_untracked(repo):
+        return _run_git(repo, ["diff", "--no-index", "--", "/dev/null", path]).stdout
+    return diff
 
 
 def _github_url_from_remote(remote_url: str) -> str | None:
