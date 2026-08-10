@@ -12,7 +12,20 @@ class Project:
     id: str
     name: str
     description: str = ""
+    # The working path, in both managed and unmanaged workspaces. Every
+    # consumer (session cwd resolution, review, gitutil, the system
+    # prompt) reads this and only this — `managed` changes who created
+    # the directory, never what the field means.
     repository: str = ""
+    # What the user originally gave us: a clone URL, or the local path
+    # we cloned from. Empty for an unmanaged workspace (where
+    # `repository` *is* what they gave us) or a managed one created
+    # empty.
+    source: str = ""
+    # True when `repository` is a clone agent-knots created under
+    # config.workspaces_root() and therefore owns. Governs whether we're
+    # allowed to repoint or delete it.
+    managed: bool = False
     default_branch: str = "main"
     runtime: str = ""           # "inprocess" or "" (use global)
     provider: str = ""          # named provider profile, or "" (use global)

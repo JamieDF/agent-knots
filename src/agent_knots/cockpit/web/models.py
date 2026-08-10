@@ -21,6 +21,9 @@ class SaveSettingsRequest(BaseModel):
     # 0 is a meaningful real value here (never auto-purge), so the
     # empty-string-means-preserve convention doesn't fit.
     wastebin_retention_days: int | None = None
+    # None = preserve. "" is meaningful and distinct from None: it
+    # clears an override and puts workspaces_root() back on its default.
+    workspaces_root: str | None = None
 
 
 class CreateSessionRequest(BaseModel):
@@ -152,7 +155,23 @@ class CreateWorkspaceRequest(BaseModel):
     id: Optional[str] = None  # omitted = slugify from name, deduped
     name: str
     description: str = ""
+    # A clone URL or a local path. With managed=True this is the clone
+    # *source* and the workspace's actual repository path is derived
+    # under config.workspaces_root(); with managed=False it's used
+    # as-is, the pre-managed-workspaces behaviour.
     repository: str = ""
+    # Defaults to False so the API keeps behaving exactly as it did for
+    # every existing caller — a path passed here is still used verbatim
+    # unless someone explicitly asks for a managed clone. The
+    # *product* default lives in the create-workspace dialog, which
+    # sends managed=true; that's the default a user sees, and it
+    # doesn't come at the cost of silently cloning under scripts, the
+    # CLI, or the test suites.
+    managed: bool = False
+    # Only consulted for a managed workspace created with no repository:
+    # `git init` the new empty folder. Off by default — Review works
+    # without git, so an empty workspace has no need of it.
+    init_git: bool = False
     runtime: str = ""
     provider: str = ""
     tags: list = []
@@ -160,9 +179,18 @@ class CreateWorkspaceRequest(BaseModel):
     max_concurrent: int = 2
 
 
+class PushBranchRequest(BaseModel):
+    branch: str
+    remote: str = "origin"
+
+
 class UpdateWorkspaceRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    # Rejected outright for a managed workspace — that path is ours.
+    # `managed` and `source` are deliberately absent: a workspace can't
+    # be converted between modes by a PATCH, since that would mean
+    # moving or abandoning real code on disk.
     repository: Optional[str] = None
     runtime: Optional[str] = None
     provider: Optional[str] = None

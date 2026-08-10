@@ -61,6 +61,8 @@ class ProjectStore:
             "name": project.name,
             "description": project.description,
             "repository": project.repository,
+            "source": project.source,
+            "managed": project.managed,
             "default_branch": project.default_branch,
             "runtime": project.runtime,
             "provider": project.provider,
@@ -83,6 +85,11 @@ class ProjectStore:
                 name=data["name"],
                 description=data.get("description", ""),
                 repository=data.get("repository", ""),
+                # Pre-managed-workspaces YAML has neither key; defaulting
+                # managed to False keeps every existing workspace on the
+                # unmanaged path, pointing at wherever it already pointed.
+                source=data.get("source", ""),
+                managed=data.get("managed", False),
                 default_branch=data.get("default_branch", "main"),
                 runtime=data.get("runtime", ""),
                 provider=data.get("provider", ""),

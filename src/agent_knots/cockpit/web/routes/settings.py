@@ -12,7 +12,7 @@ from agent_knots.cockpit.web.decorators import raises_as
 from agent_knots.cockpit.web.models import (
     AddProviderRequest, SaveIntegrationsRequest, SaveSettingsRequest, UpdatePolicyRequest,
 )
-from agent_knots.config import policies_file, usage_file
+from agent_knots.config import policies_file, usage_file, workspaces_root
 from agent_knots import provider as provider_module
 from agent_knots import settings
 from agent_knots import usage as usage_module
@@ -80,6 +80,14 @@ def create_router() -> APIRouter:
             "wastebin": {
                 "retention_days": s.wastebin.retention_days,
             },
+            "workspaces": {
+                # The configured override ("" when unset) alongside the
+                # path actually in force, so the Settings screen can
+                # show where clones really land without the user having
+                # to work out the default themselves.
+                "root": s.workspaces_root,
+                "resolved_root": str(workspaces_root()),
+            },
         }
 
     @router.put("/api/settings")
@@ -102,6 +110,9 @@ def create_router() -> APIRouter:
 
         if body.wastebin_retention_days is not None:
             s.wastebin.retention_days = body.wastebin_retention_days
+
+        if body.workspaces_root is not None:
+            s.workspaces_root = body.workspaces_root.strip()
 
         settings.save(s)
         return {"status": "ok", "configured": provider_module.resolve_provider().is_configured}

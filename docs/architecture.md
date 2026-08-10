@@ -73,7 +73,7 @@ agent-knots/
 │   ├── tools/                     # Tool registry, defaults, custom tools
 │   ├── workflows/                 # Board stage config + agent role config (incl. advisory roles)
 │   ├── policies/                  # Config toggles for the Settings screen
-│   ├── config.py                  # Data-directory paths (AGENT_KNOTS_HOME resolution)
+│   ├── config.py                  # Data-directory paths (AGENT_KNOTS_HOME + workspaces root)
 │   ├── settings.py                # Global YAML settings store
 │   ├── provider.py                # Model provider resolution (CLI/env/settings)
 │   ├── isolation.py               # WorkspaceSandbox — cwd confinement config
@@ -81,7 +81,7 @@ agent-knots/
 │   ├── intervention.py            # Read-only tool gating for reviewer/security modes
 │   ├── hooks.py                   # Token tracking + auto progress logging
 │   ├── events.py                  # Event/EventType/ToolCall wire types
-│   ├── gitutil.py                 # Per-session branch create/resume/teardown
+│   ├── gitutil.py                 # Managed-workspace clone/push + per-session branches
 │   ├── names.py                   # Human-readable session names ("sleepy-panda")
 │   ├── wastebin.py                # Stopped-session tombstones + history + retention
 │   ├── mcp_servers.py             # MCP server registry (config-only, no client wiring yet)
@@ -200,6 +200,48 @@ its description, and repository — without this, a session had no way to
 know which workspace it was in at all beyond whatever it could infer
 from files already sitting in its own working directory.
 
+### Managed workspaces
+
+A workspace is **managed** when agent-knots created its directory and
+therefore owns it, rather than pointing at a folder the user already
+had. Managed workspaces live under `config.workspaces_root()` —
+`~/agent-knots/workspaces/` by default, named after the repo, and
+deliberately the one path in `config.py` that sits *outside*
+`~/.agent-knots/`. Everything else there is internal state nobody opens
+by hand; this holds the user's code, so it goes somewhere visible.
+
+Creating one provisions the directory before the workspace record
+exists — clone the given URL or local path (`gitutil.clone_into`), or
+`mkdir` an empty folder if none was given — so a failed clone leaves
+neither a stray directory nor a project pointing at a broken one.
+
+The point is that an agent no longer edits the checkout you have open
+in your editor. It also means agents start from a clean tree: branching
+in a shared checkout carries your uncommitted changes onto the session
+branch (git's own behaviour, see `ensure_session_branch`), and an agent
+can't tell those from its own work.
+
+Cloning from a local path is the fast, offline case, but it leaves
+`origin` pointing at that checkout — a later push would go back into
+your own repo instead of upstream. So when the source has an origin of
+its own, the clone adopts it and the local path is demoted to a `local`
+remote.
+
+Two properties on `Project` carry this: `managed` (we own the path) and
+`source` (what it was cloned from). Crucially, **`repository` still
+means "the directory sessions work in" in both modes** — session cwd
+resolution, review, gitutil and the system prompt all read it and none
+of them know or care which kind of workspace it is.
+
+Unmanaged workspaces remain fully supported: every workspace created
+before this existed is one, and the API still defaults to it so scripts
+and the CLI behave exactly as they did. Managed is the default only in
+the create-workspace dialog, which is where a *user* meets it.
+
+Approving in Review commits inside the workspace, and nothing leaves the
+machine until someone explicitly pushes
+(`POST /api/workspaces/{id}/push`).
+
 ### Session branches
 
 A task-attached session gets its own git branch (`gitutil.py`), named from
@@ -263,6 +305,18 @@ instead of losing all context and starting a fresh session from
 scratch. `done`/`abandoned` still do a real `stop()`, same as always;
 Review's approve flow, once every file is committed, moves the task to
 `done` itself and lets that trigger the real stop the normal way.
+
+Review does not require git. A workspace can be a plain folder — for
+writing, research, planning, or a repo nobody initialised — and its
+tasks still need reviewing. Every endpoint resolves the repo through
+`_task_repo()`, which returns `None` for those, and the flow degrades
+to reviewing the task itself: no diffs, nothing to stage, approve and
+reject acting on task status alone. The gate is unchanged either way,
+because it was always task logic — `set_status` refusing on unmet
+acceptance criteria — rather than anything to do with commits. (Before
+this, such a task could enter review and never leave: approve and
+reject both returned 400, and the UI disabled both buttons because
+there were no pending files.)
 
 ### Multi-agent
 

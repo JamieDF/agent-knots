@@ -8,12 +8,18 @@ import pytest
 
 from agent_knots.gitutil import (
     branch_exists,
+    clone_into,
     commits_ahead,
     current_branch,
     delete_branch_if_empty,
     ensure_session_branch,
+    init_repo,
     is_dirty,
+    is_remote_url,
     is_repo,
+    push_branch,
+    remote_url,
+    repo_name_from_source,
     session_branch_name,
 )
 
@@ -40,6 +46,133 @@ def repo():
 def not_repo():
     with tempfile.TemporaryDirectory() as d:
         yield Path(d)
+
+
+class TestSourceParsing:
+    @pytest.mark.parametrize("source,expected", [
+        ("https://github.com/owner/repo.git", "repo"),
+        ("https://github.com/owner/repo", "repo"),
+        ("http://example.com/owner/repo.git", "repo"),
+        ("git@github.com:owner/repo.git", "repo"),
+        ("ssh://git@github.com/owner/repo.git", "repo"),
+        ("/home/me/projects/agent-knots", "agent-knots"),
+        ("/home/me/projects/agent-knots/", "agent-knots"),
+        ("relative/path/thing", "thing"),
+    ])
+    def test_derives_the_repo_name(self, source, expected):
+        assert repo_name_from_source(source, "fallback") == expected
+
+    @pytest.mark.parametrize("source", ["", "   ", "/", "///"])
+    def test_falls_back_when_there_is_no_usable_name(self, source):
+        assert repo_name_from_source(source, "fallback") == "fallback"
+
+    def test_strips_characters_that_have_no_business_in_a_directory_name(self):
+        assert repo_name_from_source("https://example.com/o/we$ird name", "fb") == "we-ird-name"
+
+    @pytest.mark.parametrize("source,remote", [
+        ("https://github.com/o/r", True),
+        ("http://github.com/o/r", True),
+        ("ssh://git@github.com/o/r", True),
+        ("git://github.com/o/r", True),
+        ("git@github.com:o/r", True),
+        ("/home/me/repo", False),
+        ("relative/repo", False),
+        ("", False),
+    ])
+    def test_is_remote_url(self, source, remote):
+        assert is_remote_url(source) is remote
+
+
+class TestCloneInto:
+    """Every case is local-to-local — no test here touches the network."""
+
+    def test_clones_a_local_repo(self, repo, tmp_path):
+        dest = tmp_path / "clone"
+        result = clone_into(str(repo), dest)
+        assert result.ok, result.failed_reason
+        assert result.path == str(dest)
+        assert is_repo(dest)
+        assert (dest / "README.md").read_text() == "hello\n"
+
+    def test_local_clone_adopts_the_sources_own_upstream(self, repo, tmp_path):
+        """The fixup that stops a push going back into the user's own
+        checkout: when we clone from a local repo that itself has an
+        origin, the clone should point at that origin, not at the
+        directory we happened to copy from."""
+        _git(repo, "remote", "add", "origin", "https://github.com/owner/upstream.git")
+        intermediate = tmp_path / "mine"
+        assert clone_into(str(repo), intermediate).ok
+
+        dest = tmp_path / "managed"
+        assert clone_into(str(intermediate), dest).ok
+        assert remote_url(dest) == "https://github.com/owner/upstream.git"
+        assert remote_url(dest, "local") == str(intermediate)
+
+    def test_local_clone_keeps_the_source_as_origin_when_it_has_no_upstream(self, repo, tmp_path):
+        """A repo that only ever existed on this machine has no better
+        answer than the path we cloned from."""
+        dest = tmp_path / "managed"
+        assert clone_into(str(repo), dest).ok
+        assert remote_url(dest) == str(repo)
+        assert remote_url(dest, "local") is None
+
+    def test_missing_source_fails_without_raising(self, tmp_path):
+        result = clone_into(str(tmp_path / "nope"), tmp_path / "dest")
+        assert not result.ok
+        assert "does not exist" in result.failed_reason
+
+    def test_non_repo_source_fails_without_raising(self, not_repo, tmp_path):
+        result = clone_into(str(not_repo), tmp_path / "dest")
+        assert not result.ok
+        assert "not a git repository" in result.failed_reason
+
+    def test_refuses_a_dest_that_already_has_content(self, repo, tmp_path):
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / "existing.txt").write_text("do not clobber me\n")
+
+        result = clone_into(str(repo), dest)
+        assert not result.ok
+        assert "already exists" in result.failed_reason
+        assert (dest / "existing.txt").read_text() == "do not clobber me\n"
+
+
+class TestInitRepo:
+    def test_initialises_a_plain_directory(self, not_repo):
+        assert is_repo(not_repo) is False
+        assert init_repo(not_repo) is True
+        assert is_repo(not_repo) is True
+
+
+class TestPushBranch:
+    def test_pushes_to_a_local_origin(self, repo, tmp_path):
+        """Push against a bare repo standing in for a remote."""
+        bare = tmp_path / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+        _git(repo, "remote", "add", "origin", str(bare))
+        _git(repo, "checkout", "-q", "-b", "feature")
+        (repo / "new.txt").write_text("work\n")
+        _git(repo, "add", "new.txt")
+        _git(repo, "commit", "-qm", "work")
+
+        result = push_branch(repo, "feature")
+        assert result.ok, result.failed_reason
+        assert result.branch == "feature"
+        assert branch_exists(bare, "feature")
+
+    def test_no_remote_is_a_reason_not_an_exception(self, repo):
+        result = push_branch(repo, "main")
+        assert not result.ok
+        assert "no 'origin' remote" in result.failed_reason
+
+    def test_unknown_branch_is_a_reason_not_an_exception(self, repo, tmp_path):
+        _git(repo, "remote", "add", "origin", str(tmp_path / "anywhere"))
+        result = push_branch(repo, "does-not-exist")
+        assert not result.ok
+        assert "does not exist" in result.failed_reason
+
+    def test_non_repo_is_a_reason_not_an_exception(self, not_repo):
+        assert push_branch(not_repo, "main").failed_reason == "not a git repository"
 
 
 class TestQueries:

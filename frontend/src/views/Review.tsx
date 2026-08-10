@@ -85,13 +85,20 @@ function ReviewTaskList() {
                 <span style={{ fontSize: 12, color: 'var(--mut)', transition: 'transform 0.15s', transform: isOpen ? 'rotate(90deg)' : 'none' }}>▸</span>
                 <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)', flex: 1 }}>{t.title}</span>
                 {t.project_name && <Chip mono>{t.project_name}</Chip>}
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                  <span style={{ color: 'var(--ok)' }}>+{t.added}</span>
-                  <span style={{ color: 'var(--err)' }}>−{t.deleted}</span>
-                </span>
+                {t.has_repo && (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+                    <span style={{ color: 'var(--ok)' }}>+{t.added}</span>
+                    <span style={{ color: 'var(--err)' }}>−{t.deleted}</span>
+                  </span>
+                )}
               </div>
               <div style={{ display: 'flex', gap: 14, alignItems: 'center', fontSize: 11.5, paddingLeft: 20 }}>
-                <span style={{ color: 'var(--ink2)' }}>{t.file_count} file{t.file_count !== 1 ? 's' : ''}</span>
+                {/* A non-git workspace has no file counts to report —
+                    saying "0 files" would read as "nothing changed"
+                    rather than "this isn't that kind of workspace". */}
+                <span style={{ color: 'var(--ink2)' }}>
+                  {t.has_repo ? `${t.file_count} file${t.file_count !== 1 ? 's' : ''}` : 'task review'}
+                </span>
                 <span style={{ color: 'var(--mut2)' }}>·</span>
                 {st ? (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '2px 7px', borderRadius: 6, background: st.soft }}>
@@ -107,9 +114,9 @@ function ReviewTaskList() {
                     stopPropagation so it doesn't also toggle the accordion. */}
                 <button
                   onClick={e => { e.stopPropagation(); navigate(`/review/${t.id}`) }}
-                  title="Open full per-file review"
+                  title={t.has_repo ? 'Open full per-file review' : 'Open the review for this task'}
                   style={{ fontSize: 11.5, fontWeight: 600, padding: '4px 12px', borderRadius: 7, border: 'none', cursor: 'pointer', background: 'var(--acc)', color: 'var(--acc-ink)' }}
-                >Review files →</button>
+                >{t.has_repo ? 'Review files →' : 'Review task →'}</button>
               </div>
             </div>
 
@@ -117,7 +124,11 @@ function ReviewTaskList() {
             {isOpen && (
               <div style={{ borderTop: '1px solid var(--line)', padding: '12px 16px' }}>
                 {diffs.length === 0 && (
-                  <div style={{ fontSize: 12.5, color: 'var(--mut)' }}>No pending changes.</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--mut)' }}>
+                    {t.has_repo
+                      ? 'No pending changes.'
+                      : "This workspace isn't a git repository — there are no file changes to show, so you're reviewing the task itself."}
+                  </div>
                 )}
                 {diffs.map(d => (
                   <div key={d.file} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', borderBottom: '1px solid var(--line)' }}>
@@ -153,16 +164,25 @@ function ReviewTaskDetail({ taskId }: { taskId: string }) {
   const [error, setError] = useState('')
   const [doneMessage, setDoneMessage] = useState('')
   const [sending, setSending] = useState(false)
+  // Defaults to true so the file-based controls don't flicker into a
+  // task-level review while the first fetch is still in flight.
+  const [hasRepo, setHasRepo] = useState(true)
 
   const load = useCallback(() => {
     fetchTask(taskId).then(setTask).catch(() => {})
-    fetchReviewDiffs(taskId).then(r => setDiffs(r.diffs)).catch(() => {})
+    fetchReviewDiffs(taskId).then(r => {
+      setDiffs(r.diffs)
+      setHasRepo(r.has_repo)
+    }).catch(() => {})
   }, [taskId])
 
   useEffect(() => { load() }, [load])
 
   const approvedFiles = Object.entries(statuses).filter(([, s]) => s === 'committed').map(([f]) => f)
   const pending = diffs.filter(d => statuses[d.file] !== 'committed')
+  // Without a repo there are no files to gate on, and gating anyway is
+  // exactly what used to strand these tasks in review permanently.
+  const canAct = hasRepo ? pending.length > 0 : true
 
   const handleExpand = async (file: string) => {
     if (expanded === file) { setExpanded(null); return }
@@ -183,7 +203,9 @@ function ReviewTaskDetail({ taskId }: { taskId: string }) {
         return next
       })
       if (res.task_status === 'done') {
-        setDoneMessage('Approved — every file committed, and the task moved to done.')
+        setDoneMessage(hasRepo
+          ? 'Approved — every file committed, and the task moved to done.'
+          : 'Approved — the task moved to done.')
       } else if (res.done_error) {
         setError(res.done_error)
       }
@@ -260,26 +282,34 @@ function ReviewTaskDetail({ taskId }: { taskId: string }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <SectionLabel>{pending.length} file{pending.length !== 1 ? 's' : ''} pending</SectionLabel>
+              <SectionLabel>
+                {hasRepo ? `${pending.length} file${pending.length !== 1 ? 's' : ''} pending` : 'Task review'}
+              </SectionLabel>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button
                   onClick={() => { setRejectTarget('all'); setReason('') }}
-                  disabled={pending.length === 0}
-                  style={{ padding: '6px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--err)', background: 'var(--card2)', opacity: pending.length === 0 ? 0.5 : 1 }}
+                  disabled={!canAct}
+                  style={{ padding: '6px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--err)', background: 'var(--card2)', opacity: canAct ? 1 : 0.5 }}
                 >
-                  Reject all
+                  {hasRepo ? 'Reject all' : 'Reject'}
                 </button>
                 <button
                   onClick={() => handleApprove()}
-                  disabled={pending.length === 0}
-                  style={{ padding: '6px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: pending.length === 0 ? 0.5 : 1 }}
+                  disabled={!canAct}
+                  style={{ padding: '6px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', opacity: canAct ? 1 : 0.5 }}
                 >
-                  Approve all
+                  {hasRepo ? 'Approve all' : 'Approve'}
                 </button>
               </div>
             </div>
 
-            {diffs.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--mut)' }}>No pending changes.</div>}
+            {diffs.length === 0 && (
+              <div style={{ fontSize: 12.5, color: 'var(--mut)', lineHeight: 1.5 }}>
+                {hasRepo
+                  ? 'No pending changes.'
+                  : "This workspace isn't a git repository, so there are no file diffs. Review the task's details and acceptance criteria on the left, then approve or reject."}
+              </div>
+            )}
 
             {diffs.map(d => {
               const committed = statuses[d.file] === 'committed'
@@ -328,7 +358,7 @@ function ReviewTaskDetail({ taskId }: { taskId: string }) {
 
       <Dialog open={rejectTarget !== null} onClose={() => setRejectTarget(null)} width={440}>
         <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4, color: 'var(--ink)' }}>
-          Reject {rejectTarget === 'all' ? 'all remaining files' : rejectTarget}?
+          Reject {rejectTarget === 'all' ? (hasRepo ? 'all remaining files' : 'this task') : rejectTarget}?
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--mut)', marginBottom: 14 }}>
           Nothing is discarded — the agent's session resumes with this feedback and keeps working.

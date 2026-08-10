@@ -58,6 +58,10 @@ class Settings:
     default_provider: str = ""
     integrations: IntegrationsSettings = field(default_factory=IntegrationsSettings)
     wastebin: WastebinSettings = field(default_factory=WastebinSettings)
+    # "" = let config.workspaces_root() pick the default. Read only by
+    # that function, which is also why this is a bare path string rather
+    # than a nested section — there's nothing else to group it with.
+    workspaces_root: str = ""
 
 
 def load() -> Settings:
@@ -105,6 +109,7 @@ def load() -> Settings:
         default_provider=data.get("default_provider", ""),
         integrations=integrations,
         wastebin=wastebin,
+        workspaces_root=data.get("workspaces_root", ""),
     )
 
 
@@ -119,6 +124,7 @@ def save(settings: Settings) -> None:
         "default_provider": settings.default_provider,
         "integrations": asdict(settings.integrations),
         "wastebin": asdict(settings.wastebin),
+        "workspaces_root": settings.workspaces_root,
     }
     # sort_keys=True (not the atomic_write_yaml default) to preserve this
     # file's pre-existing on-disk key order.

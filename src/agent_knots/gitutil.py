@@ -67,6 +67,185 @@ def _github_url_from_remote(remote_url: str) -> str | None:
     return None
 
 
+# ── managed workspace clones ─────────────────────────────────────────────────
+
+# A clone pulls a whole history over the network; _BRANCH_TIMEOUT is
+# nowhere near enough. A push is network-bound too, but bounded by the
+# size of one branch rather than the entire repo.
+_CLONE_TIMEOUT = 600
+_PUSH_TIMEOUT = 120
+
+_REMOTE_URL_PREFIXES = ("https://", "http://", "ssh://", "git://", "git@")
+
+
+def is_remote_url(source: str) -> bool:
+    """True if `source` looks like something to clone over the network
+    rather than a path on disk."""
+    return source.strip().startswith(_REMOTE_URL_PREFIXES)
+
+
+def repo_name_from_source(source: str, fallback: str) -> str:
+    """Derive a directory name from a clone source.
+
+    Both URL and local-path forms reduce to their last segment with any
+    .git suffix removed: ".../owner/repo.git" and "/home/me/repo" both
+    give "repo". Anything that doesn't reduce to a usable directory name
+    (empty source, "/", a bare host) gives `fallback` — the caller
+    passes the workspace slug, which is already unique.
+    """
+    text = source.strip().rstrip("/")
+    if not text:
+        return fallback
+    # Works for both separators: an scp-style "git@host:owner/repo" ends
+    # in a /-segment too, and a Windows-ish path can't reach here.
+    segment = text.rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    if segment.endswith(".git"):
+        segment = segment[:-4]
+    segment = re.sub(r"[^A-Za-z0-9._-]+", "-", segment).strip("-.")
+    return segment or fallback
+
+
+def unique_clone_dir(root: Path, repo_name: str) -> Path:
+    """Pick a not-yet-taken directory under `root` for a managed clone.
+
+    Same -2/-3 suffix loop as the workspace-id slugifier, but deduping
+    against directories on disk rather than project ids: the folder is
+    named after the *repo*, and two different workspaces can
+    legitimately want the same repo name (two forks, or the same repo
+    attached twice).
+
+    Lives here rather than in the web routes so the CLI can create a
+    managed workspace too, without importing from the web layer.
+    """
+    candidate = root / repo_name
+    n = 2
+    while candidate.exists():
+        candidate = root / f"{repo_name}-{n}"
+        n += 1
+    return candidate
+
+
+def remote_url(repo: Path, name: str = "origin") -> str | None:
+    """URL of a named remote, or None if it isn't configured."""
+    result = _run_git(repo, ["remote", "get-url", name])
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+@dataclass
+class CloneResult:
+    path: str = ""
+    failed_reason: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.failed_reason
+
+
+def clone_into(source: str, dest: Path) -> CloneResult:
+    """Clone `source` into `dest`, which must not already exist.
+
+    Never raises — every failure returns a CloneResult carrying
+    failed_reason, so the caller can surface git's own words rather than
+    a stack trace.
+
+    Cloning from a local path is the fast, offline case, but it leaves
+    `origin` pointing at that local checkout, so a later push would push
+    back into the user's own repo instead of upstream. When the source
+    has an origin of its own we adopt it and demote the local path to a
+    `local` remote; when it has none (a repo that only ever existed on
+    this machine) origin stays pointing at the source, which is then the
+    only correct answer.
+    """
+    try:
+        if dest.exists() and any(dest.iterdir()):
+            return CloneResult(failed_reason=f"{dest} already exists and is not empty")
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        local_source = None if is_remote_url(source) else Path(source).expanduser()
+        if local_source is not None:
+            if not local_source.exists():
+                return CloneResult(failed_reason=f"{local_source} does not exist")
+            if not is_repo(local_source):
+                return CloneResult(failed_reason=f"{local_source} is not a git repository")
+            source = str(local_source)
+
+        result = subprocess.run(
+            ["git", "clone", source, str(dest)],
+            capture_output=True, text=True, timeout=_CLONE_TIMEOUT,
+        )
+        if result.returncode != 0:
+            return CloneResult(failed_reason=result.stderr.strip() or "git clone failed")
+
+        if local_source is not None:
+            upstream = remote_url(local_source)
+            if upstream:
+                _run_git(dest, ["remote", "set-url", "origin", upstream])
+                _run_git(dest, ["remote", "add", "local", str(local_source)])
+
+        return CloneResult(path=str(dest))
+    except subprocess.TimeoutExpired:
+        return CloneResult(failed_reason=f"git clone timed out after {_CLONE_TIMEOUT}s")
+    except (OSError, subprocess.SubprocessError) as e:
+        return CloneResult(failed_reason=f"git unavailable: {e}")
+
+
+async def clone_into_async(source: str, dest: Path) -> CloneResult:
+    """clone_into off the event loop — see ensure_session_branch_async."""
+    return await asyncio.to_thread(clone_into, source, dest)
+
+
+def init_repo(path: Path) -> bool:
+    """`git init` an existing directory. True on success.
+
+    Only used for a managed workspace created empty, where git is
+    optional — Review and the task workflow both work without it.
+    """
+    try:
+        return _run_git(path, ["init"]).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+@dataclass
+class PushResult:
+    branch: str = ""
+    remote: str = ""
+    failed_reason: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.failed_reason
+
+
+def push_branch(repo: Path, name: str, remote: str = "origin") -> PushResult:
+    """Push `name` to `remote`, setting upstream. Never raises."""
+    try:
+        if not is_repo(repo):
+            return PushResult(failed_reason="not a git repository")
+        if not branch_exists(repo, name):
+            return PushResult(failed_reason=f"branch {name!r} does not exist")
+        if remote_url(repo, remote) is None:
+            return PushResult(failed_reason=f"no {remote!r} remote configured")
+
+        result = _run_git(
+            repo, ["push", "--set-upstream", remote, name], timeout=_PUSH_TIMEOUT,
+        )
+        if result.returncode != 0:
+            return PushResult(failed_reason=result.stderr.strip() or "git push failed")
+        return PushResult(branch=name, remote=remote)
+    except subprocess.TimeoutExpired:
+        return PushResult(failed_reason=f"git push timed out after {_PUSH_TIMEOUT}s")
+    except (OSError, subprocess.SubprocessError) as e:
+        return PushResult(failed_reason=f"git unavailable: {e}")
+
+
+async def push_branch_async(repo: Path, name: str, remote: str = "origin") -> PushResult:
+    """push_branch off the event loop."""
+    return await asyncio.to_thread(push_branch, repo, name, remote)
+
+
 # ── per-session branches ─────────────────────────────────────────────────────
 
 
