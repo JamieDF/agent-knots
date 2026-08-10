@@ -149,16 +149,16 @@ test.describe('cockpit — real agent flow', () => {
     const session = await sessionRes.json()
     console.log(`Session created: ${session.id}`)
 
-    // 2. Navigate to overview — agent card should appear, showing
-    // "autonomous" (a task-attached agent-mode session starts autonomous
-    // by default — see session/manager.py's mode semantics). A
+    // 2. Navigate to overview — agent card should appear. A
     // task-attached card shows the task's title, not the raw session id.
+    // The rebuilt Dashboard reports run state ("running"/"waiting") on
+    // the card rather than the session's mode; Autonomous itself is a
+    // thread-level control, asserted below where it actually lives.
     await page.goto(BASE)
     await page.waitForTimeout(3000) // wait for polling
 
     const card = page.locator('text=Remember Taylor').first()
     await expect(card).toBeVisible({ timeout: 10000 })
-    await expect(page.locator('text=autonomous').first()).toBeVisible()
 
     // 3. Enter the agent thread — the card's title area isn't itself a
     // nav target (only its "Open →" link is, per the Atelier design).
@@ -397,8 +397,11 @@ test.describe('task UI', () => {
     // Should show the task title.
     await expect(page.locator(`text=UI test task`)).toBeVisible({ timeout: 5000 })
 
-    // Should show the task ID in mono font.
-    await expect(page.locator(`text=${id}`)).toBeVisible()
+    // The rebuilt List row is title-led and no longer prints the raw
+    // task id — clicking through to the detail page is what ties the
+    // row to its task now.
+    await page.locator('text=UI test task').first().click()
+    await expect(page).toHaveURL(new RegExp(id))
 
     // Cleanup.
     await page.request.delete(`${BASE}/api/tasks/${id}`)
@@ -452,12 +455,16 @@ test.describe('task UI', () => {
     await expect(page.locator('text=A task for testing the detail view.')).toBeVisible()
     // Should show acceptance criteria.
     await expect(page.locator('text=Should render correctly')).toBeVisible()
-    // Should show task ID.
-    await expect(page.locator(`text=${id}`).first()).toBeVisible()
+    // The title-led header replaced the raw id with the task's status
+    // and workspace chips; the id lives in the URL.
+    expect(page.url()).toContain(id)
 
     // Status change — status is edit-only now (no inline dropdown on the
-    // detail page itself), via the Edit dialog.
-    await page.locator('text=Edit').first().click()
+    // detail page itself), via the Edit dialog. Edit moved behind the
+    // header's "⋯ More" kebab so it can't be mis-clicked next to Start.
+    await page.locator('button[title="More"]').click()
+    await page.waitForTimeout(200)
+    await page.locator('text=Edit task').first().click()
     await page.waitForTimeout(300)
     await page.getByLabel('Status').selectOption('review')
     await page.locator('text=Save changes').click()
@@ -480,8 +487,11 @@ test.describe('task UI', () => {
     await page.goto(`${BASE}/tasks/${id}`)
     await page.waitForTimeout(1000)
 
-    // Click delete button specifically.
-    await page.locator('button:has-text("Delete")').click()
+    // Delete lives behind the header's "⋯ More" kebab, deliberately
+    // kept away from Start.
+    await page.locator('button[title="More"]').click()
+    await page.waitForTimeout(200)
+    await page.locator('text=Delete task').first().click()
     await page.waitForTimeout(500)
 
     // Should redirect to tasks list.
@@ -758,12 +768,10 @@ test.describe('board view', () => {
     await expect(page.locator('text=Board task A')).toBeVisible()
     await expect(page.locator('text=Board task B')).toBeVisible()
 
-    // Expand a task card.
+    // The rebuilt card doesn't expand any more: clicking it opens the
+    // task, and stage moves are drag-and-drop only (no stage chips).
     await page.locator('text=Board task A').click()
-    await page.waitForTimeout(300)
-
-    // Should see the stage-mover chips and Details link in expanded view.
-    await expect(page.locator('text=Details →')).toBeVisible({ timeout: 3000 })
+    await expect(page).toHaveURL(new RegExp(id1), { timeout: 3000 })
 
     // Cleanup.
     await page.request.delete(`${BASE}/api/tasks/${id1}`)
@@ -982,8 +990,11 @@ test.describe('task editing', () => {
     await page.goto(`${BASE}/tasks/${id}`)
     await page.waitForTimeout(1000)
 
-    // Status is edit-only (no inline dropdown on the detail page).
-    await page.locator('text=Edit').first().click()
+    // Status is edit-only (no inline dropdown on the detail page), and
+    // Edit sits behind the header's "⋯ More" kebab.
+    await page.locator('button[title="More"]').click()
+    await page.waitForTimeout(200)
+    await page.locator('text=Edit task').first().click()
     await page.waitForTimeout(300)
     await page.getByLabel('Status').selectOption('review')
     await page.locator('text=Save changes').click()
@@ -1052,7 +1063,9 @@ test.describe('task modal editing', () => {
     await page.goto(`${BASE}/tasks/${id}`)
     await page.waitForTimeout(1000)
 
-    await page.locator('text=Edit').first().click()
+    await page.locator('button[title="More"]').click()
+    await page.waitForTimeout(200)
+    await page.locator('text=Edit task').first().click()
     await page.waitForTimeout(500)
 
     // Fill in the modal — title has a distinctive placeholder, priority
@@ -1135,8 +1148,14 @@ test.describe('session-task assignment', () => {
       await page.goto(`${BASE}/tasks?view=board`)
       await page.waitForTimeout(1500)
 
-      // Hover the card to reveal the ▶ start button, then click it.
-      const startBtn = page.locator(`.ak-card:has-text("${task.title}") .ak-card-action`)
+      // Hover the card to reveal the start action, then click it.
+      // Target the button itself, not the .ak-card-action wrapper —
+      // that wrapper is a split control holding both "start and open"
+      // and "start headless", so clicking its centre lands
+      // unpredictably (often on headless, which doesn't navigate).
+      const startBtn = page.locator(
+        `.ak-card:has-text("${task.title}") button[title="Start and open the thread"]`,
+      )
       await card.hover()
       await startBtn.click({ timeout: 3000 })
       await page.waitForTimeout(1000)
@@ -1632,7 +1651,9 @@ test.describe('review screen', () => {
     await page.waitForTimeout(800)
     await expect(page.locator('text=Review page task')).toBeVisible({ timeout: 5000 })
 
-    await page.click('text=Review page task')
+    // Clicking the card head toggles the inline diff accordion now;
+    // "Review files →" is what opens the full per-file screen.
+    await page.locator('button:has-text("Review files")').first().click()
     await page.waitForTimeout(600)
     expect(page.url()).toContain(`/review/${task.id}`)
     await expect(page.locator('text=a.txt')).toBeVisible()

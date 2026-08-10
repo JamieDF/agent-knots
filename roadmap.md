@@ -40,8 +40,8 @@
 - [x] Agent Thread chat UI — Left/right chat bubbles, markdown rendering
   of agent responses, replay scrubber over the session's event history
 - [x] Install script — `./install.sh`: installs uv, syncs deps, builds frontend, installs the `agent-knots` command globally
-- [x] Playwright e2e tests — ~76 browser tests covering full UI flows
-- [x] Python unit tests — 525+ tests across vault, session, task, web, sandbox, auth
+- [x] Playwright e2e tests — 76 browser tests covering full UI flows (74 passing, 2 skipped; needs a provider configured for the live-agent ones)
+- [x] Python unit tests — 611 tests across vault, session, task, web, sandbox, auth, git
 - [x] Task dependencies — Tasks can depend on other tasks; blocked from
   starting (in the UI and via a `POST /api/sessions` pre-flight check)
   until every dependency is done

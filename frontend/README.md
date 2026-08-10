@@ -90,5 +90,36 @@ HOME=/tmp/pw-test-home PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright" \
   npx playwright test
 ```
 
+**Wipe the data directory before every run.** The `rm -rf` above isn't
+optional housekeeping — the suite is not idempotent against a dirty
+one. Tests create fixtures by title and locate them by text, so a
+leftover "Board card test" from a previous run makes
+`.ak-card:has-text(...)` resolve to two elements and the run fails on a
+strict-mode violation that looks nothing like the real problem. If you
+see "resolved to 2 elements", suspect a stale data dir before anything
+else.
+
 A handful of tests need a real LLM provider configured and are expected
-to fail without one — see `cockpit.spec.ts` for which ones.
+to fail without one — see `cockpit.spec.ts` for which ones. With a
+provider configured the whole suite passes (74 passed, 2 skipped);
+without one, expect roughly ten extra failures, all in the tests that
+drive a live agent.
+
+### Isolating with HOME vs AGENT_KNOTS_HOME
+
+`HOME=/tmp/pw-test-home` is the right lever for the e2e suite, because
+the test code itself reads the cookie token out of
+`$HOME/.agent-knots/`. It is the wrong lever for anything that needs
+git over SSH — ssh looks for keys in `$HOME/.ssh`, so a server launched
+with a fake HOME cannot clone a private repo and fails with a bare
+authentication error.
+
+For manual testing against a real remote, isolate with
+`AGENT_KNOTS_HOME` instead: it moves every scrap of agent-knots state
+(including managed workspace clones, which follow it — see
+`config.workspaces_root()`) while leaving `$HOME` real so SSH keeps
+working.
+
+```bash
+AGENT_KNOTS_HOME=/tmp/ak-test uv run agent-knots launch --web --port 8091
+```

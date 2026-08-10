@@ -68,6 +68,27 @@ All notable changes to agent-knots are documented here.
   poll, instead of a bare "working…"/"idle" word with no content.
 
 ### Fixed
+- **Review hid the agent's actual work, then committed it unseen.**
+  `_git_diff_stat` listed only tracked modifications (`git diff
+  --numstat`), but approve stages with `git add -A`. So the single most
+  common thing an agent does — create a new file — was invisible in
+  Review while still being committed by it. Caught by running a real
+  agent rather than a fixture: it wrote a new `greet.py`, Review
+  reported "no pending changes", and approving would have committed the
+  whole deliverable sight-unseen. The same gap swept a stray
+  `__pycache__/*.pyc` into an "Approved via Review" commit. Untracked
+  files are now listed too, filtered with `--exclude-standard` so the
+  set matches exactly what `git add -A` would stage (ignored files
+  appear in neither), and `_git_diff_for_file` falls back to a
+  `--no-index` diff so their contents actually render.
+- **An agent that committed its own work stranded its task in review.**
+  The Review screen gated Approve/Reject on there being pending files,
+  so a task whose agent committed to the branch itself — leaving
+  nothing uncommitted — had both buttons disabled and no way out. Same
+  dead end as the non-git case below, reached down the other branch of
+  the condition. A task in review can always be actioned now; the API
+  already handled it, skipping straight to closing the task out. Only
+  the button labels vary.
 - **A task in a non-git workspace could enter review and never leave.**
   `_task_repo_and_branch` raised 400 "Not a git repository", so both
   approve and reject failed outright; the task list swallowed that and
@@ -80,6 +101,20 @@ All notable changes to agent-knots are documented here.
   anything to do with commits. Rejecting with no files to name also
   stops handing the agent "These files were rejected: ." with an empty
   list.
+- **Ten e2e tests had drifted against the UI rebuilds and were failing
+  on `main`.** They asserted affordances the redesigns removed or
+  moved: the raw task id printed in the List row and Task Detail header
+  (both now title-led, with the id in the URL), a `Details →` link and
+  stage chips on the Board card (it opens the task on click now, and
+  stage moves are drag-and-drop only), a bare `Edit`/`Delete` on Task
+  Detail (both moved behind the `⋯ More` kebab, deliberately away from
+  Start), "autonomous" on the Dashboard card (it reports run state now;
+  Autonomous is a thread-level control), and clicking a Review card
+  title to open it (that toggles the diff accordion — `Review files →`
+  navigates). One test also clicked the `.ak-card-action` wrapper,
+  which is a split control holding both "start and open" and "start
+  headless", so the click landed unpredictably and often on the one
+  that doesn't navigate. Suite is green: 74 passed, 2 skipped.
 - **Chat history lost on navigating away and back.** The backend kept
   only the last 500 raw SSE events per session, but a single tool call
   alone gets re-broadcast on every incremental arg-delta as it streams

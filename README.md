@@ -11,7 +11,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-525%2B%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-611%20passing-brightgreen.svg)](tests/)
 
 agent-knots is a self-hosted, task-based orchestrator for AI agents.
 Create a task, assign it to an agent, and watch it work in real time
@@ -207,10 +207,10 @@ agent-knots/
 ## Testing
 
 ```bash
-# Python unit tests (525+)
+# Python unit tests (611)
 uv run --with pytest pytest tests/ -q
 
-# Playwright e2e tests (~76)
+# Playwright e2e tests (76: 74 passing, 2 skipped)
 cd frontend && npx playwright test
 ```
 

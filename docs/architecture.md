@@ -306,6 +306,15 @@ scratch. `done`/`abandoned` still do a real `stop()`, same as always;
 Review's approve flow, once every file is committed, moves the task to
 `done` itself and lets that trigger the real stop the normal way.
 
+What Review lists is defined by what approve would commit, not by what
+`git diff` happens to report. Approve stages with `git add -A`, so
+`_git_diff_stat` covers tracked modifications *and* untracked,
+non-ignored files (`--exclude-standard`, keeping the two sets exactly
+aligned). Without that symmetry the most common agent action —
+creating a new file — showed as "no pending changes" while approve
+committed it anyway, which quietly breaks the one promise the screen
+makes: that you saw what you approved.
+
 Review does not require git. A workspace can be a plain folder — for
 writing, research, planning, or a repo nobody initialised — and its
 tasks still need reviewing. Every endpoint resolves the repo through
