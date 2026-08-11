@@ -65,6 +65,44 @@ def worktrees_dir() -> Path:
     return _ensure_dir(_home() / "worktrees")
 
 
+def workspaces_root() -> Path:
+    """Root directory holding agent-knots-managed workspace clones.
+
+    The one path in this module that deliberately lives OUTSIDE _home().
+    Everything else here is internal state the user never opens by hand;
+    a managed workspace is their actual code, so it goes somewhere
+    visible and browsable rather than buried in a dotfolder.
+
+    Resolution order:
+
+      1. AGENT_KNOTS_WORKSPACES_ROOT — explicit override, wins outright.
+      2. `workspaces_root` in settings.yaml — the Settings screen.
+      3. <AGENT_KNOTS_HOME>/workspaces, but only when AGENT_KNOTS_HOME is
+         explicitly set. Tests isolate by pointing AGENT_KNOTS_HOME at a
+         tmp_path; without this rule the workspaces root would escape
+         that sandbox (it isn't under _home()) and they'd clone into the
+         real ~/agent-knots/workspaces. Tying the two together means
+         every existing fixture keeps isolating for free.
+      4. ~/agent-knots/workspaces — the default a real user gets, since
+         they don't set AGENT_KNOTS_HOME.
+    """
+    if env := os.environ.get("AGENT_KNOTS_WORKSPACES_ROOT"):
+        return _ensure_dir(Path(env))
+
+    # Deferred import: settings.py imports this module, so a top-level
+    # import here would be circular. Same idiom as session/manager.py.
+    from agent_knots.settings import load as _load_settings
+
+    configured = _load_settings().workspaces_root
+    if configured:
+        return _ensure_dir(Path(configured).expanduser())
+
+    if os.environ.get("AGENT_KNOTS_HOME"):
+        return _ensure_dir(_home() / "workspaces")
+
+    return _ensure_dir(Path.home() / "agent-knots" / "workspaces")
+
+
 def session_workdir(session_id: str) -> Path:
     """A dedicated, isolated directory for a session that has no explicit
     working_dir and no project attached.

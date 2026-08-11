@@ -40,8 +40,8 @@
 - [x] Agent Thread chat UI — Left/right chat bubbles, markdown rendering
   of agent responses, replay scrubber over the session's event history
 - [x] Install script — `./install.sh`: installs uv, syncs deps, builds frontend, installs the `agent-knots` command globally
-- [x] Playwright e2e tests — ~76 browser tests covering full UI flows
-- [x] Python unit tests — 525+ tests across vault, session, task, web, sandbox, auth
+- [x] Playwright e2e tests — 76 browser tests covering full UI flows (74 passing, 2 skipped; needs a provider configured for the live-agent ones)
+- [x] Python unit tests — 611 tests across vault, session, task, web, sandbox, auth, git
 - [x] Task dependencies — Tasks can depend on other tasks; blocked from
   starting (in the UI and via a `POST /api/sessions` pre-flight check)
   until every dependency is done
@@ -122,8 +122,35 @@
 
 ## Next
 
-- [ ] Container runtime — Podman/Docker isolation with full filesystem + network sandboxing
-- [ ] Git worktree integration — Auto-create worktrees per session on workspace repos
+- [ ] Container runtime — Podman/Docker isolation with full filesystem +
+  network sandboxing. Managed workspaces are the enabling step: agent-knots
+  owns the directory, so mounting it into a container is a bind-mount of our
+  own path rather than exposing the user's real checkout. The seam already
+  exists too — `SessionRuntime`/`InProcessRuntime` in `session/runtime.py`,
+  plus `Project.runtime` and its dropdown — so a `ContainerRuntime` slots in
+  without new architecture
+- [ ] Git worktree integration — Auto-create worktrees per session, hanging
+  off the managed clone (or `config.worktrees_dir()`, which exists and is
+  still unused). This is what would let several agents work one repo at
+  once, and what deletes `SessionManager._repo_writers`. Worth protecting:
+  `_resolve_working_dir` is the single choke point deciding a session's cwd,
+  and under worktrees that becomes a derived per-session path rather than
+  `Project.repository` itself — keep new readers of `repository` out of the
+  codebase or that refactor gets much harder
+- [ ] Playground workspace — A "create a playground" action in Settings that
+  stands up a live tour: a workspace, real content, and a batch of seeded
+  tasks to click through. Mostly assembly on top of managed workspaces —
+  a managed create plus task seeding through the existing `TaskStore`. Open
+  question: tag the seeded tasks so demo content is distinguishable from
+  real work and teardown is unambiguous
+- [ ] Structured state storage — Replace the pile of per-object YAML with
+  SQLite (local-first, no server dependency). The store classes are already
+  the seam: `TaskStore`, `ProjectStore`, `VaultStore` and `WastebinStore`
+  share one CRUD shape over `yamlfile.py` and nothing outside them touches
+  YAML, so it's a swap behind those classes rather than a rewrite of their
+  callers. `usage.jsonl` and the wastebin history files are the stragglers.
+  Symptom worth quoting when this gets picked up: adding one field to
+  `Project` means writing it three times — dataclass, `_save`, `_load`
 - [ ] Concurrent multi-writer collaboration — more than one agent actively
   editing the same task/branch at once, with conflict/result merging.
   Today only one writer session per task is active at a time (see

@@ -11,7 +11,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-525%2B%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-611%20passing-brightgreen.svg)](tests/)
 
 agent-knots is a self-hosted, task-based orchestrator for AI agents.
 Create a task, assign it to an agent, and watch it work in real time
@@ -85,10 +85,21 @@ way, `configured` is true before the wizard would even ask. See
   and a configurable Kanban board. A workspace-attached agent always knows
   which workspace it's in and can only create, read, or list tasks inside
   it.
+- **Managed workspaces**: point a workspace at a repo URL or a folder you
+  already have, and agent-knots clones it into a folder it owns
+  (`~/agent-knots/workspaces/<repo>/` by default, configurable). Agents
+  work on the copy, so the checkout open in your editor is never touched
+  and they always start from a clean tree. A workspace doesn't have to
+  be a repo at all — leave it blank and you still get a real folder,
+  shared by every session in that workspace. Pointing straight at an
+  existing folder is still supported, and is what every pre-existing
+  workspace does.
 - **Review**: a dedicated screen for tasks sitting in review — see the
   task's own details alongside its file changes, approve (per file or
   all at once) to commit and move it to done, or reject with a reason
-  that goes straight back to the agent, same conversation.
+  that goes straight back to the agent, same conversation. Works on
+  non-git workspaces too, where you review the task itself. Approving
+  commits; pushing is always a separate, explicit action.
 - **Vault**: AES-256-GCM encrypted credential store. Agents can use a
   credential in a tool call without the raw value ever appearing in their
   context.
@@ -196,10 +207,10 @@ agent-knots/
 ## Testing
 
 ```bash
-# Python unit tests (525+)
+# Python unit tests (611)
 uv run --with pytest pytest tests/ -q
 
-# Playwright e2e tests (~76)
+# Playwright e2e tests (76: 74 passing, 2 skipped)
 cd frontend && npx playwright test
 ```
 

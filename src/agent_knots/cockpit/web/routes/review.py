@@ -8,6 +8,17 @@ remaining); once nothing is left pending, the task is moved to done
 (refused, staying in review, if acceptance criteria aren't met — the
 commit itself still stands either way).
 
+Git is optional throughout. A workspace can be a plain folder — for
+writing, research, planning, or just a repo the user never initialised
+— and its tasks still need reviewing. Every endpoint here resolves the
+repo through _task_repo(), which returns None for those, and the flow
+degrades to reviewing the task itself: no diffs to show, nothing to
+stage, and approve/reject acting on the task's status alone. The review
+gate is task logic (set_status refusing on unmet acceptance criteria),
+so it works identically either way. Before this, a task in a non-git
+workspace could enter review and never leave — approve and reject both
+returned 400.
+
 Reject is a real "send it back" action here, unlike the old
 workspace-wide diff queue this replaced (which only acknowledged): it
 logs why, moves the task back to in_progress, and resumes the task's
@@ -40,24 +51,49 @@ def _task_or_404(task_id: str) -> Task:
     return task
 
 
-def _task_repo_and_branch(task: Task, session_manager: Any) -> tuple[Path, str, Any]:
-    """Resolve a review task's repo, expected branch, and live writer
-    session (still paused, not stopped, if nothing else has disturbed
-    it — see task/lifecycle.py). Falls back to the deterministic branch
-    name if there's no live session for some reason."""
+def _task_repo(task: Task) -> Path | None:
+    """The git repo a task's changes live in, or None if there isn't one.
+
+    None covers every "there is nothing to diff" case — no workspace, a
+    workspace with no repository, or a directory that simply isn't a git
+    repo. All three are legitimate: a workspace can be a plain folder
+    for writing, research or planning, and its tasks still go through
+    review. Only the *task* not existing is an error, and that's
+    _task_or_404's job.
+    """
     if not task.project:
-        raise HTTPException(status_code=400, detail="Task has no workspace")
+        return None
     proj = ProjectStore(_projects_dir()).get(task.project)
     if proj is None or not proj.repository:
-        raise HTTPException(status_code=404, detail="Workspace not found")
+        return None
     repo = Path(proj.repository)
-    if not (repo / ".git").is_dir():
-        raise HTTPException(status_code=400, detail="Not a git repository")
-    session = next(
+    return repo if (repo / ".git").is_dir() else None
+
+
+def _task_session(task: Task, session_manager: Any) -> Any:
+    """The task's live writer session — still paused rather than
+    stopped, unless something else disturbed it (see task/lifecycle.py).
+    None if it isn't alive, e.g. after a server restart."""
+    return next(
         (s for s in session_manager.active if s.task_id == task.id and not s.advisory), None,
     )
-    branch = (session.branch if session and session.branch else None) or session_branch_name(task.id, task.title, "")
-    return repo, branch, session
+
+
+def _task_branch(task: Task, session: Any) -> str:
+    """The branch a task's work is on, falling back to the
+    deterministic name when there's no live session to ask."""
+    return (session.branch if session and session.branch else None) or session_branch_name(
+        task.id, task.title, "",
+    )
+
+
+def _require_repo(task: Task) -> Path:
+    """_task_repo for the endpoints that genuinely can't work without
+    git — fetching a specific file's diff."""
+    repo = _task_repo(task)
+    if repo is None:
+        raise HTTPException(status_code=400, detail="Task's workspace is not a git repository")
+    return repo
 
 
 def _feedback_message(approved_files: list[str], rejected_files: list[str], reason: str) -> str:
@@ -67,7 +103,14 @@ def _feedback_message(approved_files: list[str], rejected_files: list[str], reas
             "These files were approved and already committed — leave them as they "
             f"are: {', '.join(approved_files)}."
         )
-    parts.append(f"These files were rejected: {', '.join(rejected_files)}. Reason: {reason}")
+    if rejected_files:
+        parts.append(f"These files were rejected: {', '.join(rejected_files)}. Reason: {reason}")
+    else:
+        # No file list to name — either a non-git workspace, or nothing
+        # was pending. The rejection is of the work on the task itself,
+        # and saying so beats "These files were rejected: ." with an
+        # empty list where the agent expects filenames.
+        parts.append(f"Your work on this task was rejected. Reason: {reason}")
     parts.append("Please address the feedback and continue the task.")
     return " ".join(parts)
 
@@ -85,28 +128,28 @@ def create_router(session_manager: Any) -> APIRouter:
         tasks = TaskStore(_tasks_dir()).list(status="review")
         items = []
         for task in tasks:
-            session = next(
-                (s for s in session_manager.active if s.task_id == task.id and not s.advisory), None,
-            )
-            branch = (session.branch if session and session.branch else None) or session_branch_name(task.id, task.title, "")
+            session = _task_session(task, session_manager)
+            branch = _task_branch(task, session)
             proj = ProjectStore(_projects_dir()).get(task.project) if task.project else None
 
             # Diff stats — total file count + added/deleted across all
-            # pending files. Best-effort: if the repo/branch isn't
-            # resolvable (e.g. workspace removed), zeros rather than 500.
+            # pending files. `has_repo` distinguishes "a git workspace
+            # with nothing pending" from "nothing to diff in the first
+            # place", which the UI needs: the former means the review is
+            # already actioned, the latter means the review is of the
+            # task itself and the file-based controls don't apply.
+            repo = _task_repo(task)
             file_count = 0
             total_added = 0
             total_deleted = 0
-            try:
-                repo, _br, _sess = _task_repo_and_branch(task, session_manager)
+            if repo is not None:
                 stat = _git_diff_stat(repo)
                 file_count = len(stat)
                 total_added = sum(f["added"] for f in stat)
                 total_deleted = sum(f["deleted"] for f in stat)
-            except HTTPException:
-                pass
 
             items.append({
+                "has_repo": repo is not None,
                 "id": task.id,
                 "title": task.title,
                 "priority": task.priority.value,
@@ -126,8 +169,13 @@ def create_router(session_manager: Any) -> APIRouter:
     @router.get("/api/review/diffs")
     async def list_review_diffs(task_id: str = Query(...)):
         task = _task_or_404(task_id)
-        repo, _branch, _session = _task_repo_and_branch(task, session_manager)
+        repo = _task_repo(task)
+        if repo is None:
+            # Not an error — a non-git workspace has no diffs to list,
+            # and the review screen renders the task on its own.
+            return {"has_repo": False, "branch": None, "diffs": []}
         return {
+            "has_repo": True,
             "branch": current_branch(repo),
             "diffs": [
                 {"file": f["path"], "added": f["added"], "deleted": f["deleted"]}
@@ -138,41 +186,49 @@ def create_router(session_manager: Any) -> APIRouter:
     @router.get("/api/review/diff")
     async def get_review_diff(task_id: str = Query(...), file: str = Query(...)):
         task = _task_or_404(task_id)
-        repo, _branch, _session = _task_repo_and_branch(task, session_manager)
-        return {"diff": _git_diff_for_file(repo, file)}
+        return {"diff": _git_diff_for_file(_require_repo(task), file)}
 
     @router.post("/api/review/approve")
     async def approve_review(body: ReviewApproveRequest):
         task = _task_or_404(body.task_id)
         if task.status != TaskStatus.REVIEW:
             raise HTTPException(status_code=400, detail="Task is not in review")
-        repo, branch, _session = _task_repo_and_branch(task, session_manager)
-        actual = current_branch(repo)
-        if actual != branch:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Repo is now on branch {actual!r}, expected {branch!r} — "
-                    "another session likely took over this workspace. Refresh and try again."
-                ),
-            )
-        add_result = _run_git(repo, ["add", "--", body.file] if body.file else ["add", "-A"])
-        if add_result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"git add failed: {add_result.stderr.strip()}")
-        commit_result = _run_git(repo, ["commit", "-m", "Approved via Review"])
-        if commit_result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"git commit failed: {commit_result.stderr.strip()}")
 
-        result: dict[str, Any] = {"status": "committed"}
-        if not _git_diff_stat(repo):
-            # Nothing left pending on this task — try to close it out.
-            # Refused (unmet criteria) just means it stays in review;
-            # the commit above still stands either way.
+        repo = _task_repo(task)
+        result: dict[str, Any] = {"status": "approved"}
+
+        if repo is not None:
+            branch = _task_branch(task, _task_session(task, session_manager))
+            actual = current_branch(repo)
+            if actual != branch:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Repo is now on branch {actual!r}, expected {branch!r} — "
+                        "another session likely took over this workspace. Refresh and try again."
+                    ),
+                )
+            add_result = _run_git(repo, ["add", "--", body.file] if body.file else ["add", "-A"])
+            if add_result.returncode != 0:
+                raise HTTPException(status_code=500, detail=f"git add failed: {add_result.stderr.strip()}")
+            commit_result = _run_git(repo, ["commit", "-m", "Approved via Review"])
+            if commit_result.returncode != 0:
+                raise HTTPException(status_code=500, detail=f"git commit failed: {commit_result.stderr.strip()}")
+            result["status"] = "committed"
+
+        # With no repo there is nothing to stage and nothing left
+        # pending by definition, so approval closes the task out
+        # immediately. The gate itself is task logic, not git logic:
+        # set_status refusing on unmet acceptance criteria is what makes
+        # this a real review either way.
+        if repo is None or not _git_diff_stat(repo):
             store = TaskStore(_tasks_dir())
             old_status = task.status.value
             try:
                 task = store.set_status(task.id, TaskStatus.DONE, actor="human")
             except ValueError as e:
+                # Refused (unmet criteria) just means it stays in
+                # review; any commit above still stands.
                 result["task_status"] = "review"
                 result["done_error"] = str(e)
             else:
@@ -186,9 +242,18 @@ def create_router(session_manager: Any) -> APIRouter:
         task = _task_or_404(body.task_id)
         if task.status != TaskStatus.REVIEW:
             raise HTTPException(status_code=400, detail="Task is not in review")
-        repo, _branch, session = _task_repo_and_branch(task, session_manager)
+        repo = _task_repo(task)
+        session = _task_session(task, session_manager)
 
-        rejected_files = [body.file] if body.file else [f["path"] for f in _git_diff_stat(repo)]
+        # No repo means no filenames to enumerate — the rejection is of
+        # the task's work as a whole, which _feedback_message words
+        # differently rather than handing the agent an empty list.
+        if body.file:
+            rejected_files = [body.file]
+        elif repo is not None:
+            rejected_files = [f["path"] for f in _git_diff_stat(repo)]
+        else:
+            rejected_files = []
         message = _feedback_message(body.approved_files, rejected_files, body.reason)
 
         store = TaskStore(_tasks_dir())

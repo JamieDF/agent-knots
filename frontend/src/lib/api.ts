@@ -53,6 +53,9 @@ export interface SettingsResponse {
   default_provider: string
   integrations: IntegrationsInfo
   wastebin: { retention_days: number }
+  // `root` is the configured override, "" when unset; `resolved_root`
+  // is where clones actually land right now.
+  workspaces: { root: string; resolved_root: string }
 }
 
 export interface WastebinEntry {
@@ -129,7 +132,7 @@ export async function fetchPendingQuestions(): Promise<{ questions: PendingQuest
 export async function fetchSettings(): Promise<SettingsResponse> {
   return apiFetch('/api/settings')
 }
-export async function saveSettings(s: { default_model: string; api_key: string; base_url: string; default_mode: string; wastebin_retention_days?: number }) {
+export async function saveSettings(s: { default_model: string; api_key: string; base_url: string; default_mode: string; wastebin_retention_days?: number; workspaces_root?: string }) {
   return apiFetch<any>('/api/settings', jsonInit('PUT', s))
 }
 export async function createSession(body: { prompt: string; mode?: string; project_id?: string; task_id?: string }) {
@@ -217,6 +220,12 @@ export async function toggleTool(name: string): Promise<{ enabled: boolean }> {
 
 export interface Workspace {
   id: string; name: string; description: string; repository: string; runtime: string; provider: string; tags: string[]
+  // `repository` is the folder sessions work in either way. `managed`
+  // means agent-knots cloned/created it under the workspaces root and
+  // owns it — so it can't be repointed, and deleting the workspace
+  // leaves it on disk unless you explicitly ask otherwise. `source` is
+  // the URL or path a managed workspace was cloned from.
+  source: string; managed: boolean
   auto_assign: boolean; max_concurrent: number; archived: boolean
   created_at: number
 }
@@ -229,16 +238,27 @@ export async function fetchWorkspace(id: string): Promise<Workspace> {
   return apiFetch(`/api/workspaces/${id}`)
 }
 
-export async function createWorkspace(data: { id?: string; name: string; description?: string; repository?: string; runtime?: string; provider?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number }) {
-  return apiFetch<any>('/api/workspaces', jsonInit('POST', data))
+/** `managed` defaults to false server-side so scripts and the CLI keep
+ * their old behaviour; the dialog passes it explicitly, which is what
+ * makes managed the default a *user* sees. With managed, `repository`
+ * is the clone source and the real path comes back in the response. */
+export async function createWorkspace(data: { id?: string; name: string; description?: string; repository?: string; managed?: boolean; init_git?: boolean; runtime?: string; provider?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number }): Promise<{ status: string; id: string; repository: string; managed: boolean }> {
+  return apiFetch('/api/workspaces', jsonInit('POST', data))
 }
 
 export async function updateWorkspace(id: string, data: { name?: string; description?: string; repository?: string; runtime?: string; provider?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number; archived?: boolean }) {
   return apiFetch<any>(`/api/workspaces/${id}`, jsonInit('PATCH', data))
 }
 
-export async function deleteWorkspace(id: string): Promise<void> {
-  await apiFetch(`/api/workspaces/${id}`, { method: 'DELETE' })
+/** Removes the workspace record. A managed clone is left on disk
+ * unless deleteFiles is passed — it may hold work that was never
+ * pushed anywhere. */
+export async function deleteWorkspace(id: string, deleteFiles = false): Promise<void> {
+  await apiFetch(`/api/workspaces/${id}${deleteFiles ? '?delete_files=true' : ''}`, { method: 'DELETE' })
+}
+
+export async function pushWorkspaceBranch(id: string, branch: string): Promise<{ status: string; branch: string; remote: string }> {
+  return apiFetch(`/api/workspaces/${id}/push`, jsonInit('POST', { branch }))
 }
 export async function deleteAgent(id: string): Promise<void> {
   await apiFetch(`/api/agent/${id}`, { method: 'DELETE' })
@@ -282,6 +302,11 @@ export interface ReviewTask {
   project: string; project_name: string
   branch: string; session_id: string | null; session_name: string
   session_running: boolean; session_error: string
+  // false when the workspace isn't a git repo at all. Distinct from
+  // file_count === 0, which means a git workspace with nothing pending:
+  // there, the file controls apply and everything is already actioned;
+  // here, the review is of the task itself.
+  has_repo: boolean
   file_count: number; added: number; deleted: number
 }
 
@@ -293,7 +318,7 @@ export async function fetchReviewTasks(): Promise<{ tasks: ReviewTask[] }> {
   return apiFetch('/api/review/tasks')
 }
 
-export async function fetchReviewDiffs(taskId: string): Promise<{ branch: string; diffs: ReviewDiff[] }> {
+export async function fetchReviewDiffs(taskId: string): Promise<{ has_repo: boolean; branch: string | null; diffs: ReviewDiff[] }> {
   return apiFetch(`/api/review/diffs?task_id=${encodeURIComponent(taskId)}`)
 }
 

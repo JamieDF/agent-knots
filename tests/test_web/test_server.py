@@ -884,6 +884,9 @@ class TestWorkspaceAPI:
         assert resp.status_code == 200
         assert resp.json() == {
             "id": "ws-single", "name": "Single WS", "description": "", "repository": "/tmp/x",
+            # No managed=true in the POST, so the path is used verbatim
+            # and nothing is cloned — the pre-managed-workspaces path.
+            "source": "", "managed": False,
             "runtime": "", "provider": "", "tags": [], "auto_assign": False, "max_concurrent": 2, "archived": False,
             "created_at": resp.json()["created_at"],
         }
@@ -892,6 +895,242 @@ class TestWorkspaceAPI:
     async def test_get_single_workspace_not_found_404s(self, authed_client):
         resp = await authed_client.get("/api/workspaces/nonexistent")
         assert resp.status_code == 404
+
+
+class TestManagedWorkspaces:
+    """A managed workspace is one whose directory agent-knots created
+    under config.workspaces_root(), rather than a path the user already
+    had. The agent_knots_home fixture points AGENT_KNOTS_HOME at
+    tmp_path, and workspaces_root() follows it, so all of this stays
+    inside the test's own directory.
+    """
+
+    def _source_repo(self, tmp_path, name="upstream"):
+        repo = tmp_path / name
+        repo.mkdir()
+        # -b main so the branch name doesn't depend on the developer's
+        # init.defaultBranch.
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        (repo / "a.txt").write_text("hello\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+        return repo
+
+    @pytest.mark.asyncio
+    async def test_clones_into_a_folder_named_after_the_repo(self, authed_client, tmp_path):
+        source = self._source_repo(tmp_path)
+        resp = await authed_client.post("/api/workspaces", json={
+            "id": "managed-1", "name": "Managed One",
+            "repository": str(source), "managed": True,
+        })
+        assert resp.status_code == 200, resp.text
+
+        repository = Path(resp.json()["repository"])
+        # Named for the repo, not the workspace slug — the path should
+        # look like a normal `git clone` when you cd into it.
+        assert repository.name == "upstream"
+        assert repository.parent == tmp_path / "workspaces"
+        assert (repository / "a.txt").read_text() == "hello\n"
+
+    @pytest.mark.asyncio
+    async def test_the_users_own_checkout_is_left_alone(self, authed_client, tmp_path):
+        """The whole point: the agent gets a copy, you keep yours."""
+        source = self._source_repo(tmp_path)
+        before = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=source,
+            capture_output=True, text=True,
+        ).stdout
+
+        await authed_client.post("/api/workspaces", json={
+            "id": "managed-2", "name": "Managed Two",
+            "repository": str(source), "managed": True,
+        })
+
+        after = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=source,
+            capture_output=True, text=True,
+        ).stdout
+        assert after == before
+        assert subprocess.run(
+            ["git", "status", "--porcelain"], cwd=source, capture_output=True, text=True,
+        ).stdout == ""
+
+    @pytest.mark.asyncio
+    async def test_two_workspaces_on_the_same_repo_name_get_distinct_folders(
+        self, authed_client, tmp_path,
+    ):
+        (tmp_path / "a").mkdir()
+        (tmp_path / "b").mkdir()
+        first = self._source_repo(tmp_path / "a", "shared-name")
+        second = self._source_repo(tmp_path / "b", "shared-name")
+
+        r1 = await authed_client.post("/api/workspaces", json={
+            "id": "dup-1", "name": "Dup One", "repository": str(first), "managed": True})
+        r2 = await authed_client.post("/api/workspaces", json={
+            "id": "dup-2", "name": "Dup Two", "repository": str(second), "managed": True})
+
+        assert Path(r1.json()["repository"]).name == "shared-name"
+        assert Path(r2.json()["repository"]).name == "shared-name-2"
+
+    @pytest.mark.asyncio
+    async def test_a_failed_clone_leaves_no_workspace_and_no_directory(
+        self, authed_client, tmp_path,
+    ):
+        """Provisioning happens before the record exists precisely so a
+        failure can't strand either half."""
+        not_a_repo = tmp_path / "plain-dir"
+        not_a_repo.mkdir()
+
+        resp = await authed_client.post("/api/workspaces", json={
+            "id": "doomed", "name": "Doomed", "repository": str(not_a_repo), "managed": True,
+        })
+        assert resp.status_code == 400
+        assert "not a git repository" in resp.json()["detail"]
+
+        assert (await authed_client.get("/api/workspaces/doomed")).status_code == 404
+        assert not (tmp_path / "workspaces" / "plain-dir").exists()
+
+    @pytest.mark.asyncio
+    async def test_no_repository_still_gets_a_real_shared_folder(self, authed_client, tmp_path):
+        """A workspace with no repo used to get no folder at all —
+        sessions fell through to a per-session workdir under the hidden
+        home, so nothing persisted and two sessions never saw the same
+        files."""
+        resp = await authed_client.post("/api/workspaces", json={
+            "id": "notebook", "name": "Notebook", "managed": True,
+        })
+        assert resp.status_code == 200
+
+        repository = Path(resp.json()["repository"])
+        assert repository == tmp_path / "workspaces" / "notebook"
+        assert repository.is_dir()
+        # Off by default: Review works without git, so an empty
+        # workspace has no need of a repo it never asked for.
+        assert not (repository / ".git").exists()
+
+    @pytest.mark.asyncio
+    async def test_init_git_opts_an_empty_workspace_into_a_repo(self, authed_client, tmp_path):
+        resp = await authed_client.post("/api/workspaces", json={
+            "id": "fresh-code", "name": "Fresh Code", "managed": True, "init_git": True,
+        })
+        assert (Path(resp.json()["repository"]) / ".git").is_dir()
+
+    @pytest.mark.asyncio
+    async def test_unmanaged_is_the_api_default_and_uses_the_path_verbatim(
+        self, authed_client, tmp_path,
+    ):
+        """Back-compat: an existing caller that passes a path still gets
+        that exact path, and nothing is cloned anywhere."""
+        source = self._source_repo(tmp_path)
+        resp = await authed_client.post("/api/workspaces", json={
+            "id": "legacy", "name": "Legacy", "repository": str(source),
+        })
+        assert resp.json()["repository"] == str(source)
+        assert resp.json()["managed"] is False
+        assert not (tmp_path / "workspaces" / "upstream").exists()
+
+    @pytest.mark.asyncio
+    async def test_managed_repository_cannot_be_repointed(self, authed_client, tmp_path):
+        source = self._source_repo(tmp_path)
+        await authed_client.post("/api/workspaces", json={
+            "id": "pinned", "name": "Pinned", "repository": str(source), "managed": True})
+
+        resp = await authed_client.patch(
+            "/api/workspaces/pinned", json={"repository": "/somewhere/else"},
+        )
+        assert resp.status_code == 400
+        assert "managed by agent-knots" in resp.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_unmanaged_repository_can_still_be_edited(self, authed_client, tmp_path):
+        await authed_client.post("/api/workspaces", json={
+            "id": "editable", "name": "Editable", "repository": "/tmp/one"})
+        resp = await authed_client.patch(
+            "/api/workspaces/editable", json={"repository": "/tmp/two"},
+        )
+        assert resp.status_code == 200
+        after = (await authed_client.get("/api/workspaces/editable")).json()
+        assert after["repository"] == "/tmp/two"
+
+    @pytest.mark.asyncio
+    async def test_delete_keeps_the_clone_on_disk_by_default(self, authed_client, tmp_path):
+        """That folder is real code, possibly never pushed anywhere.
+        Losing a workspace record must not mean losing the work."""
+        source = self._source_repo(tmp_path)
+        created = await authed_client.post("/api/workspaces", json={
+            "id": "keepme", "name": "Keep Me", "repository": str(source), "managed": True})
+        repository = Path(created.json()["repository"])
+
+        resp = await authed_client.delete("/api/workspaces/keepme")
+        assert resp.status_code == 200
+        assert resp.json()["removed_files"] is False
+        assert repository.is_dir()
+
+    @pytest.mark.asyncio
+    async def test_delete_files_removes_a_managed_clone_when_asked(self, authed_client, tmp_path):
+        source = self._source_repo(tmp_path)
+        created = await authed_client.post("/api/workspaces", json={
+            "id": "binme", "name": "Bin Me", "repository": str(source), "managed": True})
+        repository = Path(created.json()["repository"])
+
+        resp = await authed_client.delete("/api/workspaces/binme", params={"delete_files": "true"})
+        assert resp.json()["removed_files"] is True
+        assert not repository.exists()
+        # The source it was cloned from is somebody else's property.
+        assert source.is_dir()
+
+    @pytest.mark.asyncio
+    async def test_delete_files_never_touches_an_unmanaged_folder(self, authed_client, tmp_path):
+        source = self._source_repo(tmp_path)
+        await authed_client.post("/api/workspaces", json={
+            "id": "theirs", "name": "Theirs", "repository": str(source)})
+
+        resp = await authed_client.delete("/api/workspaces/theirs", params={"delete_files": "true"})
+        assert resp.json()["removed_files"] is False
+        assert source.is_dir()
+
+    @pytest.mark.asyncio
+    async def test_push_reports_a_missing_remote_rather_than_failing_opaquely(
+        self, authed_client, tmp_path,
+    ):
+        source = self._source_repo(tmp_path)
+        await authed_client.post("/api/workspaces", json={
+            "id": "nopush", "name": "No Push", "repository": str(source)})
+
+        resp = await authed_client.post(
+            "/api/workspaces/nopush/push", json={"branch": "main"},
+        )
+        assert resp.status_code == 400
+        assert "remote" in resp.json()["detail"]
+
+
+class TestWorkspaceBackCompat:
+    @pytest.mark.asyncio
+    async def test_workspace_yaml_written_before_managed_clones_still_loads(
+        self, authed_client, agent_knots_home,
+    ):
+        """Pre-existing workspaces have neither `source` nor `managed`
+        in their YAML. They must keep working, unmanaged, pointing
+        exactly where they already pointed."""
+        from agent_knots.yamlfile import atomic_write_yaml
+
+        projects = agent_knots_home / "projects"
+        projects.mkdir(parents=True, exist_ok=True)
+        atomic_write_yaml(projects / "old-ws.yaml", {
+            "id": "old-ws", "name": "Old Workspace", "description": "from before",
+            "repository": "/home/someone/code/thing", "default_branch": "main",
+            "runtime": "", "provider": "", "tags": [], "auto_assign": False,
+            "max_concurrent": 2, "archived": False,
+            "created_at": 1700000000.0, "updated_at": 1700000000.0,
+        })
+
+        resp = await authed_client.get("/api/workspaces/old-ws")
+        assert resp.status_code == 200
+        assert resp.json()["repository"] == "/home/someone/code/thing"
+        assert resp.json()["managed"] is False
+        assert resp.json()["source"] == ""
 
 
 class TestFilesystemBrowseAPI:
@@ -1326,9 +1565,12 @@ class TestTaskAgentsAPI:
 class TestReviewAPI:
     """Review is now task-keyed, not workspace-keyed — every test sets
     up a task assigned to a workspace/repo, checked out on the exact
-    branch _task_repo_and_branch falls back to when there's no live
-    session (gitutil.session_branch_name), since these tests never
-    start a real agent session."""
+    branch _task_branch falls back to when there's no live session
+    (gitutil.session_branch_name), since these tests never start a real
+    agent session.
+
+    Everything here is the git-backed path; TestReviewWithoutGit covers
+    the same flow for a workspace that isn't a repo."""
 
     async def _reviewable_task(self, authed_client, tmp_path, ws_id, title="Review test task"):
         from agent_knots.gitutil import session_branch_name
@@ -1548,6 +1790,218 @@ class TestReviewAPI:
     async def test_approve_unknown_task_404s(self, authed_client):
         resp = await authed_client.post("/api/review/approve", json={"task_id": "nonexistent"})
         assert resp.status_code == 404
+
+
+class TestReviewWithoutGit:
+    """A workspace doesn't have to be a git repo — it can be a plain
+    folder for writing, research or planning — and its tasks still need
+    reviewing.
+
+    Every test here is a regression test. Before Review was made
+    git-optional, a task in a non-git workspace could enter review and
+    never leave: approve and reject both 400'd on "Not a git
+    repository", and the UI disabled both buttons because there were no
+    pending files to act on.
+    """
+
+    async def _reviewable_task(self, authed_client, tmp_path, ws_id, criteria=None):
+        folder = tmp_path / ws_id
+        folder.mkdir()
+        await authed_client.post("/api/workspaces", json={
+            "id": ws_id, "name": ws_id, "repository": str(folder),
+        })
+        body = {"title": "Write the thing", "project": ws_id}
+        if criteria is not None:
+            body["acceptance_criteria"] = criteria
+        task = (await authed_client.post("/api/tasks", json=body)).json()
+        resp = await authed_client.patch(f"/api/tasks/{task['id']}", json={"status": "review"})
+        assert resp.status_code == 200
+        return task, folder
+
+    @pytest.mark.asyncio
+    async def test_task_appears_in_review_flagged_as_having_no_repo(self, authed_client, tmp_path):
+        task, _folder = await self._reviewable_task(authed_client, tmp_path, "plain1")
+        tasks = (await authed_client.get("/api/review/tasks")).json()["tasks"]
+        entry = next(t for t in tasks if t["id"] == task["id"])
+        # has_repo is what lets the UI tell "nothing changed" apart from
+        # "there was never anything to diff".
+        assert entry["has_repo"] is False
+        assert entry["file_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_listing_diffs_is_empty_rather_than_an_error(self, authed_client, tmp_path):
+        task, _folder = await self._reviewable_task(authed_client, tmp_path, "plain2")
+        resp = await authed_client.get("/api/review/diffs", params={"task_id": task["id"]})
+        assert resp.status_code == 200
+        assert resp.json() == {"has_repo": False, "branch": None, "diffs": []}
+
+    @pytest.mark.asyncio
+    async def test_approve_moves_the_task_to_done(self, authed_client, tmp_path):
+        """The one that was outright impossible before."""
+        task, _folder = await self._reviewable_task(authed_client, tmp_path, "plain3")
+
+        resp = await authed_client.post("/api/review/approve", json={"task_id": task["id"]})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "approved"
+        assert resp.json()["task_status"] == "done"
+
+        assert (await authed_client.get(f"/api/tasks/{task['id']}")).json()["status"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_approve_still_respects_the_acceptance_criteria_gate(
+        self, authed_client, tmp_path,
+    ):
+        """Losing git must not mean losing the review gate — that check
+        is task logic, and it's what makes this a real review."""
+        task, _folder = await self._reviewable_task(
+            authed_client, tmp_path, "plain4", criteria=["Must be proofread"],
+        )
+        resp = await authed_client.post("/api/review/approve", json={"task_id": task["id"]})
+        assert resp.status_code == 200
+        assert resp.json()["task_status"] == "review"
+        assert resp.json()["done_error"]
+        assert (await authed_client.get(f"/api/tasks/{task['id']}")).json()["status"] == "review"
+
+    @pytest.mark.asyncio
+    async def test_reject_sends_the_task_back_to_in_progress(
+        self, authed_client, tmp_path, monkeypatch,
+    ):
+        # No live session to resume (none was ever started), so reject
+        # falls through to starting a fresh one — which needs a
+        # provider resolvable, same as the git-backed reject tests.
+        monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
+        monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
+        monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
+
+        task, _folder = await self._reviewable_task(authed_client, tmp_path, "plain5")
+        resp = await authed_client.post("/api/review/reject", json={
+            "task_id": task["id"], "reason": "Needs a stronger conclusion",
+        })
+        assert resp.status_code == 200
+        assert resp.json()["task_status"] == "in_progress"
+        after = (await authed_client.get(f"/api/tasks/{task['id']}")).json()
+        assert after["status"] == "in_progress"
+
+    @pytest.mark.asyncio
+    async def test_workspace_with_no_repository_at_all_is_reviewable(self, authed_client):
+        """Not even a folder configured — still not a dead end."""
+        await authed_client.post("/api/workspaces", json={"id": "bare", "name": "Bare"})
+        task = (await authed_client.post(
+            "/api/tasks", json={"title": "Think about it", "project": "bare"},
+        )).json()
+        await authed_client.patch(f"/api/tasks/{task['id']}", json={"status": "review"})
+
+        resp = await authed_client.post("/api/review/approve", json={"task_id": task["id"]})
+        assert resp.status_code == 200
+        assert resp.json()["task_status"] == "done"
+
+
+class TestReviewSeesUntrackedFiles:
+    """Found by running a real agent: it created one new file, and
+    Review reported zero pending changes — while approve's `git add -A`
+    committed it anyway. The reviewer approved something they were
+    never shown."""
+
+    @pytest.mark.asyncio
+    async def test_a_new_file_from_the_agent_shows_up_in_review(self, authed_client, tmp_path):
+        from agent_knots.gitutil import session_branch_name
+
+        repo = tmp_path / "ws"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        (repo / "README.md").write_text("seed\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+        await authed_client.post("/api/workspaces", json={
+            "id": "untracked-ws", "name": "untracked-ws", "repository": str(repo),
+        })
+        task = (await authed_client.post(
+            "/api/tasks", json={"title": "Make a thing", "project": "untracked-ws"},
+        )).json()
+        branch = session_branch_name(task["id"], "Make a thing", "")
+        subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=repo, check=True)
+        await authed_client.patch(f"/api/tasks/{task['id']}", json={"status": "review"})
+
+        # Exactly what an agent does: create a brand-new file, no commit.
+        (repo / "greet.py").write_text("def greet(name):\n    return name\n")
+
+        diffs = (await authed_client.get(
+            "/api/review/diffs", params={"task_id": task["id"]},
+        )).json()
+        assert [d["file"] for d in diffs["diffs"]] == ["greet.py"]
+        assert diffs["diffs"][0]["added"] == 2
+
+        listed = (await authed_client.get("/api/review/tasks")).json()["tasks"]
+        assert next(t for t in listed if t["id"] == task["id"])["file_count"] == 1
+
+        text = (await authed_client.get(
+            "/api/review/diff", params={"task_id": task["id"], "file": "greet.py"},
+        )).json()["diff"]
+        assert "+def greet(name):" in text
+
+    @pytest.mark.asyncio
+    async def test_ignored_files_stay_out_of_review(self, authed_client, tmp_path):
+        """`git add -A` skips ignored files, so review must too —
+        otherwise it lists junk that approve never commits."""
+        from agent_knots.gitutil import session_branch_name
+
+        repo = tmp_path / "ws2"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        (repo / ".gitignore").write_text("__pycache__/\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+        await authed_client.post("/api/workspaces", json={
+            "id": "ignored-ws", "name": "ignored-ws", "repository": str(repo),
+        })
+        task = (await authed_client.post(
+            "/api/tasks", json={"title": "Ignored", "project": "ignored-ws"},
+        )).json()
+        branch = session_branch_name(task["id"], "Ignored", "")
+        subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=repo, check=True)
+        await authed_client.patch(f"/api/tasks/{task['id']}", json={"status": "review"})
+
+        (repo / "__pycache__").mkdir()
+        (repo / "__pycache__" / "x.pyc").write_bytes(b"\x00")
+
+        diffs = (await authed_client.get(
+            "/api/review/diffs", params={"task_id": task["id"]},
+        )).json()
+        assert diffs["diffs"] == []
+
+
+class TestFeedbackMessage:
+    """The prose sent back to the agent on reject."""
+
+    def test_names_the_rejected_files_when_there_are_some(self):
+        from agent_knots.cockpit.web.routes.review import _feedback_message
+
+        msg = _feedback_message([], ["a.py", "b.py"], "Wrong approach")
+        assert "a.py, b.py" in msg
+        assert "Wrong approach" in msg
+
+    def test_falls_back_to_task_level_wording_with_no_files(self):
+        """Without this branch the agent got 'These files were
+        rejected: .' — an empty list where it expects filenames."""
+        from agent_knots.cockpit.web.routes.review import _feedback_message
+
+        msg = _feedback_message([], [], "Missed the point")
+        assert "These files were rejected" not in msg
+        assert "Your work on this task was rejected" in msg
+        assert "Missed the point" in msg
+
+    def test_still_calls_out_already_approved_files(self):
+        from agent_knots.cockpit.web.routes.review import _feedback_message
+
+        msg = _feedback_message(["done.py"], [], "Try again")
+        assert "done.py" in msg
+        assert "Your work on this task was rejected" in msg
 
 
 class TestEventSerialization:

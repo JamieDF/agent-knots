@@ -7,13 +7,21 @@ from pathlib import Path
 import pytest
 
 from agent_knots.gitutil import (
+    _git_diff_for_file,
+    _git_diff_stat,
     branch_exists,
+    clone_into,
     commits_ahead,
     current_branch,
     delete_branch_if_empty,
     ensure_session_branch,
+    init_repo,
     is_dirty,
+    is_remote_url,
     is_repo,
+    push_branch,
+    remote_url,
+    repo_name_from_source,
     session_branch_name,
 )
 
@@ -40,6 +48,181 @@ def repo():
 def not_repo():
     with tempfile.TemporaryDirectory() as d:
         yield Path(d)
+
+
+class TestSourceParsing:
+    @pytest.mark.parametrize("source,expected", [
+        ("https://github.com/owner/repo.git", "repo"),
+        ("https://github.com/owner/repo", "repo"),
+        ("http://example.com/owner/repo.git", "repo"),
+        ("git@github.com:owner/repo.git", "repo"),
+        ("ssh://git@github.com/owner/repo.git", "repo"),
+        ("/home/me/projects/agent-knots", "agent-knots"),
+        ("/home/me/projects/agent-knots/", "agent-knots"),
+        ("relative/path/thing", "thing"),
+    ])
+    def test_derives_the_repo_name(self, source, expected):
+        assert repo_name_from_source(source, "fallback") == expected
+
+    @pytest.mark.parametrize("source", ["", "   ", "/", "///"])
+    def test_falls_back_when_there_is_no_usable_name(self, source):
+        assert repo_name_from_source(source, "fallback") == "fallback"
+
+    def test_strips_characters_that_have_no_business_in_a_directory_name(self):
+        assert repo_name_from_source("https://example.com/o/we$ird name", "fb") == "we-ird-name"
+
+    @pytest.mark.parametrize("source,remote", [
+        ("https://github.com/o/r", True),
+        ("http://github.com/o/r", True),
+        ("ssh://git@github.com/o/r", True),
+        ("git://github.com/o/r", True),
+        ("git@github.com:o/r", True),
+        ("/home/me/repo", False),
+        ("relative/repo", False),
+        ("", False),
+    ])
+    def test_is_remote_url(self, source, remote):
+        assert is_remote_url(source) is remote
+
+
+class TestCloneInto:
+    """Every case is local-to-local — no test here touches the network."""
+
+    def test_clones_a_local_repo(self, repo, tmp_path):
+        dest = tmp_path / "clone"
+        result = clone_into(str(repo), dest)
+        assert result.ok, result.failed_reason
+        assert result.path == str(dest)
+        assert is_repo(dest)
+        assert (dest / "README.md").read_text() == "hello\n"
+
+    def test_local_clone_adopts_the_sources_own_upstream(self, repo, tmp_path):
+        """The fixup that stops a push going back into the user's own
+        checkout: when we clone from a local repo that itself has an
+        origin, the clone should point at that origin, not at the
+        directory we happened to copy from."""
+        _git(repo, "remote", "add", "origin", "https://github.com/owner/upstream.git")
+        intermediate = tmp_path / "mine"
+        assert clone_into(str(repo), intermediate).ok
+
+        dest = tmp_path / "managed"
+        assert clone_into(str(intermediate), dest).ok
+        assert remote_url(dest) == "https://github.com/owner/upstream.git"
+        assert remote_url(dest, "local") == str(intermediate)
+
+    def test_local_clone_keeps_the_source_as_origin_when_it_has_no_upstream(self, repo, tmp_path):
+        """A repo that only ever existed on this machine has no better
+        answer than the path we cloned from."""
+        dest = tmp_path / "managed"
+        assert clone_into(str(repo), dest).ok
+        assert remote_url(dest) == str(repo)
+        assert remote_url(dest, "local") is None
+
+    def test_missing_source_fails_without_raising(self, tmp_path):
+        result = clone_into(str(tmp_path / "nope"), tmp_path / "dest")
+        assert not result.ok
+        assert "does not exist" in result.failed_reason
+
+    def test_non_repo_source_fails_without_raising(self, not_repo, tmp_path):
+        result = clone_into(str(not_repo), tmp_path / "dest")
+        assert not result.ok
+        assert "not a git repository" in result.failed_reason
+
+    def test_refuses_a_dest_that_already_has_content(self, repo, tmp_path):
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        (dest / "existing.txt").write_text("do not clobber me\n")
+
+        result = clone_into(str(repo), dest)
+        assert not result.ok
+        assert "already exists" in result.failed_reason
+        assert (dest / "existing.txt").read_text() == "do not clobber me\n"
+
+
+class TestDiffStat:
+    """Review derives its file list from these, and approve stages with
+    `git add -A` — so anything add -A would commit has to show up here,
+    or a reviewer approves changes they were never shown."""
+
+    def test_reports_tracked_modifications(self, repo):
+        (repo / "README.md").write_text("hello\nworld\n")
+        stat = _git_diff_stat(repo)
+        assert [s["path"] for s in stat] == ["README.md"]
+        assert stat[0]["added"] == 1
+
+    def test_reports_untracked_files(self, repo):
+        """The regression: an agent creating a new file is the most
+        common thing that happens, and `git diff` doesn't mention it at
+        all — so review showed nothing while approve committed it."""
+        (repo / "new_module.py").write_text("def f():\n    return 1\n")
+        stat = _git_diff_stat(repo)
+        assert [s["path"] for s in stat] == ["new_module.py"]
+        assert stat[0]["added"] == 2
+        assert stat[0]["deleted"] == 0
+
+    def test_reports_tracked_and_untracked_together(self, repo):
+        (repo / "README.md").write_text("changed\n")
+        (repo / "extra.txt").write_text("new\n")
+        assert {s["path"] for s in _git_diff_stat(repo)} == {"README.md", "extra.txt"}
+
+    def test_ignores_gitignored_files(self, repo):
+        """Kept in step with `git add -A`, which also skips ignored
+        files — otherwise review would list junk that never gets
+        committed."""
+        (repo / ".gitignore").write_text("*.pyc\n__pycache__/\n")
+        _git(repo, "add", ".gitignore")
+        _git(repo, "commit", "-qm", "ignore rules")
+        (repo / "__pycache__").mkdir()
+        (repo / "__pycache__" / "mod.pyc").write_bytes(b"\x00binary")
+
+        assert _git_diff_stat(repo) == []
+
+    def test_diff_text_for_an_untracked_file(self, repo):
+        (repo / "fresh.txt").write_text("line one\n")
+        diff = _git_diff_for_file(repo, "fresh.txt")
+        assert "+line one" in diff
+
+    def test_diff_text_for_a_tracked_file(self, repo):
+        (repo / "README.md").write_text("hello\nextra\n")
+        assert "+extra" in _git_diff_for_file(repo, "README.md")
+
+
+class TestInitRepo:
+    def test_initialises_a_plain_directory(self, not_repo):
+        assert is_repo(not_repo) is False
+        assert init_repo(not_repo) is True
+        assert is_repo(not_repo) is True
+
+
+class TestPushBranch:
+    def test_pushes_to_a_local_origin(self, repo, tmp_path):
+        """Push against a bare repo standing in for a remote."""
+        bare = tmp_path / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+        _git(repo, "remote", "add", "origin", str(bare))
+        _git(repo, "checkout", "-q", "-b", "feature")
+        (repo / "new.txt").write_text("work\n")
+        _git(repo, "add", "new.txt")
+        _git(repo, "commit", "-qm", "work")
+
+        result = push_branch(repo, "feature")
+        assert result.ok, result.failed_reason
+        assert result.branch == "feature"
+        assert branch_exists(bare, "feature")
+
+    def test_no_remote_is_a_reason_not_an_exception(self, repo):
+        result = push_branch(repo, "main")
+        assert not result.ok
+        assert "no 'origin' remote" in result.failed_reason
+
+    def test_unknown_branch_is_a_reason_not_an_exception(self, repo, tmp_path):
+        _git(repo, "remote", "add", "origin", str(tmp_path / "anywhere"))
+        result = push_branch(repo, "does-not-exist")
+        assert not result.ok
+        assert "does not exist" in result.failed_reason
+
+    def test_non_repo_is_a_reason_not_an_exception(self, not_repo):
+        assert push_branch(not_repo, "main").failed_reason == "not a git repository"
 
 
 class TestQueries:
