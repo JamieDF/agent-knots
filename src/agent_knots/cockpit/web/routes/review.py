@@ -197,15 +197,24 @@ def create_router(session_manager: Any) -> APIRouter:
         repo = _task_repo(task)
         result: dict[str, Any] = {"status": "approved"}
 
-        if repo is not None:
+        # Only stage and commit when there's actually something pending.
+        # The branch check below guards against committing onto someone
+        # else's checkout — but with nothing to commit there is nothing
+        # to get wrong, and enforcing it anyway blocks two legitimate
+        # cases: an agent that committed its own work to the branch, and
+        # a freshly cloned repo whose task branches exist only as remote
+        # refs (which is exactly what the playground ships).
+        if repo is not None and _git_diff_stat(repo):
             branch = _task_branch(task, _task_session(task, session_manager))
             actual = current_branch(repo)
             if actual != branch:
                 raise HTTPException(
                     status_code=409,
                     detail=(
-                        f"Repo is now on branch {actual!r}, expected {branch!r} — "
-                        "another session likely took over this workspace. Refresh and try again."
+                        f"Repo is on branch {actual!r} but this task's work belongs on "
+                        f"{branch!r}, and there are uncommitted changes that would be "
+                        "committed to the wrong place. Another session may have taken "
+                        "over the workspace — refresh and try again."
                     ),
                 )
             add_result = _run_git(repo, ["add", "--", body.file] if body.file else ["add", "-A"])

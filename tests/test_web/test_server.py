@@ -2564,6 +2564,28 @@ class TestPlaygroundSeeding:
         assert len([t for t in everything if t["id"].startswith("T-2026-01-01")]) == 3
 
     @pytest.mark.asyncio
+    async def test_a_seeded_review_task_is_approvable_on_a_fresh_clone(
+        self, authed_client, tmp_path,
+    ):
+        """The playground's whole point is that a stranger can act on
+        it. A clone lands on main with the task branches as remote refs
+        only, so the branch guard used to 409 with "another session
+        likely took over" — misleading, and a dead end on first
+        contact. With nothing pending to stage there is nothing to
+        commit to the wrong branch, so approve just closes the task."""
+        repo = self._demo_repo(tmp_path)
+        await authed_client.post("/api/workspaces", json={
+            "id": "pg2", "name": "PG", "repository": str(repo),
+            "managed": True, "seed_tasks": True,
+        })
+        listed = (await authed_client.get("/api/tasks", params={"project": "pg2"})).json()["tasks"]
+        review_id = next(t["id"] for t in listed if t["status"] == "review")
+
+        resp = await authed_client.post("/api/review/approve", json={"task_id": review_id})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["task_status"] == "done"
+
+    @pytest.mark.asyncio
     async def test_a_broken_manifest_fails_loudly(self, authed_client, tmp_path):
         """The caller explicitly asked to seed; a silently empty board
         would be baffling."""
