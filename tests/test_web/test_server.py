@@ -2461,3 +2461,125 @@ class TestWastebinAPI:
 
         entries = (await authed_client.get("/api/wastebin")).json()["entries"]
         assert any(e["session_id"] == session_id for e in entries)
+
+class TestPlaygroundSeeding:
+    """Cloning a repo that ships a playground manifest.
+
+    The playground is a real half-built demo project: someone clones it
+    and arrives with the genuine tasks that built it, some done, one
+    waiting on review, some never started."""
+
+    def _demo_tasks(self):
+        from agent_knots.task.models import Priority, ProgressEntry, Task, TaskStatus
+
+        specs = [
+            ("T-2026-01-01-000001-aaaa-demo", "Scaffold the Vite app", TaskStatus.DONE),
+            ("T-2026-01-01-000002-bbbb-demo", "Add the contrast checker", TaskStatus.REVIEW),
+            ("T-2026-01-01-000003-cccc-demo", "Shareable palette URLs", TaskStatus.DRAFT),
+        ]
+        out = []
+        for tid, title, status in specs:
+            t = Task(id=tid, title=title, status=status, project="built-here",
+                     priority=Priority.MEDIUM)
+            t.progress.append(ProgressEntry(entry=f"[editor_tool] did {title}"))
+            out.append(t)
+        return out
+
+    def _demo_repo(self, tmp_path, name="demo", tasks=None):
+        """A git repo shipping a playground manifest, as the public
+        demo repo would."""
+        from agent_knots.playground import write_manifest
+
+        repo = tmp_path / name
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@e.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        (repo / "README.md").write_text("# demo\n")
+        write_manifest(repo, self._demo_tasks() if tasks is None else tasks)
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+        return repo
+
+    def _plain_repo(self, tmp_path, name):
+        repo = tmp_path / name
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@e.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        (repo / "f.txt").write_text("x\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+        return repo
+
+    @pytest.mark.asyncio
+    async def test_clone_seeds_the_shipped_tasks(self, authed_client, tmp_path):
+        repo = self._demo_repo(tmp_path)
+        resp = await authed_client.post("/api/workspaces", json={
+            "id": "pg", "name": "Playground", "repository": str(repo),
+            "managed": True, "seed_tasks": True,
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["seeded_tasks"] == 3
+
+        listed = (await authed_client.get("/api/tasks", params={"project": "pg"})).json()["tasks"]
+        assert {t["status"] for t in listed} == {"done", "review", "draft"}
+
+    @pytest.mark.asyncio
+    async def test_seeding_is_opt_in(self, authed_client, tmp_path):
+        """A repo you cloned should not be able to put things on your
+        board unasked."""
+        repo = self._demo_repo(tmp_path)
+        resp = await authed_client.post("/api/workspaces", json={
+            "id": "quiet", "name": "Quiet", "repository": str(repo), "managed": True,
+        })
+        assert resp.json()["seeded_tasks"] == 0
+        listed = (await authed_client.get("/api/tasks", params={"project": "quiet"})).json()
+        assert listed["tasks"] == []
+
+    @pytest.mark.asyncio
+    async def test_repo_without_a_manifest_is_not_an_error(self, authed_client, tmp_path):
+        """Every ordinary repo is this case — seeding just finds
+        nothing to do."""
+        repo = self._plain_repo(tmp_path, "plain")
+        resp = await authed_client.post("/api/workspaces", json={
+            "id": "plain", "name": "Plain", "repository": str(repo),
+            "managed": True, "seed_tasks": True,
+        })
+        assert resp.status_code == 200
+        assert resp.json()["seeded_tasks"] == 0
+
+    @pytest.mark.asyncio
+    async def test_reseeding_does_not_duplicate(self, authed_client, tmp_path):
+        """Ids are preserved by design, so a second import of the same
+        repo must skip rather than clobber — whatever is on the board
+        may already have real progress on it."""
+        repo = self._demo_repo(tmp_path)
+        for ws in ("first", "second"):
+            await authed_client.post("/api/workspaces", json={
+                "id": ws, "name": ws, "repository": str(repo),
+                "managed": True, "seed_tasks": True,
+            })
+        everything = (await authed_client.get("/api/tasks")).json()["tasks"]
+        assert len([t for t in everything if t["id"].startswith("T-2026-01-01")]) == 3
+
+    @pytest.mark.asyncio
+    async def test_a_broken_manifest_fails_loudly(self, authed_client, tmp_path):
+        """The caller explicitly asked to seed; a silently empty board
+        would be baffling."""
+        from agent_knots.playground import manifest_path
+        from agent_knots.yamlfile import atomic_write_yaml
+
+        repo = self._plain_repo(tmp_path, "bad")
+        path = manifest_path(repo)
+        path.parent.mkdir(parents=True)
+        atomic_write_yaml(path, {"version": 99, "tasks": []})
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "manifest"], cwd=repo, check=True)
+
+        resp = await authed_client.post("/api/workspaces", json={
+            "id": "bad", "name": "Bad", "repository": str(repo),
+            "managed": True, "seed_tasks": True,
+        })
+        assert resp.status_code == 400
+        assert "manifest" in resp.json()["detail"].lower()

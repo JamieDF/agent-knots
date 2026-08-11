@@ -15,6 +15,7 @@ from pathlib import Path
 
 import typer
 
+from agent_knots.cli.playground import playground_app
 from agent_knots.cli.project import project_app
 from agent_knots.cli.session import session_app
 from agent_knots.cli.settings import settings_app
@@ -100,6 +101,7 @@ app.add_typer(vault_app, name="vault")
 app.add_typer(project_app, name="project")
 app.add_typer(task_app, name="task")
 app.add_typer(settings_app, name="settings")
+app.add_typer(playground_app, name="playground")
 
 
 if __name__ == "__main__":

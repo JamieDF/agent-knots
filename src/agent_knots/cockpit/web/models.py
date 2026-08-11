@@ -172,6 +172,10 @@ class CreateWorkspaceRequest(BaseModel):
     # `git init` the new empty folder. Off by default — Review works
     # without git, so an empty workspace has no need of it.
     init_git: bool = False
+    # Import tasks from the repo's .agent-knots/playground.yaml, if it
+    # has one. Off by default and opt-in per request: a repo you cloned
+    # should not be able to put items on your board unasked.
+    seed_tasks: bool = False
     runtime: str = ""
     provider: str = ""
     tags: list = []

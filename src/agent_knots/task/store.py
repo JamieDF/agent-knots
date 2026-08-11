@@ -107,7 +107,16 @@ def _progress_from_dict(d: dict[str, Any]) -> ProgressEntry:
     )
 
 
-def _task_to_dict(task: Task) -> dict[str, Any]:
+def task_to_dict(task: Task) -> dict[str, Any]:
+    """Task -> plain dict, as written to its YAML file.
+
+    Public (rather than the `_`-prefixed sibling of the other helpers
+    here) because the playground exporter serialises tasks into a
+    repo-committed manifest and must produce byte-identical shapes to
+    what the store itself writes — a second, drifting serialisation of
+    the same model is exactly the bug that would be worth avoiding.
+    Omits empty fields so the on-disk YAML stays readable.
+    """
     d: dict[str, Any] = {
         "id": task.id,
         "title": task.title,
@@ -144,7 +153,7 @@ def _task_to_dict(task: Task) -> dict[str, Any]:
     return d
 
 
-def _task_from_dict(d: dict[str, Any]) -> Task:
+def task_from_dict(d: dict[str, Any]) -> Task:
     return Task(
         id=d["id"],
         title=d["title"],
@@ -405,13 +414,13 @@ class TaskStore:
         return task
 
     def _save(self, task: Task) -> None:
-        atomic_write_yaml(self._path(task.id), _task_to_dict(task))
+        atomic_write_yaml(self._path(task.id), task_to_dict(task))
 
     def _load(self, path: Path) -> Task | None:
         data = safe_read_yaml(path)
         if not isinstance(data, dict) or "id" not in data:
             return None
         try:
-            return _task_from_dict(data)
+            return task_from_dict(data)
         except KeyError:
             return None

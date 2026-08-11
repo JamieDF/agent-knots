@@ -24,6 +24,7 @@ from agent_knots.cockpit.web.models import (
     UpdateWorkspaceRequest,
 )
 from agent_knots.config import projects_dir as _projects_dir
+from agent_knots.config import tasks_dir as _tasks_dir
 from agent_knots.config import workspaces_root as _workspaces_root
 from agent_knots.gitutil import (
     clone_into_async,
@@ -32,8 +33,10 @@ from agent_knots.gitutil import (
     repo_name_from_source,
     unique_clone_dir,
 )
+from agent_knots.playground import ManifestError, has_manifest, read_manifest
 from agent_knots.project.models import Project
 from agent_knots.project.store import ProjectStore
+from agent_knots.task.store import TaskStore
 
 
 def _workspace_to_response(w: Project) -> dict:
@@ -65,6 +68,38 @@ def _unique_project_id(store: ProjectStore, name: str) -> str:
         candidate = f"{base}-{n}"
         n += 1
     return candidate
+
+
+def _seed_from_manifest(repo: Path, workspace_id: str) -> int:
+    """Import a playground repo's shipped tasks. Returns how many landed.
+
+    A repo without a manifest is the normal case, not an error — this
+    only ever fires for the demo playground. A repo *with* an unreadable
+    one is worth failing loudly on, since the caller explicitly asked to
+    seed and a silently empty board would be baffling.
+
+    Tasks keep their original ids (see playground.read_manifest for why
+    that matters), so re-importing the same repo into a second workspace
+    would collide. Already-present ids are skipped rather than
+    overwritten: whatever is on the board now is the user's, possibly
+    with real progress on it.
+    """
+    if not has_manifest(repo):
+        return 0
+
+    try:
+        tasks = read_manifest(repo, workspace_id)
+    except ManifestError as e:
+        raise HTTPException(status_code=400, detail=f"Playground manifest: {e}") from e
+
+    store = TaskStore(_tasks_dir())
+    seeded = 0
+    for task in tasks:
+        if store.get(task.id) is not None:
+            continue
+        store.create(task)
+        seeded += 1
+    return seeded
 
 
 def create_router() -> APIRouter:
@@ -152,7 +187,15 @@ def create_router() -> APIRouter:
             max_concurrent=body.max_concurrent,
         )
         store.create(ws)
-        return {"status": "ok", "id": ws.id, "repository": ws.repository, "managed": ws.managed}
+
+        seeded = 0
+        if body.seed_tasks and repository:
+            seeded = _seed_from_manifest(Path(repository), ws.id)
+
+        return {
+            "status": "ok", "id": ws.id, "repository": ws.repository,
+            "managed": ws.managed, "seeded_tasks": seeded,
+        }
 
     @router.patch("/api/workspaces/{workspace_id}")
     async def update_workspace(workspace_id: str, body: UpdateWorkspaceRequest):
