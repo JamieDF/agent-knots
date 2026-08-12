@@ -260,6 +260,36 @@ export async function deleteWorkspace(id: string, deleteFiles = false): Promise<
 export async function pushWorkspaceBranch(id: string, branch: string): Promise<{ status: string; branch: string; remote: string }> {
   return apiFetch(`/api/workspaces/${id}/push`, jsonInit('POST', { branch }))
 }
+
+// ── playground ──────────────────────────────────────────────────────────────
+// The demo project: a real half-built app whose repo ships the tasks
+// that built it, so a new install has something to look at.
+
+export interface PlaygroundStatus {
+  exists: boolean
+  workspace_id: string
+  /** Where it clones from — the default, or an override. */
+  repo: string
+  /** Local path, once it exists. */
+  repository: string
+  /** status -> count, e.g. {done: 7, review: 1, draft: 3} */
+  task_counts: Record<string, number>
+}
+
+export async function fetchPlayground(): Promise<PlaygroundStatus> {
+  return apiFetch('/api/playground')
+}
+
+/** Clones the demo repo and seeds its tasks. A real network clone, so
+ * this can take a while. */
+export async function createPlayground(): Promise<{ status: string; workspace_id: string; seeded_tasks: number; task_counts: Record<string, number> }> {
+  return apiFetch('/api/playground', jsonInit('POST'))
+}
+
+/** Removes the workspace, its tasks and its folder. */
+export async function resetPlayground(): Promise<{ status: string; removed_tasks: number }> {
+  return apiFetch('/api/playground', { method: 'DELETE' })
+}
 export async function deleteAgent(id: string): Promise<void> {
   await apiFetch(`/api/agent/${id}`, { method: 'DELETE' })
 }

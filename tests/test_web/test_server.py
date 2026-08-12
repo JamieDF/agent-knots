@@ -2586,6 +2586,61 @@ class TestPlaygroundSeeding:
         assert resp.json()["task_status"] == "done"
 
     @pytest.mark.asyncio
+    async def test_playground_lifecycle(self, authed_client, tmp_path, monkeypatch):
+        """Create → report → refuse duplicate → full teardown.
+
+        The teardown is deliberately more destructive than deleting a
+        normal managed workspace, which keeps its folder: everything
+        here came from a public repo and can be re-cloned, so leaving
+        clones behind on every reset would just accumulate rubbish."""
+        repo = self._demo_repo(tmp_path, name="playground-src")
+        monkeypatch.setenv("AGENT_KNOTS_PLAYGROUND_REPO", str(repo))
+
+        before = (await authed_client.get("/api/playground")).json()
+        assert before["exists"] is False
+        assert before["task_counts"] == {}
+
+        created = await authed_client.post("/api/playground")
+        assert created.status_code == 200, created.text
+        assert created.json()["seeded_tasks"] == 3
+
+        status = (await authed_client.get("/api/playground")).json()
+        assert status["exists"] is True
+        assert status["task_counts"] == {"done": 1, "review": 1, "draft": 1}
+        folder = Path(status["repository"])
+        assert folder.is_dir()
+
+        dup = await authed_client.post("/api/playground")
+        assert dup.status_code == 409
+        assert "already exists" in dup.json()["detail"]
+
+        gone = await authed_client.delete("/api/playground")
+        assert gone.json()["removed_tasks"] == 3
+        assert not folder.exists()
+        assert (await authed_client.get("/api/playground")).json()["exists"] is False
+        assert (await authed_client.get("/api/tasks")).json()["tasks"] == []
+
+    @pytest.mark.asyncio
+    async def test_playground_reset_with_nothing_there_404s(self, authed_client):
+        assert (await authed_client.delete("/api/playground")).status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_unreachable_playground_repo_says_why(
+        self, authed_client, tmp_path, monkeypatch,
+    ):
+        """The failure a user hits if the repo isn't public yet. It has
+        to name the problem — a bare git error, or worse a silent empty
+        board, is the difference between 'ah, no access' and 'this
+        product is broken'."""
+        monkeypatch.setenv("AGENT_KNOTS_PLAYGROUND_REPO", str(tmp_path / "does-not-exist"))
+
+        resp = await authed_client.post("/api/playground")
+        assert resp.status_code == 400
+        assert "clone failed" in resp.json()["detail"].lower()
+        # And nothing half-made is left behind.
+        assert (await authed_client.get("/api/playground")).json()["exists"] is False
+
+    @pytest.mark.asyncio
     async def test_a_broken_manifest_fails_loudly(self, authed_client, tmp_path):
         """The caller explicitly asked to seed; a silently empty board
         would be baffling."""

@@ -62,6 +62,9 @@ class Settings:
     # that function, which is also why this is a bare path string rather
     # than a nested section — there's nothing else to group it with.
     workspaces_root: str = ""
+    # "" = config.DEFAULT_PLAYGROUND_REPO. Override to point the
+    # playground at a fork, or at a local path while developing.
+    playground_repo: str = ""
 
 
 def load() -> Settings:
@@ -110,6 +113,7 @@ def load() -> Settings:
         integrations=integrations,
         wastebin=wastebin,
         workspaces_root=data.get("workspaces_root", ""),
+        playground_repo=data.get("playground_repo", ""),
     )
 
 
@@ -125,6 +129,7 @@ def save(settings: Settings) -> None:
         "integrations": asdict(settings.integrations),
         "wastebin": asdict(settings.wastebin),
         "workspaces_root": settings.workspaces_root,
+        "playground_repo": settings.playground_repo,
     }
     # sort_keys=True (not the atomic_write_yaml default) to preserve this
     # file's pre-existing on-disk key order.

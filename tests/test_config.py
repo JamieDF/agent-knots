@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from agent_knots.config import session_workdir, workspaces_root
+from agent_knots.config import (
+    DEFAULT_PLAYGROUND_REPO,
+    playground_repo,
+    session_workdir,
+    workspaces_root,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -17,6 +22,7 @@ def clean_env(monkeypatch):
     is about. Without this the developer's own environment leaks in."""
     monkeypatch.delenv("AGENT_KNOTS_HOME", raising=False)
     monkeypatch.delenv("AGENT_KNOTS_WORKSPACES_ROOT", raising=False)
+    monkeypatch.delenv("AGENT_KNOTS_PLAYGROUND_REPO", raising=False)
 
 
 class TestWorkspacesRoot:
@@ -52,6 +58,46 @@ class TestWorkspacesRoot:
     def test_creates_the_directory(self, tmp_path, monkeypatch):
         monkeypatch.setenv("AGENT_KNOTS_WORKSPACES_ROOT", str(tmp_path / "made"))
         assert workspaces_root().is_dir()
+
+
+class TestPlaygroundRepo:
+    def test_defaults_to_the_public_demo_repo(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+        assert playground_repo() == DEFAULT_PLAYGROUND_REPO
+
+    def test_the_default_is_cloneable_without_credentials(self):
+        """The whole point of the playground is that a stranger can
+        stand it up. An SSH URL needs a key on file and would fail for
+        exactly those people, so this property is worth pinning down —
+        it's a one-character edit away from silently regressing."""
+        assert DEFAULT_PLAYGROUND_REPO.startswith("https://")
+        assert not DEFAULT_PLAYGROUND_REPO.startswith("git@")
+
+    def test_env_override_wins(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+        monkeypatch.setenv("AGENT_KNOTS_PLAYGROUND_REPO", "/local/fork")
+        assert playground_repo() == "/local/fork"
+
+    def test_settings_override_beats_the_default(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+        from agent_knots import settings as settings_mod
+
+        s = settings_mod.load()
+        s.playground_repo = "https://example.com/fork.git"
+        settings_mod.save(s)
+
+        assert playground_repo() == "https://example.com/fork.git"
+
+    def test_env_beats_settings(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+        from agent_knots import settings as settings_mod
+
+        s = settings_mod.load()
+        s.playground_repo = "https://example.com/from-settings.git"
+        settings_mod.save(s)
+        monkeypatch.setenv("AGENT_KNOTS_PLAYGROUND_REPO", "https://example.com/from-env.git")
+
+        assert playground_repo() == "https://example.com/from-env.git"
 
 
 class TestSessionWorkdir:

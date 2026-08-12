@@ -2098,7 +2098,14 @@ test.describe('workspace creation UI', () => {
     await page.click('button:has-text("Use this folder")')
     await page.waitForTimeout(800) // git-info round trip
 
-    await expect(page.locator('text=github.com/jamiedf/agent-knots')).toBeVisible()
+    // Scoped to the dialog: `text=` is a case-insensitive substring
+    // match, and the Playground card on this same Settings page prints
+    // the demo repo's URL — which contains this one as a prefix
+    // (…/agent-knots-playground.git), so an unscoped locator matches
+    // two elements and trips strict mode.
+    await expect(
+      page.getByRole('dialog').locator('text=github.com/jamiedf/agent-knots'),
+    ).toBeVisible()
 
     await page.getByRole('dialog').locator('button:text-is("Cancel")').click()
   })
