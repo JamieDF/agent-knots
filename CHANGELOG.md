@@ -5,6 +5,28 @@ All notable changes to agent-knots are documented here.
 ## [Unreleased]
 
 ### Added
+- **Playground.** A fresh install is an empty board, with no way to see
+  what agent-knots does before committing to setting a workspace up.
+  One click now stands up a real half-built project — a colour palette
+  generator that was itself built with agent-knots — arriving with the
+  genuine tasks that built it: seven done, one waiting on review, three
+  never started, each carrying the real progress log from the agent
+  that worked it. Offered both in the Dashboard's empty state (where a
+  first-timer actually lands) and in Settings (where it can be reset).
+  Reset is a full teardown — workspace, tasks and folder — which is
+  safe here precisely because it's a demo that can be re-cloned, unlike
+  a normal managed workspace.
+
+  The tasks travel inside the repo as `.agent-knots/playground.yaml`,
+  written by `agent-knots playground export` and read back on
+  workspace creation. Task ids survive verbatim, which is what makes
+  the shipped in-review task line up with the branch pushed alongside
+  it, since `session_branch_name` hashes the id. Deliberately
+  demo-shaped rather than a general "task state travels with the repo"
+  feature: tasks are headed for a database that would rewrite the
+  format anyway. The source repo is configurable via
+  `AGENT_KNOTS_PLAYGROUND_REPO` or a settings field, and defaults to an
+  HTTPS URL so it clones without credentials.
 - **Managed workspaces.** A workspace can now own its own copy of the
   code. Give it a clone URL or a local path and agent-knots clones into
   `~/agent-knots/workspaces/<repo>/` — outside `~/.agent-knots/` on

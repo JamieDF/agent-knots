@@ -4,6 +4,7 @@ import DeskLayout from '../../components/DeskLayout'
 import { AccessibilityCard } from './AccessibilityCard'
 import { IntegrationsCard } from './IntegrationsCard'
 import { McpServersCard } from './McpServersCard'
+import { PlaygroundCard } from './PlaygroundCard'
 import { PoliciesCard } from './PoliciesCard'
 import { ProvidersCard } from './ProvidersCard'
 import { ToolsCard } from './ToolsCard'
@@ -22,6 +23,7 @@ const SECTIONS = [
   { id: 'integrations', label: 'Integrations' },
   { id: 'vault', label: 'Vault' },
   { id: 'workspaces', label: 'Workspaces' },
+  { id: 'playground', label: 'Playground' },
   { id: 'wastebin', label: 'Wastebin' },
 ]
 
@@ -111,6 +113,7 @@ function SettingsPage() {
           <Section id="integrations"><IntegrationsCard /></Section>
           <Section id="vault"><VaultCard /></Section>
           <Section id="workspaces"><WorkspacesCard /></Section>
+          <Section id="playground"><PlaygroundCard /></Section>
           <Section id="wastebin" last><WastebinCard /></Section>
           {/* Without trailing space, a short last section (or two) can
               never scroll flush to the container's top — there just isn't

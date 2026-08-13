@@ -2461,3 +2461,202 @@ class TestWastebinAPI:
 
         entries = (await authed_client.get("/api/wastebin")).json()["entries"]
         assert any(e["session_id"] == session_id for e in entries)
+
+class TestPlaygroundSeeding:
+    """Cloning a repo that ships a playground manifest.
+
+    The playground is a real half-built demo project: someone clones it
+    and arrives with the genuine tasks that built it, some done, one
+    waiting on review, some never started."""
+
+    def _demo_tasks(self):
+        from agent_knots.task.models import Priority, ProgressEntry, Task, TaskStatus
+
+        specs = [
+            ("T-2026-01-01-000001-aaaa-demo", "Scaffold the Vite app", TaskStatus.DONE),
+            ("T-2026-01-01-000002-bbbb-demo", "Add the contrast checker", TaskStatus.REVIEW),
+            ("T-2026-01-01-000003-cccc-demo", "Shareable palette URLs", TaskStatus.DRAFT),
+        ]
+        out = []
+        for tid, title, status in specs:
+            t = Task(id=tid, title=title, status=status, project="built-here",
+                     priority=Priority.MEDIUM)
+            t.progress.append(ProgressEntry(entry=f"[editor_tool] did {title}"))
+            out.append(t)
+        return out
+
+    def _demo_repo(self, tmp_path, name="demo", tasks=None):
+        """A git repo shipping a playground manifest, as the public
+        demo repo would."""
+        from agent_knots.playground import write_manifest
+
+        repo = tmp_path / name
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@e.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        (repo / "README.md").write_text("# demo\n")
+        write_manifest(repo, self._demo_tasks() if tasks is None else tasks)
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+        return repo
+
+    def _plain_repo(self, tmp_path, name):
+        repo = tmp_path / name
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@e.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        (repo / "f.txt").write_text("x\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+        return repo
+
+    @pytest.mark.asyncio
+    async def test_clone_seeds_the_shipped_tasks(self, authed_client, tmp_path):
+        repo = self._demo_repo(tmp_path)
+        resp = await authed_client.post("/api/workspaces", json={
+            "id": "pg", "name": "Playground", "repository": str(repo),
+            "managed": True, "seed_tasks": True,
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["seeded_tasks"] == 3
+
+        listed = (await authed_client.get("/api/tasks", params={"project": "pg"})).json()["tasks"]
+        assert {t["status"] for t in listed} == {"done", "review", "draft"}
+
+    @pytest.mark.asyncio
+    async def test_seeding_is_opt_in(self, authed_client, tmp_path):
+        """A repo you cloned should not be able to put things on your
+        board unasked."""
+        repo = self._demo_repo(tmp_path)
+        resp = await authed_client.post("/api/workspaces", json={
+            "id": "quiet", "name": "Quiet", "repository": str(repo), "managed": True,
+        })
+        assert resp.json()["seeded_tasks"] == 0
+        listed = (await authed_client.get("/api/tasks", params={"project": "quiet"})).json()
+        assert listed["tasks"] == []
+
+    @pytest.mark.asyncio
+    async def test_repo_without_a_manifest_is_not_an_error(self, authed_client, tmp_path):
+        """Every ordinary repo is this case — seeding just finds
+        nothing to do."""
+        repo = self._plain_repo(tmp_path, "plain")
+        resp = await authed_client.post("/api/workspaces", json={
+            "id": "plain", "name": "Plain", "repository": str(repo),
+            "managed": True, "seed_tasks": True,
+        })
+        assert resp.status_code == 200
+        assert resp.json()["seeded_tasks"] == 0
+
+    @pytest.mark.asyncio
+    async def test_reseeding_does_not_duplicate(self, authed_client, tmp_path):
+        """Ids are preserved by design, so a second import of the same
+        repo must skip rather than clobber — whatever is on the board
+        may already have real progress on it."""
+        repo = self._demo_repo(tmp_path)
+        for ws in ("first", "second"):
+            await authed_client.post("/api/workspaces", json={
+                "id": ws, "name": ws, "repository": str(repo),
+                "managed": True, "seed_tasks": True,
+            })
+        everything = (await authed_client.get("/api/tasks")).json()["tasks"]
+        assert len([t for t in everything if t["id"].startswith("T-2026-01-01")]) == 3
+
+    @pytest.mark.asyncio
+    async def test_a_seeded_review_task_is_approvable_on_a_fresh_clone(
+        self, authed_client, tmp_path,
+    ):
+        """The playground's whole point is that a stranger can act on
+        it. A clone lands on main with the task branches as remote refs
+        only, so the branch guard used to 409 with "another session
+        likely took over" — misleading, and a dead end on first
+        contact. With nothing pending to stage there is nothing to
+        commit to the wrong branch, so approve just closes the task."""
+        repo = self._demo_repo(tmp_path)
+        await authed_client.post("/api/workspaces", json={
+            "id": "pg2", "name": "PG", "repository": str(repo),
+            "managed": True, "seed_tasks": True,
+        })
+        listed = (await authed_client.get("/api/tasks", params={"project": "pg2"})).json()["tasks"]
+        review_id = next(t["id"] for t in listed if t["status"] == "review")
+
+        resp = await authed_client.post("/api/review/approve", json={"task_id": review_id})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["task_status"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_playground_lifecycle(self, authed_client, tmp_path, monkeypatch):
+        """Create → report → refuse duplicate → full teardown.
+
+        The teardown is deliberately more destructive than deleting a
+        normal managed workspace, which keeps its folder: everything
+        here came from a public repo and can be re-cloned, so leaving
+        clones behind on every reset would just accumulate rubbish."""
+        repo = self._demo_repo(tmp_path, name="playground-src")
+        monkeypatch.setenv("AGENT_KNOTS_PLAYGROUND_REPO", str(repo))
+
+        before = (await authed_client.get("/api/playground")).json()
+        assert before["exists"] is False
+        assert before["task_counts"] == {}
+
+        created = await authed_client.post("/api/playground")
+        assert created.status_code == 200, created.text
+        assert created.json()["seeded_tasks"] == 3
+
+        status = (await authed_client.get("/api/playground")).json()
+        assert status["exists"] is True
+        assert status["task_counts"] == {"done": 1, "review": 1, "draft": 1}
+        folder = Path(status["repository"])
+        assert folder.is_dir()
+
+        dup = await authed_client.post("/api/playground")
+        assert dup.status_code == 409
+        assert "already exists" in dup.json()["detail"]
+
+        gone = await authed_client.delete("/api/playground")
+        assert gone.json()["removed_tasks"] == 3
+        assert not folder.exists()
+        assert (await authed_client.get("/api/playground")).json()["exists"] is False
+        assert (await authed_client.get("/api/tasks")).json()["tasks"] == []
+
+    @pytest.mark.asyncio
+    async def test_playground_reset_with_nothing_there_404s(self, authed_client):
+        assert (await authed_client.delete("/api/playground")).status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_unreachable_playground_repo_says_why(
+        self, authed_client, tmp_path, monkeypatch,
+    ):
+        """The failure a user hits if the repo isn't public yet. It has
+        to name the problem — a bare git error, or worse a silent empty
+        board, is the difference between 'ah, no access' and 'this
+        product is broken'."""
+        monkeypatch.setenv("AGENT_KNOTS_PLAYGROUND_REPO", str(tmp_path / "does-not-exist"))
+
+        resp = await authed_client.post("/api/playground")
+        assert resp.status_code == 400
+        assert "clone failed" in resp.json()["detail"].lower()
+        # And nothing half-made is left behind.
+        assert (await authed_client.get("/api/playground")).json()["exists"] is False
+
+    @pytest.mark.asyncio
+    async def test_a_broken_manifest_fails_loudly(self, authed_client, tmp_path):
+        """The caller explicitly asked to seed; a silently empty board
+        would be baffling."""
+        from agent_knots.playground import manifest_path
+        from agent_knots.yamlfile import atomic_write_yaml
+
+        repo = self._plain_repo(tmp_path, "bad")
+        path = manifest_path(repo)
+        path.parent.mkdir(parents=True)
+        atomic_write_yaml(path, {"version": 99, "tasks": []})
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "manifest"], cwd=repo, check=True)
+
+        resp = await authed_client.post("/api/workspaces", json={
+            "id": "bad", "name": "Bad", "repository": str(repo),
+            "managed": True, "seed_tasks": True,
+        })
+        assert resp.status_code == 400
+        assert "manifest" in resp.json()["detail"].lower()

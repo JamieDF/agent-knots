@@ -103,6 +103,34 @@ def workspaces_root() -> Path:
     return _ensure_dir(Path.home() / "agent-knots" / "workspaces")
 
 
+# The demo project the playground clones — a half-built colour palette
+# generator, itself built with agent-knots so the tasks it ships are the
+# real ones that built it.
+#
+# HTTPS on purpose. Anyone can clone this anonymously; the SSH form
+# (git@github.com:...) needs a key on file and would fail for exactly
+# the people the playground exists for — someone trying agent-knots for
+# the first time.
+DEFAULT_PLAYGROUND_REPO = "https://github.com/JamieDF/agent-knots-playground.git"
+
+
+def playground_repo() -> str:
+    """Where the playground is cloned from.
+
+    AGENT_KNOTS_PLAYGROUND_REPO env → `playground_repo` in settings.yaml
+    → DEFAULT_PLAYGROUND_REPO. The override exists so the flow can be
+    pointed at a fork, or at a local path while developing against a
+    repo that isn't published yet.
+    """
+    if env := os.environ.get("AGENT_KNOTS_PLAYGROUND_REPO"):
+        return env
+
+    # Deferred for the same circular-import reason as workspaces_root().
+    from agent_knots.settings import load as _load_settings
+
+    return _load_settings().playground_repo or DEFAULT_PLAYGROUND_REPO
+
+
 def session_workdir(session_id: str) -> Path:
     """A dedicated, isolated directory for a session that has no explicit
     working_dir and no project attached.

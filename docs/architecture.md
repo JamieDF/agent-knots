@@ -242,6 +242,34 @@ Approving in Review commits inside the workspace, and nothing leaves the
 machine until someone explicitly pushes
 (`POST /api/workspaces/{id}/push`).
 
+### Playground
+
+A new install has nothing to look at: no workspace, no tasks, no way to
+see what the tool does before committing to setting one up. The
+playground (`cockpit/web/routes/playground.py`, `playground.py`) clones
+a real half-built demo project as a managed workspace and seeds the
+tasks that built it.
+
+Those tasks travel inside the repo, as `.agent-knots/playground.yaml`.
+`agent-knots playground export` writes it; workspace creation with
+`seed_tasks=true` reads it back. Both sides go through the task store's
+own `task_to_dict`/`task_from_dict`, so the manifest can't drift into a
+second serialisation of the same model.
+
+Task ids are preserved verbatim on import. That's load-bearing:
+`session_branch_name` hashes the task id, so a demo task only lines up
+with the branch pushed alongside it if id and title survive unchanged.
+`assigned_to` is dropped (it names a session on the machine that built
+the demo); `progress` is kept, because the real agent log is what makes
+the demo read as genuine.
+
+Deliberately demo-only, not a general "task state travels with the
+repo" capability. Tasks are headed for a database, which would rewrite
+this format wholesale, and it has exactly one consumer — so it's built
+to be thrown away rather than migrated. Seeding is opt-in per request
+for a blunter reason: a repo you cloned should not be able to put items
+on your board unasked.
+
 ### Session branches
 
 A task-attached session gets its own git branch (`gitutil.py`), named from

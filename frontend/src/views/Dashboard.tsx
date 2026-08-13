@@ -11,7 +11,7 @@ import { useStages, enabledStages, stageForStatus, type Stage } from '../lib/sta
 import { useWorkspaceScope } from '../lib/workspaceContext'
 import {
   fetchAgents, fetchSettings, fetchTasks, fetchTask, fetchWorkspaces, deleteAgent, sendMessage,
-  updateTask, createSession, updateWorkspace, answerAgent,
+  updateTask, createSession, updateWorkspace, answerAgent, createPlayground,
   type AgentInfo, type TaskSummary, type Workspace,
 } from '../lib/api'
 
@@ -26,6 +26,8 @@ function Dashboard() {
   const [showNewSession, setShowNewSession] = useState(false)
   const [showNewWorkspace, setShowNewWorkspace] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [playgroundBusy, setPlaygroundBusy] = useState(false)
+  const [playgroundError, setPlaygroundError] = useState('')
   const { workspace: scope } = useWorkspaceScope()
   const allStages = useStages()
 
@@ -49,6 +51,21 @@ function Dashboard() {
       setError(err instanceof Error ? err.message : 'Connection failed')
     }
   }, [])
+
+  const handleTryPlayground = useCallback(async () => {
+    setPlaygroundBusy(true)
+    setPlaygroundError('')
+    try {
+      await createPlayground()
+      await load()
+    } catch (e) {
+      // A real network clone, so the honest failures here are no
+      // connectivity or an unreachable repo — show what git said.
+      setPlaygroundError(e instanceof Error ? e.message : 'Could not set up the playground')
+    } finally {
+      setPlaygroundBusy(false)
+    }
+  }, [load])
 
   useEffect(() => {
     load()
@@ -92,6 +109,24 @@ function Dashboard() {
                 <button onClick={() => setShowNewWorkspace(true)} style={{ color: 'var(--acc)', fontWeight: 600 }}>+ Create workspace</button>
                 {' '}to point a session at a real project, or{' '}
                 <button onClick={() => setShowNewSession(true)} style={{ color: 'var(--acc)', fontWeight: 600 }}>+ New session</button> without one.
+                {/* The empty state is the one place a first-time user
+                    reliably lands, so it's where the demo belongs —
+                    Settings has the same action, but nobody opens
+                    Settings before they know what the tool does. */}
+                <div style={{ marginTop: 10, fontSize: 12.5 }}>
+                  Not sure yet?{' '}
+                  <button
+                    onClick={handleTryPlayground}
+                    disabled={playgroundBusy}
+                    style={{ color: 'var(--acc)', fontWeight: 600, opacity: playgroundBusy ? 0.6 : 1 }}
+                  >
+                    {playgroundBusy ? 'Setting up the playground…' : 'Try the playground'}
+                  </button>
+                  {' '}— a real half-built project, with the tasks that built it.
+                </div>
+                {playgroundError && (
+                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--err)' }}>{playgroundError}</div>
+                )}
               </div>
             </Card>
           )}
