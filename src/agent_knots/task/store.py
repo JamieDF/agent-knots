@@ -148,6 +148,10 @@ def task_to_dict(task: Task) -> dict[str, Any]:
         d["required_credentials"] = task.required_credentials
     if task.assigned_to:
         d["assigned_to"] = task.assigned_to
+    if task.merged_into:
+        d["merged_into"] = task.merged_into
+    if task.pull_request_url:
+        d["pull_request_url"] = task.pull_request_url
     if task.progress:
         d["progress"] = [_progress_to_dict(p) for p in task.progress]
     return d
@@ -170,6 +174,8 @@ def task_from_dict(d: dict[str, Any]) -> Task:
         dependencies=d.get("dependencies", []),
         required_credentials=d.get("required_credentials", []),
         assigned_to=d.get("assigned_to", ""),
+        merged_into=d.get("merged_into", ""),
+        pull_request_url=d.get("pull_request_url", ""),
         created_at=d.get("created_at", time.time()),
         created_by=d.get("created_by", "user"),
         updated_at=d.get("updated_at", time.time()),

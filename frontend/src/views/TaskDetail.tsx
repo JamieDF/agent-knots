@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   fetchTask, updateTask, deleteTask, toggleCriterion, createSession, fetchTaskAgents, fetchTaskHistory, answerAgent,
+  mergeTask, openTaskPullRequest, pushWorkspaceBranch,
   type TaskDetail as TDetail, type AgentInfo, type PastSession,
 } from '../lib/api'
 import { useWorkspaceScope } from '../lib/workspaceContext'
@@ -273,6 +274,8 @@ function TaskDetail() {
         </Card>
       )}
 
+      <FinishBanner task={task} onChanged={load} />
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 220px', gap: 20 }}>
         <div>
           {/* Tags — title now lives in the header bar, so this is just the
@@ -518,6 +521,119 @@ function PendingQuestionCard({ agentId, pq, onAnswered }: { agentId: string; pq:
         <button onClick={() => handleAnswer(answer)} disabled={sending || !answer.trim()}
           style={{ padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, background: 'var(--acc)', color: 'var(--acc-ink)', whiteSpace: 'nowrap', opacity: sending || !answer.trim() ? 0.6 : 1 }}
         >Answer</button>
+      </div>
+    </Card>
+  )
+}
+
+/** Landing an approved task's work on the mainline.
+ *
+ * Only ever shown on a *done* task, and that's not cosmetic: reaching
+ * review merely pauses the session, and a paused session still owns the
+ * repo (SessionManager._repo_writers). A merge moves HEAD, so offering
+ * this any earlier would be refused every time.
+ *
+ * Three quiet states before it shows anything — no repo at all, nothing
+ * ahead of the base branch, or already merged. Following how Review
+ * handles `has_repo`: absent, not disabled with an explanation. */
+function FinishBanner({ task, onChanged }: { task: TDetail; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [pushHint, setPushHint] = useState(0)
+
+  const finish = task.finish
+  const isPr = finish?.finish_action === 'pull_request'
+
+  const run = async (fn: () => Promise<unknown>) => {
+    setBusy(true)
+    setError('')
+    try {
+      const res = (await fn()) as { base_ahead_of_remote?: number }
+      // A local merge leaves the base branch ahead only locally. Saying
+      // so is what stops "merged" being read as "in the remote mainline".
+      if (typeof res?.base_ahead_of_remote === 'number') setPushHint(res.base_ahead_of_remote)
+      onChanged()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not finish this task')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (task.pull_request_url) {
+    return (
+      <Card style={{ marginBottom: 20 }}>
+        <span style={{ fontSize: 13, color: 'var(--ink2)' }}>
+          Pull request open —{' '}
+          <a href={task.pull_request_url} target="_blank" rel="noreferrer" style={{ color: 'var(--acc)', fontWeight: 600 }}>
+            {task.pull_request_url.replace('https://', '')}
+          </a>
+        </span>
+      </Card>
+    )
+  }
+
+  if (task.merged_into) {
+    return (
+      <Card style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 13, color: 'var(--ok)' }}>
+            ✓ Merged into <code style={{ fontFamily: 'var(--font-mono)' }}>{task.merged_into}</code>
+          </span>
+          {pushHint > 0 && (
+            <>
+              <span style={{ flex: 1 }} />
+              <span style={{ fontSize: 12, color: 'var(--mut)' }}>
+                {pushHint} commit{pushHint !== 1 ? 's' : ''} not pushed
+              </span>
+              <button
+                onClick={() => run(() => pushWorkspaceBranch(task.project, task.merged_into))}
+                disabled={busy}
+                style={{ fontSize: 12, fontWeight: 600, color: 'var(--acc)' }}
+              >
+                Push {task.merged_into}
+              </button>
+            </>
+          )}
+        </div>
+      </Card>
+    )
+  }
+
+  // Nothing to offer: not done yet, no repo, nothing on the branch, or
+  // the workspace is set up not to finish tasks this way.
+  if (task.status !== 'done') return null
+  if (!finish?.has_repo || finish.commits_ahead === 0) return null
+  if (finish.finish_action === 'none') return null
+
+  return (
+    <Card style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, color: 'var(--ink)' }}>
+            {finish.commits_ahead} commit{finish.commits_ahead !== 1 ? 's' : ''} on{' '}
+            <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{finish.branch}</code>
+            {!isPr && (
+              <>
+                {' '}{finish.commits_ahead === 1 ? "isn't" : "aren't"} in{' '}
+                <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{finish.base}</code> yet
+              </>
+            )}
+          </div>
+          {error && <div style={{ fontSize: 12, color: 'var(--err)', marginTop: 4 }}>{error}</div>}
+        </div>
+        <button
+          onClick={() => run(() => (isPr ? openTaskPullRequest(task.id) : mergeTask(task.id)))}
+          disabled={busy}
+          style={{
+            padding: '6px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600,
+            background: 'var(--acc)', color: 'var(--acc-ink)', opacity: busy ? 0.6 : 1,
+          }}
+        >
+          {busy
+            ? (isPr ? 'Opening…' : 'Merging…')
+            : (isPr ? 'Open pull request' : `Merge into ${finish.base}`)}
+        </button>
       </div>
     </Card>
   )

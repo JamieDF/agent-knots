@@ -24,6 +24,11 @@ class SaveSettingsRequest(BaseModel):
     # None = preserve. "" is meaningful and distinct from None: it
     # clears an override and puts workspaces_root() back on its default.
     workspaces_root: str | None = None
+    # None = preserve. Validated against settings.FINISH_ACTIONS /
+    # FINISH_WHEN in the route rather than typed as an enum here, so a
+    # bad value gets a readable message instead of a 422 schema dump.
+    finish_action: str | None = None
+    finish_when: str | None = None
 
 
 class CreateSessionRequest(BaseModel):
@@ -134,7 +139,6 @@ class AddMcpServerRequest(BaseModel):
 
 
 class SaveIntegrationsRequest(BaseModel):
-    github_pr_on_review: Optional[bool] = None
     phone_push: Optional[bool] = None
 
 
@@ -178,6 +182,9 @@ class CreateWorkspaceRequest(BaseModel):
     seed_tasks: bool = False
     runtime: str = ""
     provider: str = ""
+    # "" = inherit the global default (settings.finish_*).
+    finish_action: str = ""
+    finish_when: str = ""
     tags: list = []
     auto_assign: bool = False
     max_concurrent: int = 2
@@ -198,6 +205,8 @@ class UpdateWorkspaceRequest(BaseModel):
     repository: Optional[str] = None
     runtime: Optional[str] = None
     provider: Optional[str] = None
+    finish_action: Optional[str] = None
+    finish_when: Optional[str] = None
     tags: Optional[list] = None
     auto_assign: Optional[bool] = None
     max_concurrent: Optional[int] = None

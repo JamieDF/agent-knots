@@ -10,7 +10,7 @@ import asyncio
 import hashlib
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # Branch operations (checkout in particular) can take appreciably longer
@@ -291,6 +291,199 @@ def push_branch(repo: Path, name: str, remote: str = "origin") -> PushResult:
 async def push_branch_async(repo: Path, name: str, remote: str = "origin") -> PushResult:
     """push_branch off the event loop."""
     return await asyncio.to_thread(push_branch, repo, name, remote)
+
+
+@dataclass
+class MergeResult:
+    branch: str = ""
+    into: str = ""
+    commits: int = 0
+    conflicts: list[str] = field(default_factory=list)
+    failed_reason: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.failed_reason
+
+
+def _conflicted_files(repo: Path) -> list[str]:
+    result = _run_git(repo, ["diff", "--name-only", "--diff-filter=U"])
+    return [p for p in result.stdout.splitlines() if p.strip()]
+
+
+def merge_branch(repo: Path, branch: str, into: str) -> MergeResult:
+    """Merge `branch` into `into`, leaving HEAD on `into`. Never raises.
+
+    Every refusal happens *before* anything is modified, and the one
+    that can't — a conflict, which git only discovers mid-merge — is
+    unwound with `merge --abort`. A half-merged working tree is far
+    worse than a failed action: it strands the repo in a state the user
+    didn't ask for and has to resolve by hand, possibly while an agent
+    is about to wake up in it.
+
+    Note this moves HEAD, so callers must ensure no live session owns
+    the working directory (SessionManager._repo_writers). That check
+    can't live here — gitutil is deliberately below the session layer.
+    """
+    try:
+        if not is_repo(repo):
+            return MergeResult(failed_reason="not a git repository")
+        if not branch_exists(repo, branch):
+            return MergeResult(failed_reason=f"branch {branch!r} does not exist")
+        if not branch_exists(repo, into):
+            return MergeResult(failed_reason=f"branch {into!r} does not exist")
+        if branch == into:
+            return MergeResult(failed_reason="cannot merge a branch into itself")
+
+        # Uncommitted work would be carried onto `into` by the checkout
+        # below and swept into someone else's history.
+        if is_dirty(repo):
+            return MergeResult(
+                failed_reason="working tree has uncommitted changes — commit or discard them first",
+            )
+
+        ahead = commits_ahead(repo, branch, into)
+        if ahead == 0:
+            return MergeResult(
+                branch=branch, into=into,
+                failed_reason=f"{branch!r} has nothing that {into!r} doesn't already have",
+            )
+        if ahead < 0:
+            return MergeResult(failed_reason="could not compare the branches")
+
+        original = current_branch(repo)
+        if _run_git(repo, ["checkout", into], timeout=_BRANCH_TIMEOUT).returncode != 0:
+            return MergeResult(failed_reason=f"could not check out {into!r}")
+
+        result = _run_git(
+            repo,
+            ["merge", "--no-ff", "-m", f"Merge {branch} into {into}", branch],
+            timeout=_BRANCH_TIMEOUT,
+        )
+        if result.returncode != 0:
+            conflicts = _conflicted_files(repo)
+            _run_git(repo, ["merge", "--abort"], timeout=_BRANCH_TIMEOUT)
+            # Put HEAD back where it was, so a refused merge leaves the
+            # repo exactly as it found it.
+            if original and original != into:
+                _run_git(repo, ["checkout", original], timeout=_BRANCH_TIMEOUT)
+            reason = (
+                f"merge conflicts in: {', '.join(conflicts)}" if conflicts
+                else (result.stderr.strip() or "git merge failed")
+            )
+            return MergeResult(branch=branch, into=into, conflicts=conflicts, failed_reason=reason)
+
+        return MergeResult(branch=branch, into=into, commits=ahead)
+    except subprocess.TimeoutExpired:
+        return MergeResult(failed_reason=f"git merge timed out after {_BRANCH_TIMEOUT}s")
+    except (OSError, subprocess.SubprocessError) as e:
+        return MergeResult(failed_reason=f"git unavailable: {e}")
+
+
+async def merge_branch_async(repo: Path, branch: str, into: str) -> MergeResult:
+    """merge_branch off the event loop."""
+    return await asyncio.to_thread(merge_branch, repo, branch, into)
+
+
+def gh_available() -> bool:
+    """Whether the GitHub CLI is installed and authenticated.
+
+    Surfaced to the UI so the pull-request option can be disabled rather
+    than offered and then failing at the one moment a user expects work
+    to be published. `gh auth status` exits non-zero when unauthenticated,
+    which is the distinction that matters — installed-but-logged-out is
+    just as unusable as absent.
+    """
+    try:
+        return subprocess.run(
+            ["gh", "auth", "status"], capture_output=True, text=True, timeout=10,
+        ).returncode == 0
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return False
+
+
+@dataclass
+class PullRequestResult:
+    url: str = ""
+    failed_reason: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.failed_reason
+
+
+def open_pull_request(
+    repo: Path, branch: str, base: str, title: str, body: str = "",
+) -> PullRequestResult:
+    """Open a PR for `branch` against `base` using the `gh` CLI.
+
+    Shelling out rather than calling the GitHub API keeps agent-knots
+    free of token storage, OAuth and outbound HTTP of its own, and
+    inherits enterprise GitHub, SSO and token refresh from a tool that
+    already solves them. Same call shape as _run_git: list-form args, no
+    shell=True, returncode inspected rather than trusted.
+
+    A missing or unauthenticated `gh` is reported as such — the one
+    failure a user can actually act on, and one that a bare non-zero
+    exit would bury.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gh", "pr", "create",
+                "--head", branch, "--base", base,
+                "--title", title or branch,
+                "--body", body or "",
+            ],
+            cwd=str(repo), capture_output=True, text=True, timeout=_PUSH_TIMEOUT,
+        )
+    except FileNotFoundError:
+        return PullRequestResult(
+            failed_reason="the GitHub CLI (`gh`) isn't installed — install it, or "
+                          "set this workspace to merge locally instead",
+        )
+    except subprocess.TimeoutExpired:
+        return PullRequestResult(failed_reason=f"gh pr create timed out after {_PUSH_TIMEOUT}s")
+    except OSError as e:
+        return PullRequestResult(failed_reason=f"gh unavailable: {e}")
+
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        if "auth login" in stderr or "not logged" in stderr.lower():
+            return PullRequestResult(
+                failed_reason="the GitHub CLI isn't authenticated — run `gh auth login`",
+            )
+        return PullRequestResult(failed_reason=stderr or "gh pr create failed")
+
+    # gh prints the PR URL on stdout; take the last URL-looking line so a
+    # leading notice doesn't get mistaken for it.
+    lines = [ln.strip() for ln in reversed(result.stdout.splitlines())]
+    url = next((ln for ln in lines if ln.startswith("http")), "")
+    return PullRequestResult(url=url)
+
+
+async def open_pull_request_async(
+    repo: Path, branch: str, base: str, title: str, body: str = "",
+) -> PullRequestResult:
+    """open_pull_request off the event loop."""
+    return await asyncio.to_thread(open_pull_request, repo, branch, base, title, body)
+
+
+def ahead_of_remote(repo: Path, branch: str, remote: str = "origin") -> int:
+    """How many commits `branch` has that `remote/branch` doesn't.
+
+    A local merge leaves the base branch ahead only locally — nothing
+    pushes it. Surfacing that is what stops "merged" being mistaken for
+    "in the remote mainline". -1 when there's no remote-tracking ref to
+    compare against, which is the normal case for a repo with no remote
+    and is not an error.
+    """
+    if remote_url(repo, remote) is None:
+        return -1
+    ref = f"{remote}/{branch}"
+    if _run_git(repo, ["rev-parse", "--verify", "--quiet", ref]).returncode != 0:
+        return -1
+    return commits_ahead(repo, branch, ref)
 
 
 # ── per-session branches ─────────────────────────────────────────────────────

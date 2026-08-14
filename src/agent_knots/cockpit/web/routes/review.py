@@ -38,6 +38,7 @@ from fastapi import APIRouter, HTTPException, Query
 from agent_knots.cockpit.web.models import ReviewApproveRequest, ReviewRejectRequest
 from agent_knots.config import projects_dir as _projects_dir, tasks_dir as _tasks_dir
 from agent_knots.gitutil import _git_diff_for_file, _git_diff_stat, _run_git, current_branch, session_branch_name
+from agent_knots.project.models import resolve_finish
 from agent_knots.project.store import ProjectStore
 from agent_knots.task.lifecycle import maybe_fire_role_triggers, maybe_pause_or_stop_finished_sessions
 from agent_knots.task.models import Task, TaskStatus
@@ -94,6 +95,32 @@ def _require_repo(task: Task) -> Path:
     if repo is None:
         raise HTTPException(status_code=400, detail="Task's workspace is not a git repository")
     return repo
+
+
+async def _maybe_finish_on_approve(task: Task, session_manager: Any) -> dict | None:
+    """Merge or open a PR as part of approving, when the workspace is
+    configured that way. None when it isn't, or when there's nothing to
+    finish.
+
+    Reuses the task routes' own handlers rather than reimplementing the
+    preconditions — there is exactly one definition of "can this branch
+    be finished", and two copies would drift.
+    """
+    from agent_knots.cockpit.web.routes.tasks import (
+        finish_task_branch,
+        task_finish_state,
+    )
+
+    proj = ProjectStore(_projects_dir()).get(task.project) if task.project else None
+    action, when = resolve_finish(proj)
+    if when != "on_approve" or action == "none":
+        return None
+
+    state = task_finish_state(task, session_manager)
+    if not state["has_repo"] or state["commits_ahead"] == 0:
+        return None
+
+    return await finish_task_branch(task.id, action, session_manager)
 
 
 def _feedback_message(approved_files: list[str], rejected_files: list[str], reason: str) -> str:
@@ -244,6 +271,18 @@ def create_router(session_manager: Any) -> APIRouter:
                 await maybe_pause_or_stop_finished_sessions(session_manager, task.status.value, task)
                 maybe_fire_role_triggers(session_manager, old_status, task.status.value, task)
                 result["task_status"] = task.status.value
+
+                # Only now, after the stop above. Reaching review merely
+                # *pauses* a session, and a paused session still holds
+                # the repo (SessionManager._repo_writers) — so attempting
+                # this any earlier would be refused every single time.
+                # A failure here is reported but never un-does the
+                # approval: the task is legitimately done either way,
+                # and leaving it stuck in review because a merge
+                # conflicted would be the worse outcome.
+                finish = await _maybe_finish_on_approve(task, session_manager)
+                if finish:
+                    result["finish"] = finish
         return result
 
     @router.post("/api/review/reject")

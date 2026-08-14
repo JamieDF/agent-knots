@@ -35,6 +35,11 @@
   folded into Settings; previously 100% CLI-only
 - [x] Settings — Sticky section nav across usage, providers, tools,
   policies, MCP servers, integrations, vault, workspaces, and playground
+- [x] Finishing a task — approved work reaches the mainline instead of
+  stopping on its branch. "Merge into main" or "Open pull request" (via
+  the `gh` CLI) on a done task, chosen per workspace, optionally
+  automatic on approve. Merging refuses rather than half-finishes: dirty
+  tree, nothing to merge, or a conflict each leave the repo untouched
 - [x] Playground — One click stands up a real half-built project (a colour
   palette generator, itself built with agent-knots) carrying the genuine
   tasks that built it: 7 done, 1 in review, 3 draft, with real progress
@@ -46,7 +51,7 @@
   of agent responses, replay scrubber over the session's event history
 - [x] Install script — `./install.sh`: installs uv, syncs deps, builds frontend, installs the `agent-knots` command globally
 - [x] Playwright e2e tests — 76 browser tests covering full UI flows (74 passing, 2 skipped; needs a provider configured for the live-agent ones)
-- [x] Python unit tests — 643 tests across vault, session, task, web, sandbox, auth, git
+- [x] Python unit tests — 660 tests across vault, session, task, web, sandbox, auth, git
 - [x] Task dependencies — Tasks can depend on other tasks; blocked from
   starting (in the UI and via a `POST /api/sessions` pre-flight check)
   until every dependency is done
@@ -142,13 +147,6 @@
   and under worktrees that becomes a derived per-session path rather than
   `Project.repository` itself — keep new readers of `repository` out of the
   codebase or that refactor gets much harder
-- [ ] Approved work never reaches the base branch — Review's approve commits
-  onto the task's own branch and stops; nothing merges it, so a task can be
-  `done` with its work reachable from nowhere. Surfaced by building the
-  playground: each new task branched from a mainline containing none of the
-  previous work, and the build only produced a coherent history because
-  branches were merged by hand in between. Needs its own design — what to
-  merge into, what to do on conflict, whether it's opt-in
 - [ ] Structured state storage — Replace the pile of per-object YAML with
   SQLite (local-first, no server dependency). The store classes are already
   the seam: `TaskStore`, `ProjectStore`, `VaultStore` and `WastebinStore`

@@ -9,6 +9,7 @@ import pytest
 from agent_knots.gitutil import (
     _git_diff_for_file,
     _git_diff_stat,
+    ahead_of_remote,
     branch_exists,
     clone_into,
     commits_ahead,
@@ -19,6 +20,7 @@ from agent_knots.gitutil import (
     is_dirty,
     is_remote_url,
     is_repo,
+    merge_branch,
     push_branch,
     remote_url,
     repo_name_from_source,
@@ -28,6 +30,14 @@ from agent_knots.gitutil import (
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, check=True)
+
+
+def _git_out(repo: Path, *args: str) -> str:
+    """Same, but hands back stdout — for assertions that need to compare
+    a ref before and after an operation."""
+    return subprocess.run(
+        ["git", *args], cwd=str(repo), capture_output=True, text=True, check=True,
+    ).stdout.strip()
 
 
 @pytest.fixture
@@ -223,6 +233,106 @@ class TestPushBranch:
 
     def test_non_repo_is_a_reason_not_an_exception(self, not_repo):
         assert push_branch(not_repo, "main").failed_reason == "not a git repository"
+
+
+class TestMergeBranch:
+    """Every refusal must leave the repo exactly as it found it. A
+    half-merged working tree is worse than a failed action — the user
+    didn't ask for it, has to resolve it by hand, and an agent may be
+    about to wake up in it."""
+
+    def _feature(self, repo, name="feature", filename="feature.txt", body="work\n"):
+        _git(repo, "checkout", "-q", "-b", name)
+        (repo / filename).write_text(body)
+        _git(repo, "add", filename)
+        _git(repo, "commit", "-qm", f"add {filename}")
+        _git(repo, "checkout", "-q", "main")
+        return name
+
+    def test_merges_and_leaves_head_on_the_target(self, repo):
+        branch = self._feature(repo)
+        result = merge_branch(repo, branch, "main")
+
+        assert result.ok, result.failed_reason
+        assert result.commits == 1
+        assert current_branch(repo) == "main"
+        assert (repo / "feature.txt").exists()
+        assert commits_ahead(repo, branch, "main") == 0
+
+    def test_refuses_a_dirty_tree_without_touching_anything(self, repo):
+        branch = self._feature(repo)
+        (repo / "README.md").write_text("uncommitted edit\n")
+
+        result = merge_branch(repo, branch, "main")
+        assert not result.ok
+        assert "uncommitted changes" in result.failed_reason
+        # The merge didn't happen and the edit is still there, unstaged.
+        assert not (repo / "feature.txt").exists()
+        assert is_dirty(repo)
+
+    def test_nothing_to_merge_is_a_refusal_not_an_empty_commit(self, repo):
+        _git(repo, "checkout", "-q", "-b", "empty-branch")
+        _git(repo, "checkout", "-q", "main")
+        before = _git_out(repo, "rev-parse", "main")
+
+        result = merge_branch(repo, "empty-branch", "main")
+        assert not result.ok
+        assert "doesn't already have" in result.failed_reason
+        assert _git_out(repo, "rev-parse", "main") == before
+
+    def test_a_conflict_is_unwound_completely(self, repo):
+        """The important one. git only discovers a conflict mid-merge,
+        so this is the single refusal that can't happen up front."""
+        _git(repo, "checkout", "-q", "-b", "theirs")
+        (repo / "README.md").write_text("their version\n")
+        _git(repo, "add", "README.md")
+        _git(repo, "commit", "-qm", "theirs")
+        _git(repo, "checkout", "-q", "main")
+        (repo / "README.md").write_text("our version\n")
+        _git(repo, "add", "README.md")
+        _git(repo, "commit", "-qm", "ours")
+        before = _git_out(repo, "rev-parse", "main")
+
+        result = merge_branch(repo, "theirs", "main")
+
+        assert not result.ok
+        assert "README.md" in result.conflicts
+        assert "README.md" in result.failed_reason
+        # No merge left in progress, no conflict markers, main untouched.
+        assert not (repo / ".git" / "MERGE_HEAD").exists()
+        assert not is_dirty(repo)
+        assert _git_out(repo, "rev-parse", "main") == before
+        assert (repo / "README.md").read_text() == "our version\n"
+
+    def test_missing_branches_are_reasons_not_exceptions(self, repo):
+        assert "does not exist" in merge_branch(repo, "nope", "main").failed_reason
+        branch = self._feature(repo)
+        assert "does not exist" in merge_branch(repo, branch, "nope").failed_reason
+
+    def test_refuses_to_merge_a_branch_into_itself(self, repo):
+        assert "into itself" in merge_branch(repo, "main", "main").failed_reason
+
+    def test_non_repo_is_a_reason_not_an_exception(self, not_repo):
+        assert merge_branch(not_repo, "a", "b").failed_reason == "not a git repository"
+
+
+class TestAheadOfRemote:
+    def test_minus_one_when_there_is_no_remote(self, repo):
+        """A repo with no remote isn't an error state — it's the normal
+        local-first case, and must not read as "0, all pushed"."""
+        assert ahead_of_remote(repo, "main") == -1
+
+    def test_counts_unpushed_commits(self, repo, tmp_path):
+        bare = tmp_path / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+        _git(repo, "remote", "add", "origin", str(bare))
+        _git(repo, "push", "-q", "-u", "origin", "main")
+        assert ahead_of_remote(repo, "main") == 0
+
+        (repo / "new.txt").write_text("local only\n")
+        _git(repo, "add", "new.txt")
+        _git(repo, "commit", "-qm", "local only")
+        assert ahead_of_remote(repo, "main") == 1
 
 
 class TestQueries:

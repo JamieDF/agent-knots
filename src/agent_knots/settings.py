@@ -38,9 +38,21 @@ class ProviderProfile:
 @dataclass
 class IntegrationsSettings:
     """Config-only — no OAuth flow or push infra exists yet. Persisted
-    so the Settings screen has something real to toggle and read back."""
-    github_pr_on_review: bool = False
+    so the Settings screen has something real to toggle and read back.
+
+    `github_pr_on_review` used to live here as a stub with nothing
+    behind it. It's gone: its name baked in a timing (fire on entering
+    review) that publishes unapproved work, and the behaviour it hinted
+    at is now `finish_action` / `finish_when` below.
+    """
     phone_push: bool = False
+
+
+# How a task's branch gets finished once its work is approved, and when.
+# Two axes rather than one setting, because they're genuinely
+# independent: *what* lands the work, and *whether* you press a button.
+FINISH_ACTIONS = ("merge", "pull_request", "none")
+FINISH_WHEN = ("manual", "on_approve")
 
 
 @dataclass
@@ -65,6 +77,12 @@ class Settings:
     # "" = config.DEFAULT_PLAYGROUND_REPO. Override to point the
     # playground at a fork, or at a local path while developing.
     playground_repo: str = ""
+    # Global default for how tasks get finished; a workspace can
+    # override either. "merge" suits a solo local repo, "pull_request" a
+    # team repo with a protected mainline — merging locally into a
+    # protected branch just fails on push.
+    finish_action: str = "merge"
+    finish_when: str = "manual"
 
 
 def load() -> Settings:
@@ -97,7 +115,6 @@ def load() -> Settings:
 
     integrations_data = data.get("integrations", {})
     integrations = IntegrationsSettings(
-        github_pr_on_review=integrations_data.get("github_pr_on_review", False),
         phone_push=integrations_data.get("phone_push", False),
     )
 
@@ -114,6 +131,8 @@ def load() -> Settings:
         wastebin=wastebin,
         workspaces_root=data.get("workspaces_root", ""),
         playground_repo=data.get("playground_repo", ""),
+        finish_action=data.get("finish_action", "merge"),
+        finish_when=data.get("finish_when", "manual"),
     )
 
 
@@ -130,6 +149,8 @@ def save(settings: Settings) -> None:
         "wastebin": asdict(settings.wastebin),
         "workspaces_root": settings.workspaces_root,
         "playground_repo": settings.playground_repo,
+        "finish_action": settings.finish_action,
+        "finish_when": settings.finish_when,
     }
     # sort_keys=True (not the atomic_write_yaml default) to preserve this
     # file's pre-existing on-disk key order.

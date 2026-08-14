@@ -124,6 +124,14 @@ class Task:
     # Assignment.
     assigned_to: str = ""
 
+    # Where this task's branch was merged, "" meaning not merged. Without
+    # it, "done but its work is still only on a branch" is invisible —
+    # which was the whole problem: a task could read done while its
+    # commits sat somewhere nothing pointed at. Also carries the PR URL
+    # when the workspace finishes tasks that way instead.
+    merged_into: str = ""
+    pull_request_url: str = ""
+
     # Timestamps.
     created_at: float = field(default_factory=time.time)
     created_by: str = "user"

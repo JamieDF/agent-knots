@@ -887,6 +887,8 @@ class TestWorkspaceAPI:
             # No managed=true in the POST, so the path is used verbatim
             # and nothing is cloned — the pre-managed-workspaces path.
             "source": "", "managed": False,
+            # "" on both = inherit the global finish defaults.
+            "finish_action": "", "finish_when": "",
             "runtime": "", "provider": "", "tags": [], "auto_assign": False, "max_concurrent": 2, "archived": False,
             "created_at": resp.json()["created_at"],
         }
@@ -1792,6 +1794,240 @@ class TestReviewAPI:
         assert resp.status_code == 404
 
 
+class TestFinishTask:
+    """Landing an approved task's work on the base branch.
+
+    Before this, approve committed onto the task's branch and stopped —
+    nothing ever merged, so `done` didn't mean the work was anywhere
+    findable, and the next task branched off a mainline missing it.
+    """
+
+    async def _done_task_with_work(self, authed_client, tmp_path, ws_id, title="Land me"):
+        """A workspace whose task is done, with committed work sitting on
+        its branch — the exact state the merge acts on."""
+        from agent_knots.gitutil import session_branch_name
+
+        repo = tmp_path / ws_id
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        (repo / "base.txt").write_text("base\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+        await authed_client.post("/api/workspaces", json={
+            "id": ws_id, "name": ws_id, "repository": str(repo),
+        })
+        task = (await authed_client.post(
+            "/api/tasks", json={"title": title, "project": ws_id},
+        )).json()
+
+        branch = session_branch_name(task["id"], title, "")
+        subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=repo, check=True)
+        (repo / "work.txt").write_text("the agent's work\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "work"], cwd=repo, check=True)
+        subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
+
+        await authed_client.patch(f"/api/tasks/{task['id']}", json={"status": "review"})
+        await authed_client.post("/api/review/approve", json={"task_id": task["id"]})
+        return task, repo, branch
+
+    @pytest.mark.asyncio
+    async def test_merge_lands_the_work_and_records_it(self, authed_client, tmp_path):
+        task, repo, branch = await self._done_task_with_work(authed_client, tmp_path, "land1")
+
+        resp = await authed_client.post(f"/api/tasks/{task['id']}/merge")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["into"] == "main"
+
+        # The work is genuinely on main now — the whole point.
+        on_main = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", "main"], cwd=repo,
+            capture_output=True, text=True,
+        ).stdout
+        assert "work.txt" in on_main
+
+        detail = (await authed_client.get(f"/api/tasks/{task['id']}")).json()
+        assert detail["merged_into"] == "main"
+        assert any("Merged" in p["entry"] for p in detail["progress"])
+
+    @pytest.mark.asyncio
+    async def test_the_next_task_branches_off_the_merged_mainline(
+        self, authed_client, tmp_path,
+    ):
+        """The compounding half of the bug. Without a merge, every task
+        starts from a mainline missing all the previous ones' work."""
+        task, repo, branch = await self._done_task_with_work(authed_client, tmp_path, "land2")
+        await authed_client.post(f"/api/tasks/{task['id']}/merge")
+
+        from agent_knots.gitutil import ensure_session_branch
+        result = ensure_session_branch(repo, "knots/second-task", "main")
+        assert result.name == "knots/second-task"
+        assert (repo / "work.txt").exists(), "second task started without the first's work"
+
+    @pytest.mark.asyncio
+    async def test_merge_is_refused_while_a_session_owns_the_repo(
+        self, authed_client, session_manager, tmp_path,
+    ):
+        """A merge moves HEAD. Doing that under a live session is exactly
+        what _repo_writers exists to prevent."""
+        task, repo, branch = await self._done_task_with_work(authed_client, tmp_path, "land3")
+        session_manager._repo_writers[str(repo)] = "someone-else"
+        session_manager._sessions["someone-else"] = object()
+        try:
+            resp = await authed_client.post(f"/api/tasks/{task['id']}/merge")
+            assert resp.status_code == 409
+            assert "still working" in resp.json()["detail"]
+        finally:
+            session_manager._repo_writers.pop(str(repo), None)
+            session_manager._sessions.pop("someone-else", None)
+
+    @pytest.mark.asyncio
+    async def test_merging_twice_is_refused_rather_than_making_an_empty_commit(
+        self, authed_client, tmp_path,
+    ):
+        task, repo, _branch = await self._done_task_with_work(authed_client, tmp_path, "land4")
+        assert (await authed_client.post(f"/api/tasks/{task['id']}/merge")).status_code == 200
+
+        second = await authed_client.post(f"/api/tasks/{task['id']}/merge")
+        assert second.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_a_non_git_workspace_offers_nothing_to_finish(
+        self, authed_client, tmp_path,
+    ):
+        """Absent, not disabled-with-an-explanation — the same treatment
+        review already gives a workspace that isn't a repo."""
+        folder = tmp_path / "plain"
+        folder.mkdir()
+        await authed_client.post("/api/workspaces", json={
+            "id": "plainws", "name": "plainws", "repository": str(folder),
+        })
+        task = (await authed_client.post(
+            "/api/tasks", json={"title": "No git here", "project": "plainws"},
+        )).json()
+
+        detail = (await authed_client.get(f"/api/tasks/{task['id']}")).json()
+        assert detail["finish"]["has_repo"] is False
+        assert detail["finish"]["commits_ahead"] == 0
+
+        resp = await authed_client.post(f"/api/tasks/{task['id']}/merge")
+        assert resp.status_code == 400
+        assert "not a git repository" in resp.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_finish_state_reports_what_is_left_to_do(self, authed_client, tmp_path):
+        task, repo, branch = await self._done_task_with_work(authed_client, tmp_path, "land5")
+
+        before = (await authed_client.get(f"/api/tasks/{task['id']}")).json()["finish"]
+        assert before["has_repo"] is True
+        assert before["commits_ahead"] == 1
+        assert before["branch"] == branch
+        assert before["finish_action"] == "merge"
+
+        await authed_client.post(f"/api/tasks/{task['id']}/merge")
+        after = (await authed_client.get(f"/api/tasks/{task['id']}")).json()["finish"]
+        assert after["commits_ahead"] == 0
+
+
+class TestFinishOnApprove:
+    @pytest.mark.asyncio
+    async def test_on_approve_merges_after_the_session_stop(
+        self, authed_client, tmp_path, monkeypatch,
+    ):
+        """The ordering that broke the first draft of this: reaching
+        review only *pauses* a session, and a paused session still holds
+        the repo lock — so a merge attempted before the task closes out
+        would be refused every time."""
+        from agent_knots import settings as settings_mod
+
+        s = settings_mod.load()
+        s.finish_when = "on_approve"
+        settings_mod.save(s)
+
+        from agent_knots.gitutil import session_branch_name
+
+        repo = tmp_path / "auto"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        (repo / "base.txt").write_text("base\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+        await authed_client.post("/api/workspaces", json={
+            "id": "autows", "name": "autows", "repository": str(repo),
+        })
+        task = (await authed_client.post(
+            "/api/tasks", json={"title": "Auto land", "project": "autows"},
+        )).json()
+        branch = session_branch_name(task["id"], "Auto land", "")
+        subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=repo, check=True)
+        (repo / "auto.txt").write_text("auto\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "auto work"], cwd=repo, check=True)
+        subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
+        await authed_client.patch(f"/api/tasks/{task['id']}", json={"status": "review"})
+
+        resp = await authed_client.post("/api/review/approve", json={"task_id": task["id"]})
+        assert resp.status_code == 200
+        assert resp.json()["finish"]["status"] == "merged"
+
+        on_main = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", "main"], cwd=repo,
+            capture_output=True, text=True,
+        ).stdout
+        assert "auto.txt" in on_main
+
+    @pytest.mark.asyncio
+    async def test_a_failed_finish_still_leaves_the_task_done(
+        self, authed_client, tmp_path,
+    ):
+        """A conflict must not strand the task in review. The work was
+        approved; whether its branch could be merged is a separate
+        question and the worse outcome is a task nobody can close."""
+        from agent_knots import settings as settings_mod
+
+        s = settings_mod.load()
+        s.finish_when = "on_approve"
+        s.finish_action = "pull_request"  # no `gh` remote configured → fails
+        settings_mod.save(s)
+
+        from agent_knots.gitutil import session_branch_name
+
+        repo = tmp_path / "fail"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+        (repo / "base.txt").write_text("base\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+
+        await authed_client.post("/api/workspaces", json={
+            "id": "failws", "name": "failws", "repository": str(repo),
+        })
+        task = (await authed_client.post(
+            "/api/tasks", json={"title": "Will not land", "project": "failws"},
+        )).json()
+        branch = session_branch_name(task["id"], "Will not land", "")
+        subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=repo, check=True)
+        (repo / "x.txt").write_text("x\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "work"], cwd=repo, check=True)
+        subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
+        await authed_client.patch(f"/api/tasks/{task['id']}", json={"status": "review"})
+
+        resp = await authed_client.post("/api/review/approve", json={"task_id": task["id"]})
+        assert resp.status_code == 200
+        assert resp.json()["task_status"] == "done"
+        assert resp.json()["finish"]["status"] == "failed"
+        assert (await authed_client.get(f"/api/tasks/{task['id']}")).json()["status"] == "done"
+
+
 class TestReviewWithoutGit:
     """A workspace doesn't have to be a git repo — it can be a plain
     folder for writing, research or planning — and its tasks still need
@@ -2295,11 +2531,10 @@ class TestProvidersAndIntegrationsAPI:
 
     @pytest.mark.asyncio
     async def test_save_integrations_persists(self, authed_client):
-        resp = await authed_client.put("/api/integrations", json={"github_pr_on_review": True, "phone_push": True})
+        resp = await authed_client.put("/api/integrations", json={"phone_push": True})
         assert resp.status_code == 200
         settings_resp = await authed_client.get("/api/settings")
         integrations = settings_resp.json()["integrations"]
-        assert integrations["github_pr_on_review"] is True
         assert integrations["phone_push"] is True
 
 

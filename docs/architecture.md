@@ -270,6 +270,41 @@ to be thrown away rather than migrated. Seeding is opt-in per request
 for a blunter reason: a repo you cloned should not be able to put items
 on your board unasked.
 
+### Where the git boundary sits
+
+Goal 3 — local-first, no required cloud sync — decides how much git
+workflow belongs here. A workspace with a plain `git init` folder, or no
+remote at all, has to be able to finish a task with the work genuinely
+in the mainline. So the **complete local loop** is agent-knots': clone →
+branch → commit → merge → cleanup.
+
+The ceiling is just as deliberate. Pull requests, review threads,
+required approvals, merge queues and protected branches are GitHub's;
+there are many forges and agent-knots would rebuild them badly. The one
+concession is opening a PR, and that shells out to `gh` rather than
+calling an API — no token storage, no OAuth, and no outbound HTTP of
+agent-knots' own.
+
+Note the two "reviews" are different moments, not duplication.
+agent-knots' Review is **pre-commit and in-flight**, the agent still
+alive, rejection resuming the same conversation with feedback. A PR
+review is post-push, asynchronous, between people.
+
+`finish_action` (`merge` | `pull_request` | `none`) and `finish_when`
+(`manual` | `on_approve`) are per-workspace with a global fallback,
+following the `Project.runtime` / `Project.provider` pattern.
+`resolve_finish` holds that precedence in one place so the route and the
+approve path can't disagree.
+
+The merge deliberately hangs off a **done** task rather than off Review.
+Reaching review only pauses the session (see *Pausing vs. stopping*),
+and a paused session still holds `_repo_writers` — so since a merge
+moves HEAD, offering it beside Approve would be refused every time. The
+automatic path hooks `approve_review` *after*
+`maybe_pause_or_stop_finished_sessions`, for exactly that reason, and a
+failure there is reported without un-doing the approval: the task is
+legitimately done whether or not its branch could be merged.
+
 ### Session branches
 
 A task-attached session gets its own git branch (`gitutil.py`), named from

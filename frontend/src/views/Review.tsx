@@ -4,7 +4,8 @@ import DeskLayout from '../components/DeskLayout'
 import { Card, Chip, SectionLabel, Dialog, Field, inputStyle } from '../components/primitives'
 import {
   fetchReviewTasks, fetchReviewDiffs, fetchReviewDiffText, approveReview, rejectReview, fetchTask,
-  type ReviewTask, type ReviewDiff, type TaskDetail as TDetail,
+  mergeTask, openTaskPullRequest,
+  type ReviewTask, type ReviewDiff, type TaskDetail as TDetail, type TaskFinishState,
 } from '../lib/api'
 import { priorityColor } from '../lib/priorityColors'
 import { computeAgentState, AGENT_STATE_TOKENS } from '../lib/agentState'
@@ -167,6 +168,12 @@ function ReviewTaskDetail({ taskId }: { taskId: string }) {
   // Defaults to true so the file-based controls don't flicker into a
   // task-level review while the first fetch is still in flight.
   const [hasRepo, setHasRepo] = useState(true)
+  // Populated after a successful approve, so the work can be landed
+  // without navigating away. Comes from the task itself rather than the
+  // review list — the state only becomes actionable once the task is
+  // done and its session has released the repo.
+  const [finishState, setFinishState] = useState<TaskFinishState | null>(null)
+  const [finishing, setFinishing] = useState(false)
 
   const load = useCallback(() => {
     fetchTask(taskId).then(setTask).catch(() => {})
@@ -208,6 +215,7 @@ function ReviewTaskDetail({ taskId }: { taskId: string }) {
         return next
       })
       if (res.task_status === 'done') {
+        fetchTask(taskId).then(t => setFinishState(t.finish)).catch(() => {})
         setDoneMessage(hasRepo
           ? 'Approved — every file committed, and the task moved to done.'
           : 'Approved — the task moved to done.')
@@ -217,6 +225,25 @@ function ReviewTaskDetail({ taskId }: { taskId: string }) {
       load()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Approve failed — the workspace may have changed branch. Refresh and retry.')
+    }
+  }
+
+  const handleFinish = async () => {
+    if (!finishState) return
+    setFinishing(true)
+    setError('')
+    try {
+      if (finishState.finish_action === 'pull_request') await openTaskPullRequest(taskId)
+      else await mergeTask(taskId)
+      const t = await fetchTask(taskId)
+      setFinishState(t.finish)
+      setDoneMessage(
+        t.merged_into ? `Merged into ${t.merged_into}.` : 'Pull request opened.',
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not finish this task')
+    } finally {
+      setFinishing(false)
     }
   }
 
@@ -242,7 +269,30 @@ function ReviewTaskDetail({ taskId }: { taskId: string }) {
 
       {doneMessage && (
         <Card style={{ marginBottom: 16, border: '1px solid var(--ok)', background: 'var(--ok-soft)' }}>
-          <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600 }}>✓ {doneMessage}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ color: 'var(--ok)', fontSize: 13, fontWeight: 600, flex: 1 }}>✓ {doneMessage}</span>
+            {/* Offered here as well as on Task Detail: you've just
+                approved, you're already looking at this screen, and
+                making you navigate elsewhere to land the work would be
+                a silly extra step. Only appears once the task is done —
+                until then the paused session still owns the repo. */}
+            {finishState?.has_repo && finishState.commits_ahead > 0 && finishState.finish_action !== 'none' && (
+              <button
+                onClick={handleFinish}
+                disabled={finishing}
+                style={{
+                  padding: '5px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600,
+                  background: 'var(--acc)', color: 'var(--acc-ink)', opacity: finishing ? 0.6 : 1,
+                }}
+              >
+                {finishing
+                  ? '…'
+                  : finishState.finish_action === 'pull_request'
+                    ? 'Open pull request'
+                    : `Merge into ${finishState.base}`}
+              </button>
+            )}
+          </div>
         </Card>
       )}
       {error && (
