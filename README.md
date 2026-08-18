@@ -11,7 +11,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-643%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-660%20passing-brightgreen.svg)](tests/)
 
 agent-knots is a self-hosted, task-based orchestrator for AI agents.
 Create a task, assign it to an agent, and watch it work in real time
@@ -105,7 +105,14 @@ way, `configured` is true before the wizard would even ask. See
   all at once) to commit and move it to done, or reject with a reason
   that goes straight back to the agent, same conversation. Works on
   non-git workspaces too, where you review the task itself. Approving
-  commits; pushing is always a separate, explicit action.
+  commits; pushing is a separate, explicit action by default.
+- **Finishing a task**: approved work doesn't stop on its branch. Once a
+  task is done, **Merge into main** lands it on the workspace's base
+  branch — or **Open pull request** does it through GitHub instead, via
+  the `gh` CLI. Chosen per workspace, because it isn't a preference:
+  merging locally suits a solo or local repo, a PR suits a team repo
+  with a protected mainline. Either can be set to happen automatically
+  as part of approving.
 - **Vault**: AES-256-GCM encrypted credential store. Agents can use a
   credential in a tool call without the raw value ever appearing in their
   context.
@@ -216,7 +223,7 @@ agent-knots/
 ## Testing
 
 ```bash
-# Python unit tests (643)
+# Python unit tests (660)
 uv run --with pytest pytest tests/ -q
 
 # Playwright e2e tests (76: 74 passing, 2 skipped)

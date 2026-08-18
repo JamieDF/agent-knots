@@ -5,6 +5,43 @@ All notable changes to agent-knots are documented here.
 ## [Unreleased]
 
 ### Added
+- **Approved work can now reach the mainline.** Approve committed onto
+  the task's branch and stopped there — `git merge` was never invoked
+  anywhere in the codebase — so a task could read `done` while its
+  commits sat on a branch nothing pointed at, and the next task branched
+  off a mainline missing all of it. Building the demo repo only produced
+  a coherent history because branches were merged by hand between every
+  task.
+
+  A finished task now offers **Merge into main** (the real base branch
+  name) or **Open pull request**, chosen per workspace with a global
+  default. Not a preference: merging locally suits a solo or local repo,
+  a PR suits a team repo with a protected mainline, where a local merge
+  just fails on push. Either can fire automatically as part of approving
+  (`finish_when: on_approve`), which is off by default — so "pushing is
+  explicit" holds unless you deliberately change it.
+
+  Deliberately offered on a *done* task rather than beside Approve.
+  Reaching review only pauses the session, and a paused session still
+  owns the repo (`SessionManager._repo_writers`); since a merge moves
+  HEAD, a button next to Approve would have been refused every single
+  time. `Task.merged_into` records where the work went, which is what
+  makes "done but not merged" visible at all.
+
+  Merging refuses rather than half-finishes: a dirty tree, nothing to
+  merge, or a conflict each leave the repo exactly as they found it —
+  conflicts are `git merge --abort`ed and the files named. A local merge
+  also reports whether the base branch is now ahead of its remote, so
+  "merged" isn't mistaken for "in the remote mainline".
+
+  Pull requests shell out to the `gh` CLI rather than calling the GitHub
+  API, so there's no token storage, no OAuth, and still no outbound HTTP
+  of agent-knots' own. Without `gh` installed and authenticated the
+  option is disabled rather than offered and failing at the point of use.
+
+  The `github_pr_on_review` integrations toggle is gone. It was a stub
+  wired to nothing, and its name baked in a timing — fire on entering
+  review — that would publish work nobody had approved.
 - **Playground.** A fresh install is an empty board, with no way to see
   what agent-knots does before committing to setting a workspace up.
   One click now stands up a real half-built project — a colour palette

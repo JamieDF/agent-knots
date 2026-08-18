@@ -4,6 +4,7 @@ that fires when a task's status transition crosses a workflow stage
 boundary (Workflows screen)."""
 
 import secrets
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -12,11 +13,25 @@ from agent_knots.cockpit.web.jsonutil import _extract_json_object
 from agent_knots.cockpit.web.models import (
     CreateTaskRequest, DraftTaskRequest, ToggleCriterionRequest, UpdateTaskRequest,
 )
-from agent_knots.config import tasks_dir
+from agent_knots.config import projects_dir, tasks_dir
 from agent_knots import provider as provider_module
+from agent_knots.gitutil import (
+    ahead_of_remote,
+    branch_exists,
+    commits_ahead,
+    delete_branch_force,
+    merge_branch_async,
+    open_pull_request_async as open_pr_async,
+    push_branch_async,
+    session_branch_name,
+)
+from agent_knots.project.models import resolve_finish
+from agent_knots.project.store import ProjectStore
 from agent_knots.session.manager import SessionManager
 from agent_knots.task.lifecycle import maybe_pause_or_stop_finished_sessions, maybe_fire_role_triggers
-from agent_knots.task.models import Priority, ReviewGate, Step, Task, TaskStatus, new_task_id
+from agent_knots.task.models import (
+    Priority, ProgressEntry, ReviewGate, Step, Task, TaskStatus, new_task_id,
+)
 from agent_knots.task.store import TaskStore
 
 
@@ -49,6 +64,8 @@ def _task_to_response(task: Task, store: TaskStore | None = None) -> dict:
         "dependencies": task.dependencies,
         "unmet_dependencies": [{"id": t.id, "title": t.title} for t in unmet],
         "required_credentials": task.required_credentials,
+        "merged_into": task.merged_into,
+        "pull_request_url": task.pull_request_url,
         "steps": [
             {
                 "id": s.id,
@@ -81,6 +98,170 @@ def _task_to_response(task: Task, store: TaskStore | None = None) -> dict:
             for p in task.progress
         ],
     }
+
+
+def task_finish_state(task: Task, session_manager: SessionManager) -> dict:
+    """What, if anything, is left to do with this task's branch.
+
+    `finish_action` is resolved here rather than in the UI so the button
+    and the route can't disagree about what a workspace is set up to do.
+    `commits_ahead` is what tells the difference between "nothing to
+    merge" and "merged already" — both of which mean no button, for
+    different reasons.
+    """
+    state = {"has_repo": False, "commits_ahead": 0, "finish_action": "none", "branch": ""}
+    if not task.project:
+        return state
+
+    proj = ProjectStore(projects_dir()).get(task.project)
+    if proj is None or not proj.repository:
+        return state
+    repo = Path(proj.repository)
+    if not (repo / ".git").is_dir():
+        return state
+
+    action, _when = resolve_finish(proj)
+    session = next(
+        (s for s in session_manager.active if s.task_id == task.id and not s.advisory), None,
+    )
+    branch = (session.branch if session and session.branch else None) or session_branch_name(
+        task.id, task.title, "",
+    )
+    base = proj.default_branch or "main"
+    ahead = commits_ahead(repo, branch, base) if branch_exists(repo, branch) else 0
+
+    state.update({
+        "has_repo": True,
+        "branch": branch,
+        "base": base,
+        "finish_action": action,
+        "commits_ahead": max(ahead, 0),
+    })
+    return state
+
+
+def _finishable(task_id: str, store: TaskStore, session_manager: SessionManager):
+    """Shared preconditions for merge and pull-request.
+
+    Returns (task, project, repo, branch) or raises. The writer-lock
+    check is the important one: both operations move or publish the
+    branch, and doing that under a live session would fight the very
+    invariant _repo_writers exists to protect.
+    """
+    task = store.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if not task.project:
+        raise HTTPException(status_code=400, detail="Task has no workspace")
+
+    proj = ProjectStore(projects_dir()).get(task.project)
+    if proj is None or not proj.repository:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    repo = Path(proj.repository)
+    if not (repo / ".git").is_dir():
+        raise HTTPException(status_code=400, detail="Workspace is not a git repository")
+
+    owner = session_manager._repo_writers.get(str(repo))
+    if owner is not None and owner in session_manager._sessions:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A session is still working in this workspace. Let it finish, or stop "
+                "it, before moving its branch."
+            ),
+        )
+
+    state = task_finish_state(task, session_manager)
+    branch = state["branch"]
+    if not branch_exists(repo, branch):
+        raise HTTPException(status_code=400, detail=f"No branch {branch!r} to finish")
+    return task, proj, repo, branch
+
+
+async def _merge_task_branch(task_id: str, session_manager: SessionManager) -> dict:
+    """Merge a finished task's branch into the workspace's base branch.
+
+    Lives on the task rather than on review, deliberately: reaching
+    review only *pauses* the session, and a paused session still owns the
+    repo (SessionManager._repo_writers). A merge moves HEAD, so offering
+    this beside Approve would be refused every single time. The lock is
+    released when the task closes out and the session really stops —
+    which is exactly when this becomes possible.
+    """
+    store = TaskStore(tasks_dir())
+    task, proj, repo, branch = _finishable(task_id, store, session_manager)
+
+    base = proj.default_branch or "main"
+    result = await merge_branch_async(repo, branch, base)
+    if not result.ok:
+        raise HTTPException(status_code=400, detail=result.failed_reason)
+
+    task.merged_into = base
+    store.update(task)
+    store.log_progress(task.id, ProgressEntry(
+        status=task.status, entry=f"Merged {branch} into {base}.", caller="human",
+    ))
+    # Best-effort: the work is safely in `base`, so failing to tidy the
+    # branch isn't worth failing the request over.
+    delete_branch_force(repo, branch, base)
+
+    return {
+        "status": "merged",
+        "branch": branch,
+        "into": base,
+        "commits": result.commits,
+        # A local merge leaves `base` ahead only locally — nothing pushes
+        # it. Saying so is what stops "merged" being read as "in the
+        # remote mainline". -1 means there is no remote to compare to.
+        "base_ahead_of_remote": ahead_of_remote(repo, base),
+    }
+
+
+async def _open_task_pull_request(task_id: str, session_manager: SessionManager) -> dict:
+    """Push the task's branch and open a PR for it via the `gh` CLI."""
+    store = TaskStore(tasks_dir())
+    task, proj, repo, branch = _finishable(task_id, store, session_manager)
+
+    pushed = await push_branch_async(repo, branch)
+    if not pushed.ok:
+        raise HTTPException(status_code=400, detail=f"Push failed: {pushed.failed_reason}")
+
+    result = await open_pr_async(
+        repo, branch, proj.default_branch or "main",
+        title=task.title, body=task.description,
+    )
+    if not result.ok:
+        raise HTTPException(status_code=400, detail=result.failed_reason)
+
+    task.pull_request_url = result.url
+    store.update(task)
+    store.log_progress(task.id, ProgressEntry(
+        status=task.status,
+        entry=f"Opened pull request for {branch}: {result.url}",
+        caller="human",
+    ))
+    return {"status": "opened", "branch": branch, "url": result.url}
+
+
+async def finish_task_branch(
+    task_id: str, action: str, session_manager: SessionManager,
+) -> dict:
+    """Finish a task's branch by the workspace's configured action.
+
+    Used by the automatic on-approve path, which must never fail the
+    approval: the task is legitimately done whether or not its branch
+    could be merged, and leaving it stuck in review because of a
+    conflict would be the worse outcome. So an HTTPException from the
+    shared handlers is reported here rather than propagated.
+    """
+    try:
+        if action == "merge":
+            return await _merge_task_branch(task_id, session_manager)
+        if action == "pull_request":
+            return await _open_task_pull_request(task_id, session_manager)
+        return {"status": "skipped", "reason": f"unknown finish action {action!r}"}
+    except HTTPException as e:
+        return {"status": "failed", "error": str(e.detail)}
 
 
 def create_router(session_manager: SessionManager) -> APIRouter:
@@ -135,12 +316,15 @@ def create_router(session_manager: SessionManager) -> APIRouter:
 
     @router.get("/api/tasks/{task_id}")
     async def get_task(task_id: str):
-        """Get full task details."""
+        """Get full task details, plus what's left to do with its branch."""
         store = TaskStore(tasks_dir())
         task = store.get(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        return _task_to_response(task, store)
+        return {
+            **_task_to_response(task, store),
+            "finish": task_finish_state(task, session_manager),
+        }
 
     @router.get("/api/tasks/{task_id}/agents")
     async def list_task_agents(task_id: str):
@@ -353,6 +537,16 @@ def create_router(session_manager: SessionManager) -> APIRouter:
             "tags": draft.get("tags", []),
             "steps": draft.get("steps", []),
         }
+
+    @router.post("/api/tasks/{task_id}/merge")
+    async def merge_task(task_id: str):
+        """Merge a finished task's branch into the workspace's base branch."""
+        return await _merge_task_branch(task_id, session_manager)
+
+    @router.post("/api/tasks/{task_id}/pull-request")
+    async def open_task_pull_request(task_id: str):
+        """Push the task's branch and open a pull request for it."""
+        return await _open_task_pull_request(task_id, session_manager)
 
     @router.delete("/api/tasks/{task_id}")
     @raises_as(404)

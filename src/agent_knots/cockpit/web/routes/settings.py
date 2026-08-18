@@ -13,6 +13,7 @@ from agent_knots.cockpit.web.models import (
     AddProviderRequest, SaveIntegrationsRequest, SaveSettingsRequest, UpdatePolicyRequest,
 )
 from agent_knots.config import policies_file, usage_file, workspaces_root
+from agent_knots.gitutil import gh_available
 from agent_knots import provider as provider_module
 from agent_knots import settings
 from agent_knots import usage as usage_module
@@ -74,11 +75,17 @@ def create_router() -> APIRouter:
             "providers": _providers_to_response(s),
             "default_provider": s.default_provider,
             "integrations": {
-                "github_pr_on_review": s.integrations.github_pr_on_review,
                 "phone_push": s.integrations.phone_push,
             },
             "wastebin": {
                 "retention_days": s.wastebin.retention_days,
+            },
+            "finish": {
+                "action": s.finish_action,
+                "when": s.finish_when,
+                # So the UI can disable "open pull request" rather than
+                # offer something that always fails at the point of use.
+                "gh_available": gh_available(),
             },
             "workspaces": {
                 # The configured override ("" when unset) alongside the
@@ -113,6 +120,24 @@ def create_router() -> APIRouter:
 
         if body.workspaces_root is not None:
             s.workspaces_root = body.workspaces_root.strip()
+
+        # Validated rather than trusted: these drive a git operation, and
+        # an unrecognised value would otherwise fall through to "do
+        # nothing" at the point a user expects work to be landed.
+        if body.finish_action is not None:
+            if body.finish_action not in settings.FINISH_ACTIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"finish_action must be one of {', '.join(settings.FINISH_ACTIONS)}",
+                )
+            s.finish_action = body.finish_action
+        if body.finish_when is not None:
+            if body.finish_when not in settings.FINISH_WHEN:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"finish_when must be one of {', '.join(settings.FINISH_WHEN)}",
+                )
+            s.finish_when = body.finish_when
 
         settings.save(s)
         return {"status": "ok", "configured": provider_module.resolve_provider().is_configured}
@@ -220,8 +245,6 @@ def create_router() -> APIRouter:
     @router.put("/api/integrations")
     async def save_integrations(body: SaveIntegrationsRequest):
         s = settings.load()
-        if body.github_pr_on_review is not None:
-            s.integrations.github_pr_on_review = body.github_pr_on_review
         if body.phone_push is not None:
             s.integrations.phone_push = body.phone_push
         settings.save(s)

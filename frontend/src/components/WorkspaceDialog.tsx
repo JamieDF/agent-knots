@@ -32,6 +32,9 @@ function WorkspaceDialog({ workspace, onClose, onSaved }: Props) {
   const [initGit, setInitGit] = useState(false)
   const [runtime, setRuntime] = useState(workspace?.runtime || '')
   const [provider, setProvider] = useState(workspace?.provider || '')
+  const [finishAction, setFinishAction] = useState(workspace?.finish_action || '')
+  const [finishWhen, setFinishWhen] = useState(workspace?.finish_when || '')
+  const [ghAvailable, setGhAvailable] = useState(true)
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [showPicker, setShowPicker] = useState(false)
   const [githubUrl, setGithubUrl] = useState<string | null>(null)
@@ -43,7 +46,10 @@ function WorkspaceDialog({ workspace, onClose, onSaved }: Props) {
   const cloning = saving && !workspace && managed && !!repository.trim()
 
   useEffect(() => {
-    fetchSettings().then(s => setProviders(s.providers)).catch(() => {})
+    fetchSettings().then(s => {
+      setProviders(s.providers)
+      setGhAvailable(s.finish.gh_available)
+    }).catch(() => {})
   }, [])
 
   // Only meaningful for a path on disk — there's nothing local to
@@ -66,12 +72,14 @@ function WorkspaceDialog({ workspace, onClose, onSaved }: Props) {
         // repository is omitted for a managed workspace — the backend
         // rejects repointing one, and there's nothing to change.
         await updateWorkspace(workspace.id, {
-          name, runtime, provider, ...(workspace.managed ? {} : { repository }),
+          name, runtime, provider, finish_action: finishAction, finish_when: finishWhen,
+          ...(workspace.managed ? {} : { repository }),
         })
       } else {
         if (!name.trim()) return
         await createWorkspace({
           name: name.trim(), repository, runtime, provider,
+          finish_action: finishAction, finish_when: finishWhen,
           managed, init_git: managed && !repository.trim() && initGit,
         })
       }
@@ -165,6 +173,41 @@ function WorkspaceDialog({ workspace, onClose, onSaved }: Props) {
             <option value="inprocess">In-process</option>
           </select>
         </Field>
+        {/* Not a matter of taste — which of these is right depends on
+            whether the repo has a protected mainline. Merging locally
+            into a protected branch simply fails on push, so the labels
+            name the situation rather than the mechanism. */}
+        <Field label="When a task is approved">
+          <select
+            aria-label="Finish action"
+            value={finishAction}
+            onChange={e => setFinishAction(e.target.value)}
+            style={inputStyle}
+          >
+            <option value="">(use global default)</option>
+            <option value="merge">Merge into the base branch — solo or local repo</option>
+            <option value="pull_request" disabled={!ghAvailable}>
+              Open a pull request — team repo{ghAvailable ? '' : ' (needs the gh CLI)'}
+            </option>
+            <option value="none">Leave the branch alone</option>
+          </select>
+        </Field>
+
+        {finishAction !== 'none' && (
+          <Field label="Do it">
+            <select
+              aria-label="Finish when"
+              value={finishWhen}
+              onChange={e => setFinishWhen(e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">(use global default)</option>
+              <option value="manual">When I press the button</option>
+              <option value="on_approve">Automatically, as part of approving</option>
+            </select>
+          </Field>
+        )}
+
         <Field label="Provider">
           <select aria-label="Provider" value={provider} onChange={e => setProvider(e.target.value)} style={inputStyle}>
             <option value="">(use global default)</option>

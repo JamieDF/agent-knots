@@ -16,12 +16,19 @@ export function IntegrationsCard() {
   return (
     <Card>
       <SectionLabel>Integrations</SectionLabel>
+      {/* The GitHub toggle that used to sit here promised to open a PR
+          when a task entered review, and did nothing. That behaviour is
+          real now, but as a workspace setting rather than a global
+          on/off — and it fires on approve, not on entering review,
+          since the latter would publish work nobody had approved. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid var(--line)' }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>GitHub</div>
-          <div style={{ fontSize: 11, color: 'var(--mut)' }}>Not connected — open a PR automatically when a task enters review.</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>GitHub pull requests</div>
+          <div style={{ fontSize: 11, color: 'var(--mut)' }}>
+            Set per workspace under <a href="#workspaces" style={{ color: 'var(--acc)' }}>Workspaces</a> — choose
+            whether finishing a task merges locally or opens a PR. Uses the <code style={{ fontFamily: 'var(--font-mono)' }}>gh</code> CLI.
+          </div>
         </div>
-        <Toggle checked={integrations.github_pr_on_review} onChange={checked => update({ github_pr_on_review: checked })} />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0' }}>
         <div style={{ flex: 1 }}>

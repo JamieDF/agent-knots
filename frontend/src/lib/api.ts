@@ -43,7 +43,7 @@ export interface ProviderInfo {
 }
 
 export interface IntegrationsInfo {
-  github_pr_on_review: boolean; phone_push: boolean
+  phone_push: boolean
 }
 
 export interface SettingsResponse {
@@ -56,6 +56,9 @@ export interface SettingsResponse {
   // `root` is the configured override, "" when unset; `resolved_root`
   // is where clones actually land right now.
   workspaces: { root: string; resolved_root: string }
+  // `gh_available` gates the pull-request option — offering it
+  // without the CLI installed just fails at the point of use.
+  finish: { action: string; when: string; gh_available: boolean }
 }
 
 export interface WastebinEntry {
@@ -92,6 +95,23 @@ export interface TaskDetail {
     actions_taken: string[]; resolution: string; next_step: string; caller: string
     blocker: { description: string; question: string; options: string[]; awaiting: string } | null
   }[]
+  // Where this task's work ended up, "" while it's still only on its
+  // branch. The state that used to be invisible.
+  merged_into: string
+  pull_request_url: string
+  finish: TaskFinishState
+}
+
+/** What, if anything, is left to do with a task's branch. Resolved
+ *  server-side so the button and the route can't disagree. */
+export interface TaskFinishState {
+  has_repo: boolean
+  branch: string
+  base?: string
+  /** merge | pull_request | none — the workspace's configured action. */
+  finish_action: string
+  /** 0 means nothing to land: either merged already, or never had commits. */
+  commits_ahead: number
 }
 
 // ── agents ──────────────────────────────────────────────────────────────────
@@ -132,7 +152,7 @@ export async function fetchPendingQuestions(): Promise<{ questions: PendingQuest
 export async function fetchSettings(): Promise<SettingsResponse> {
   return apiFetch('/api/settings')
 }
-export async function saveSettings(s: { default_model: string; api_key: string; base_url: string; default_mode: string; wastebin_retention_days?: number; workspaces_root?: string }) {
+export async function saveSettings(s: { default_model: string; api_key: string; base_url: string; default_mode: string; wastebin_retention_days?: number; workspaces_root?: string; finish_action?: string; finish_when?: string }) {
   return apiFetch<any>('/api/settings', jsonInit('PUT', s))
 }
 export async function createSession(body: { prompt: string; mode?: string; project_id?: string; task_id?: string }) {
@@ -226,6 +246,8 @@ export interface Workspace {
   // leaves it on disk unless you explicitly ask otherwise. `source` is
   // the URL or path a managed workspace was cloned from.
   source: string; managed: boolean
+  // "" = inherit the global default.
+  finish_action: string; finish_when: string
   auto_assign: boolean; max_concurrent: number; archived: boolean
   created_at: number
 }
@@ -242,11 +264,11 @@ export async function fetchWorkspace(id: string): Promise<Workspace> {
  * their old behaviour; the dialog passes it explicitly, which is what
  * makes managed the default a *user* sees. With managed, `repository`
  * is the clone source and the real path comes back in the response. */
-export async function createWorkspace(data: { id?: string; name: string; description?: string; repository?: string; managed?: boolean; init_git?: boolean; runtime?: string; provider?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number }): Promise<{ status: string; id: string; repository: string; managed: boolean }> {
+export async function createWorkspace(data: { id?: string; name: string; description?: string; repository?: string; managed?: boolean; init_git?: boolean; finish_action?: string; finish_when?: string; runtime?: string; provider?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number }): Promise<{ status: string; id: string; repository: string; managed: boolean }> {
   return apiFetch('/api/workspaces', jsonInit('POST', data))
 }
 
-export async function updateWorkspace(id: string, data: { name?: string; description?: string; repository?: string; runtime?: string; provider?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number; archived?: boolean }) {
+export async function updateWorkspace(id: string, data: { name?: string; description?: string; repository?: string; finish_action?: string; finish_when?: string; runtime?: string; provider?: string; tags?: string[]; auto_assign?: boolean; max_concurrent?: number; archived?: boolean }) {
   return apiFetch<any>(`/api/workspaces/${id}`, jsonInit('PATCH', data))
 }
 
@@ -255,6 +277,18 @@ export async function updateWorkspace(id: string, data: { name?: string; descrip
  * pushed anywhere. */
 export async function deleteWorkspace(id: string, deleteFiles = false): Promise<void> {
   await apiFetch(`/api/workspaces/${id}${deleteFiles ? '?delete_files=true' : ''}`, { method: 'DELETE' })
+}
+
+/** Merges the task's branch into the workspace's base branch. Only
+ *  possible once the task is done — a paused review session still owns
+ *  the repo, and a merge moves HEAD. */
+export async function mergeTask(taskId: string): Promise<{ status: string; branch: string; into: string; commits: number; base_ahead_of_remote: number }> {
+  return apiFetch(`/api/tasks/${taskId}/merge`, jsonInit('POST'))
+}
+
+/** Pushes the task's branch and opens a PR for it via the `gh` CLI. */
+export async function openTaskPullRequest(taskId: string): Promise<{ status: string; branch: string; url: string }> {
+  return apiFetch(`/api/tasks/${taskId}/pull-request`, jsonInit('POST'))
 }
 
 export async function pushWorkspaceBranch(id: string, branch: string): Promise<{ status: string; branch: string; remote: string }> {
@@ -405,7 +439,7 @@ export async function updateProviderModel(name: string, model: string): Promise<
   await apiFetch(`/api/settings/providers/${encodeURIComponent(name)}`, jsonInit('PATCH', { model }))
 }
 
-export async function saveIntegrations(data: { github_pr_on_review?: boolean; phone_push?: boolean }): Promise<void> {
+export async function saveIntegrations(data: { phone_push?: boolean }): Promise<void> {
   await apiFetch('/api/integrations', jsonInit('PUT', data))
 }
 
