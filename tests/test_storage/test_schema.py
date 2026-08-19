@@ -43,3 +43,31 @@ def test_projects_table_exists():
         "SELECT name FROM sqlite_master WHERE type='table' AND name='projects'"
     ).fetchone()
     assert row is not None
+
+
+def test_wastebin_and_usage_tables_exist():
+    conn = get_connection(db_path())
+    for name in ("wastebin", "usage"):
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (name,),
+        ).fetchone()
+        assert row is not None
+
+
+def test_schema_upgrades_from_v1():
+    """Existing Phase 1 DBs pick up wastebin/usage tables and bump version."""
+    from agent_knots.storage.db import set_schema_version
+
+    conn = get_connection(db_path())
+    set_schema_version(conn, 1)
+    reset_stores()
+
+    conn = get_connection(db_path())
+    assert schema_version(conn) == SCHEMA_VERSION
+    for name in ("wastebin", "usage"):
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (name,),
+        ).fetchone()
+        assert row is not None

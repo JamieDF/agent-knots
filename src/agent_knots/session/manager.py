@@ -467,10 +467,9 @@ class SessionManager:
         ))
 
         if session.tokens_used > 0:
-            from agent_knots.config import usage_file
             from agent_knots.usage import UsageEntry, record
 
-            record(usage_file(), UsageEntry(
+            record(UsageEntry(
                 session_id=session.id,
                 model=session.model,
                 task_id=session.task_id,
@@ -490,9 +489,9 @@ class SessionManager:
         block a session from actually stopping.
         """
         try:
-            from agent_knots.config import session_workdir, wastebin_dir
-            from agent_knots.storage import task_store
-            from agent_knots.wastebin import WastebinEntry, WastebinStore
+            from agent_knots.config import session_workdir
+            from agent_knots.storage import task_store, wastebin_store
+            from agent_knots.wastebin import WastebinEntry
 
             task_title = ""
             if session.task_id:
@@ -507,7 +506,7 @@ class SessionManager:
 
             from agent_knots.events import serialize_event
 
-            WastebinStore(wastebin_dir()).add(
+            wastebin_store().add(
                 WastebinEntry(
                     session_id=session.id,
                     name=session.name,

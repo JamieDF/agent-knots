@@ -1,24 +1,25 @@
 """Tests for the wastebin store — stopped-session tombstone records."""
 
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
 import pytest
 
-from agent_knots.wastebin import WastebinEntry, WastebinStore
-from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
-
-
-@pytest.fixture
-def store():
-    with tempfile.TemporaryDirectory() as d:
-        yield WastebinStore(Path(d))
+from agent_knots.storage import reset_stores, wastebin_store
+from agent_knots.wastebin import WastebinEntry
 
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, check=True)
+
+
+@pytest.fixture
+def store(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+    reset_stores()
+    yield wastebin_store()
+    reset_stores()
 
 
 @pytest.fixture
@@ -53,13 +54,18 @@ class TestAddGetList:
 
     def test_list_newest_first(self, store):
         store.add(WastebinEntry(session_id="old", stopped_at=1.0))
-        time.sleep(0.01)
         store.add(WastebinEntry(session_id="new", stopped_at=2.0))
         entries = store.list()
         assert [e.session_id for e in entries] == ["new", "old"]
 
     def test_list_empty(self, store):
         assert store.list() == []
+
+    def test_list_by_task_id(self, store):
+        store.add(WastebinEntry(session_id="s1", task_id="t1", stopped_at=1.0))
+        store.add(WastebinEntry(session_id="s2", task_id="t2", stopped_at=2.0))
+        store.add(WastebinEntry(session_id="s3", task_id="t1", stopped_at=3.0))
+        assert [e.session_id for e in store.list(task_id="t1")] == ["s3", "s1"]
 
 
 class TestRetentionSweep:
@@ -106,7 +112,7 @@ class TestRetentionSweep:
 
 class TestHistory:
     """History lives in a separate <id>.history.json, not the metadata
-    YAML — list()/get() must stay cheap regardless of how large a
+    row — list()/get() must stay cheap regardless of how large a
     session's transcript is, since they're read on every poll from
     several screens (Task Detail's Past Sessions, the Review task list,
     the Settings Wastebin card)."""
@@ -132,7 +138,7 @@ class TestHistory:
         assert not hasattr(store.get("s1"), "history")
         assert not hasattr(store.list()[0], "history")
 
-    def test_delete_removes_the_history_file_too(self, store, tmp_path):
+    def test_delete_removes_the_history_file_too(self, store):
         store.add(WastebinEntry(session_id="s1"), history=[{"type": "message"}])
         history_path = store._history_path("s1")
         assert history_path.exists()
@@ -146,36 +152,6 @@ class TestHistory:
         entries = store.list()
         assert len(entries) == 1
         assert store.get_history("s1") == []
-
-    def test_get_migrates_a_legacy_entry_with_embedded_history(self, store):
-        """Entries written before history moved out of the metadata
-        YAML (pre-migration) had it inline — get() must split it out to
-        the sibling file and strip it from the metadata on first read,
-        so every read after that one is back to being cheap."""
-        legacy = {
-            "session_id": "s1", "task_id": "t1", "task_title": "Old entry",
-            "history": [{"type": "message", "message": "from before the split"}],
-        }
-        atomic_write_yaml(store._path("s1"), legacy)
-
-        entry = store.get("s1")
-        assert entry is not None
-        assert entry.task_title == "Old entry"
-        assert not hasattr(entry, "history")
-        assert store.get_history("s1") == [{"type": "message", "message": "from before the split"}]
-
-        # The metadata file itself no longer has history embedded.
-        on_disk = safe_read_yaml(store._path("s1"))
-        assert "history" not in on_disk
-
-    def test_list_also_migrates_a_legacy_entry(self, store):
-        legacy = {"session_id": "s1", "history": [{"type": "message"}]}
-        atomic_write_yaml(store._path("s1"), legacy)
-
-        entries = store.list()
-        assert len(entries) == 1
-        assert store.get_history("s1") == [{"type": "message"}]
-        assert "history" not in safe_read_yaml(store._path("s1"))
 
 
 class TestDelete:

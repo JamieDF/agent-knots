@@ -8,35 +8,33 @@ directory it left behind. Every stop() now writes one entry here
 instead, giving the app its first real session history plus a place to
 browse/delete leftovers by hand, with an optional age-based sweep.
 
-One YAML file per session under wastebin_dir() for metadata, same
-layout as task/store.py's TaskStore — no locking needed, since each
-stop() only ever writes its own session's file, never contended by
-another.
-
-The session's full event history is deliberately NOT in that YAML
-file — it's written to a sibling <id>.history.json instead. list()
+Metadata lives in state.db (indexed session_id / task_id / stopped_at).
+The session's full event history is deliberately NOT in that row — it
+is written to a sibling <id>.history.json under wastebin_dir(). list()
 (Task Detail's "Past sessions", the Settings Wastebin card, the Review
 task list) only ever needs the small metadata fields; a real session's
-history can run to tens of thousands of events, and YAML-parsing a
-multi-megabyte file on every list() call (every 5s poll, from several
-different screens) was measured making Task Detail noticeably slow.
-Plain JSON, not YAML, for the history file too — it's not meant to be
-hand-edited, and json is substantially faster than PyYAML to parse at
-this size. Only the one thing that actually needs full history —
-reopening a stopped session's transcript — reads it, via get_history().
+history can run to tens of thousands of events, and loading that on
+every list() call (every 5s poll, from several different screens) was
+measured making Task Detail noticeably slow. Plain JSON for the history
+file — it is not meant to be hand-edited, and json is substantially
+faster than PyYAML to parse at this size. Only the one thing that
+actually needs full history — reopening a stopped session's transcript
+— reads it, via get_history().
 """
 
 from __future__ import annotations
 
 import json
 import shutil
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent_knots.config import wastebin_dir
 from agent_knots.gitutil import delete_branch_force, is_repo
-from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
+from agent_knots.storage.db import get_connection
 
 
 @dataclass
@@ -85,52 +83,52 @@ def _entry_from_dict(d: dict[str, Any]) -> WastebinEntry:
 
 
 class WastebinStore:
-    def __init__(self, wastebin_dir: Path) -> None:
-        self._dir = Path(wastebin_dir)
-        self._dir.mkdir(parents=True, exist_ok=True)
+    """SQLite-backed metadata store; history stays in per-session JSON files."""
 
-    def _path(self, session_id: str) -> Path:
-        return self._dir / f"{session_id}.yaml"
+    _write_lock = threading.RLock()
+
+    def __init__(self, db_path: Path, history_dir: Path | None = None) -> None:
+        self._conn = get_connection(db_path)
+        self._history_dir = Path(history_dir) if history_dir is not None else wastebin_dir()
+        self._history_dir.mkdir(parents=True, exist_ok=True)
 
     def _history_path(self, session_id: str) -> Path:
-        return self._dir / f"{session_id}.history.json"
+        return self._history_dir / f"{session_id}.history.json"
 
     def add(self, entry: WastebinEntry, history: list[dict[str, Any]] | None = None) -> None:
-        atomic_write_yaml(self._path(entry.session_id), asdict(entry))
+        with self._write_lock:
+            self._conn.execute(
+                """
+                INSERT INTO wastebin (session_id, task_id, project_id, stopped_at, data)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    task_id = excluded.task_id,
+                    project_id = excluded.project_id,
+                    stopped_at = excluded.stopped_at,
+                    data = excluded.data
+                """,
+                (
+                    entry.session_id,
+                    entry.task_id,
+                    entry.project_id,
+                    entry.stopped_at,
+                    json.dumps(asdict(entry)),
+                ),
+            )
+            self._conn.commit()
         if history:
             try:
                 self._history_path(entry.session_id).write_text(json.dumps(history))
             except Exception:
                 pass
 
-    def _migrate_legacy_history(self, session_id: str, data: dict[str, Any]) -> None:
-        """Self-healing for entries written before history moved out of
-        the metadata YAML (see the module docstring) — the first read
-        of an old large file after upgrading splits its embedded
-        history out to the sibling file and rewrites the metadata
-        without it, so every read after that first one is back to
-        being cheap. Doesn't save the read that triggers it (yaml
-        parsing already happened by the time this runs), only the ones
-        after."""
-        legacy_history = data.pop("history", None)
-        if not legacy_history:
-            return
-        try:
-            if not self._history_path(session_id).exists():
-                self._history_path(session_id).write_text(json.dumps(legacy_history))
-            atomic_write_yaml(self._path(session_id), data)
-        except Exception:
-            pass
-
     def get(self, session_id: str) -> WastebinEntry | None:
-        data = safe_read_yaml(self._path(session_id))
-        if not isinstance(data, dict) or "session_id" not in data:
+        row = self._conn.execute(
+            "SELECT data FROM wastebin WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        if row is None:
             return None
-        self._migrate_legacy_history(session_id, data)
-        try:
-            return _entry_from_dict(data)
-        except KeyError:
-            return None
+        return self._load_json(row[0])
 
     def get_history(self, session_id: str) -> list[dict[str, Any]]:
         """The session's full event transcript — a separate, potentially
@@ -148,6 +146,7 @@ class WastebinStore:
 
     def list(
         self, retention_days: int = 0, *, protected_branches: set[str] = frozenset(),
+        task_id: str = "",
     ) -> list[WastebinEntry]:
         """All entries, newest-first. If retention_days is set, entries
         older than that are purged first (via delete()) rather than
@@ -158,16 +157,21 @@ class WastebinStore:
         entry must never force-delete a branch a newer, still-kept entry
         (or a currently-active session) legitimately still points at.
         """
-        entries = []
-        for path in sorted(self._dir.glob("*.yaml"), key=lambda p: p.stat().st_mtime, reverse=True):
-            data = safe_read_yaml(path)
-            if not isinstance(data, dict) or "session_id" not in data:
-                continue
-            self._migrate_legacy_history(data["session_id"], data)
-            try:
-                entries.append(_entry_from_dict(data))
-            except KeyError:
-                continue
+        if task_id:
+            rows = self._conn.execute(
+                "SELECT data FROM wastebin WHERE task_id = ? ORDER BY stopped_at DESC",
+                (task_id,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT data FROM wastebin ORDER BY stopped_at DESC"
+            ).fetchall()
+
+        entries: list[WastebinEntry] = []
+        for row in rows:
+            entry = self._load_json(row[0])
+            if entry is not None:
+                entries.append(entry)
 
         if not retention_days:
             return entries
@@ -215,5 +219,18 @@ class WastebinStore:
             except Exception:
                 pass
 
-        self._path(session_id).unlink(missing_ok=True)
+        with self._write_lock:
+            self._conn.execute(
+                "DELETE FROM wastebin WHERE session_id = ?", (session_id,)
+            )
+            self._conn.commit()
         self._history_path(session_id).unlink(missing_ok=True)
+
+    def _load_json(self, raw: str) -> WastebinEntry | None:
+        try:
+            data = json.loads(raw)
+            if not isinstance(data, dict) or "session_id" not in data:
+                return None
+            return _entry_from_dict(data)
+        except (json.JSONDecodeError, KeyError):
+            return None

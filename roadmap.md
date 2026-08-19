@@ -132,9 +132,12 @@
 - [x] Structured state storage (Phase 1) — Tasks and projects live in
   SQLite (`state.db`) with indexed columns for common queries and JSON
   blobs for nested fields. Store access goes through
-  `storage.task_store()` / `storage.project_store()`. Phase 2 (wastebin
-  metadata + usage ledger) and Phase 3 (config blobs) still to come;
-  vault stays encrypted JSON.
+  `storage.task_store()` / `storage.project_store()`.
+- [x] Structured state storage (Phase 2) — Wastebin metadata and the
+  usage ledger live in `state.db` too (`storage.wastebin_store()`;
+  `usage.record` / `summary` / `cost_since`). Session event transcripts
+  stay as `<id>.history.json` under `wastebin/`. Phase 3 (config blobs)
+  still to come; vault stays encrypted JSON.
 
 ## Next
 
@@ -153,9 +156,8 @@
   and under worktrees that becomes a derived per-session path rather than
   `Project.repository` itself — keep new readers of `repository` out of the
   codebase or that refactor gets much harder
-- [ ] Structured state storage (Phase 2+) — Wastebin metadata and
-  `usage.jsonl` into SQLite; optionally settings/stages/roles/policies/mcp
-  as config blobs. Vault stays file-based.
+- [ ] Structured state storage (Phase 3) — Optionally settings/stages/roles/
+  policies/mcp as config blobs in SQLite. Vault stays file-based.
 - [ ] Concurrent multi-writer collaboration — more than one agent actively
   editing the same task/branch at once, with conflict/result merging.
   Today only one writer session per task is active at a time (see

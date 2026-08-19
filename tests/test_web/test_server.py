@@ -2390,10 +2390,9 @@ class TestUsageAPI:
 
     @pytest.mark.asyncio
     async def test_usage_reflects_recorded_session(self, authed_client, agent_knots_home):
-        from agent_knots.config import usage_file
         from agent_knots.usage import UsageEntry, record
 
-        record(usage_file(), UsageEntry(model="minimax-m2.7", task_id="T-1", tokens=500, cost_usd=0.05))
+        record(UsageEntry(model="minimax-m2.7", task_id="T-1", tokens=500, cost_usd=0.05))
         resp = await authed_client.get("/api/usage")
         data = resp.json()
         assert data["today"]["tokens"] == 500
@@ -2423,14 +2422,13 @@ class TestPoliciesAPI:
 class TestSpendCapEnforcement:
     @pytest.mark.asyncio
     async def test_session_blocked_once_cap_reached(self, authed_client, monkeypatch):
-        from agent_knots.config import usage_file
         from agent_knots.usage import UsageEntry, record
 
         monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
         monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
 
         await authed_client.patch("/api/policies/spend_cap", json={"enabled": True, "value": "1.00"})
-        record(usage_file(), UsageEntry(model="fake/model", tokens=1000, cost_usd=1.50))
+        record(UsageEntry(model="fake/model", tokens=1000, cost_usd=1.50))
 
         resp = await authed_client.post("/api/sessions", json={"prompt": ""})
         assert resp.status_code == 400
@@ -2438,14 +2436,13 @@ class TestSpendCapEnforcement:
 
     @pytest.mark.asyncio
     async def test_disabled_cap_does_not_block(self, authed_client, monkeypatch):
-        from agent_knots.config import usage_file
         from agent_knots.usage import UsageEntry, record
 
         monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
         monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
         monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
 
-        record(usage_file(), UsageEntry(model="fake/model", tokens=1000, cost_usd=99.0))
+        record(UsageEntry(model="fake/model", tokens=1000, cost_usd=99.0))
         resp = await authed_client.post("/api/sessions", json={"prompt": ""})
         assert resp.status_code == 200
 

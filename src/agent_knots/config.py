@@ -30,7 +30,7 @@ def sessions_dir() -> Path:
 
 
 def db_path() -> Path:
-    """Path to the SQLite database for tasks, projects, and future state."""
+    """Path to the SQLite database for tasks, projects, wastebin metadata, and usage."""
     return _home() / "state.db"
 
 
@@ -40,8 +40,8 @@ def vault_dir() -> Path:
 
 
 def wastebin_dir() -> Path:
-    """Directory where stopped-session tombstone records live — see
-    wastebin.py. One YAML file per session."""
+    """Directory for stopped-session event transcripts
+    (`<id>.history.json`). Metadata lives in state.db — see wastebin.py."""
     return _ensure_dir(_home() / "wastebin")
 
 
@@ -150,11 +150,6 @@ def stages_file() -> Path:
 def roles_file() -> Path:
     """Path to the default-agent-roles config YAML file (Workflows screen)."""
     return _home() / "roles.yaml"
-
-
-def usage_file() -> Path:
-    """Path to the append-only token/cost usage ledger (JSONL)."""
-    return _home() / "usage.jsonl"
 
 
 def policies_file() -> Path:

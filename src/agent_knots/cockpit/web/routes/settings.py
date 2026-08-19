@@ -12,7 +12,7 @@ from agent_knots.cockpit.web.decorators import raises_as
 from agent_knots.cockpit.web.models import (
     AddProviderRequest, SaveIntegrationsRequest, SaveSettingsRequest, UpdatePolicyRequest,
 )
-from agent_knots.config import policies_file, usage_file, workspaces_root
+from agent_knots.config import policies_file, workspaces_root
 from agent_knots.gitutil import gh_available
 from agent_knots import provider as provider_module
 from agent_knots import settings
@@ -252,7 +252,7 @@ def create_router() -> APIRouter:
 
     @router.get("/api/usage")
     async def get_usage():
-        return usage_module.summary(usage_file())
+        return usage_module.summary()
 
     @router.get("/api/policies")
     async def list_policies():

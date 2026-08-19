@@ -12,9 +12,8 @@ from fastapi import APIRouter
 
 from agent_knots import settings
 from agent_knots.cockpit.web.decorators import raises_as
-from agent_knots.config import wastebin_dir
 from agent_knots.session.manager import SessionManager
-from agent_knots.wastebin import WastebinStore
+from agent_knots.storage import wastebin_store
 
 
 def _entry_to_response(e) -> dict:
@@ -45,7 +44,7 @@ def create_router(session_manager: SessionManager) -> APIRouter:
 
     @router.get("/api/wastebin")
     async def list_wastebin():
-        store = WastebinStore(wastebin_dir())
+        store = wastebin_store()
         retention_days = settings.load().wastebin.retention_days
         entries = store.list(retention_days=retention_days, protected_branches=_active_branches())
         return {"entries": [_entry_to_response(e) for e in entries]}
@@ -53,7 +52,7 @@ def create_router(session_manager: SessionManager) -> APIRouter:
     @router.delete("/api/wastebin/{session_id}")
     @raises_as(404)
     async def delete_wastebin_entry(session_id: str):
-        store = WastebinStore(wastebin_dir())
+        store = wastebin_store()
         # Every other entry's branch is protected too — deleting one
         # entry must never force-delete a branch a different, still-kept
         # entry references (e.g. a task stopped, resumed, and stopped

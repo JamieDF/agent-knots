@@ -29,7 +29,8 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(DDL)
-    if schema_version(conn) is None:
+    version = schema_version(conn)
+    if version is None or version < SCHEMA_VERSION:
         set_schema_version(conn, SCHEMA_VERSION)
     conn.commit()
     _connection = conn

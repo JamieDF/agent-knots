@@ -207,7 +207,7 @@ agent-knots/
 │   ├── vault/                 # AES-256-GCM crypto + file store
 │   ├── project/               # Workspace models + SQLite store
 │   ├── tools/                 # Tool registry, defaults, custom tools
-│   ├── wastebin.py            # Stopped-session tombstones + full history + retention
+│   ├── wastebin.py            # Stopped-session tombstones (SQLite metadata + history files)
 │   ├── names.py                # Human-readable session names ("sleepy-panda")
 │   ├── gitutil.py             # Per-session branch create/resume/teardown
 │   ├── settings.py            # Global YAML settings store

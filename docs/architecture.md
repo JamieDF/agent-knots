@@ -86,7 +86,7 @@ agent-knots/
 │   ├── names.py                   # Human-readable session names ("sleepy-panda")
 │   ├── wastebin.py                # Stopped-session tombstones + history + retention
 │   ├── mcp_servers.py             # MCP server registry (config-only, no client wiring yet)
-│   └── usage.py                   # Token/cost usage ledger
+│   └── usage.py                   # Token/cost usage ledger (SQLite)
 ├── tests/                         # Python unit tests
 ├── docs/                          # Architecture, quickstart
 └── pyproject.toml
@@ -332,9 +332,10 @@ and swept by a configurable retention setting; deleting an entry never
 force-deletes a branch a newer entry or a still-active session
 legitimately references.
 
-The session's full serialized event history is *not* stored in the
-same metadata file — it lives in a sibling `<id>.history.json`,
-written alongside the tombstone but read separately
+Metadata lives in `state.db` (indexed `session_id` / `task_id` /
+`stopped_at`); the session's full serialized event history is *not* in
+that row — it lives in `<id>.history.json` under `wastebin/`, written
+alongside the tombstone but read separately
 (`WastebinStore.get_history()`). Metadata reads (`list()`/`get()`,
 polled from Task Detail's Past Sessions, the Review task list, and the
 Settings Wastebin card) never touch it, so they stay cheap regardless
@@ -342,11 +343,7 @@ of how large a transcript is — a real session can run to tens of
 thousands of events, and parsing that inline on every poll from three
 different screens was measured making the whole app noticeably slow
 (4.58s for one `list()` call against a 2.3MB history file; 0.014s
-after splitting it out). Entries written before this split have their
-history embedded inline still; `get()`/`list()` self-migrate them —
-split the history out, rewrite the metadata without it — the first
-time each is read, so an existing install speeds back up automatically
-rather than needing a manual cleanup step.
+after splitting it out).
 
 The persisted history is more than a cleanup record — `GET
 /api/agent/{id}` and the SSE events endpoint both fall back to the

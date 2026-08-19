@@ -343,10 +343,9 @@ def create_router(session_manager: SessionManager) -> APIRouter:
         list_task_agents above only ever shows currently-active ones.
         Sessions aren't persisted beyond the wastebin, so this is the
         only place a finished session's existence survives at all."""
-        from agent_knots.config import wastebin_dir
-        from agent_knots.wastebin import WastebinStore
+        from agent_knots.storage import wastebin_store
 
-        entries = [e for e in WastebinStore(wastebin_dir()).list() if e.task_id == task_id]
+        entries = wastebin_store().list(task_id=task_id)
         return {
             "sessions": [
                 {
