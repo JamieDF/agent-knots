@@ -12,7 +12,7 @@ from typing import Any
 from strands.hooks.events import AfterToolCallEvent
 from strands.tools import tool as _tool_dec
 
-from agent_knots.config import tasks_dir as _tasks_dir
+from agent_knots.storage import task_store
 from agent_knots.events import Event, EventType
 
 
@@ -25,9 +25,7 @@ def inject_memory(task_id: str) -> str:
     Includes recent entries so a new session picking up the task knows
     what happened before. This is appended to the system prompt.
     """
-    from agent_knots.task.store import TaskStore
-
-    store = TaskStore(_tasks_dir())
+    store = task_store()
     task = store.get(task_id)
     if not task or not task.progress:
         return ""
@@ -90,10 +88,9 @@ def make_delegate_tool(session_manager: Any, parent_session_id: str) -> Any:
         Returns:
             The created sub-task and session IDs.
         """
-        from agent_knots.task.store import TaskStore
         from agent_knots.task.models import Task, TaskStatus, new_task_id
 
-        store = TaskStore(_tasks_dir())
+        store = task_store()
         task = store.create(Task(
             id=new_task_id(),
             title=title,
@@ -216,13 +213,11 @@ def register_steering_hook(agent: Any, task_id: str, session: Any = None) -> Non
     satisfy real enforcement. Production would want LLM-based evaluation
     here instead of keyword matching.
     """
-    from agent_knots.task.store import TaskStore
-
     def on_tool(event: AfterToolCallEvent) -> None:
         if not task_id:
             return
 
-        store = TaskStore(_tasks_dir())
+        store = task_store()
         task = store.get(task_id)
         if not task or task.status.is_terminal():
             return

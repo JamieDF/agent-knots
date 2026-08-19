@@ -67,8 +67,9 @@ agent-knots/
 │   │   ├── manager.py             # SessionManager, Session, system prompt assembly
 │   │   ├── runtime.py             # SessionRuntime, InProcessRuntime
 │   │   └── features.py            # memory injection, multi-agent delegate, steering
-│   ├── task/                      # Task model, YAML store, Strands tools for agents
-│   ├── project/                   # Workspace model + YAML store
+│   ├── task/                      # Task model, SQLite store, Strands tools for agents
+│   ├── project/                   # Workspace model + SQLite store
+│   ├── storage/                   # state.db schema and store factories
 │   ├── vault/                     # AES-256-GCM crypto + file store
 │   ├── tools/                     # Tool registry, defaults, custom tools
 │   ├── workflows/                 # Board stage config + agent role config (incl. advisory roles)
@@ -162,7 +163,8 @@ log.
 ### Task
 
 A persistent work record with structured progress logs
-(`task/models.py`, `task/store.py`, YAML-backed). Agents call task tools
+(`task/models.py`, `task/store.py`, SQLite-backed in `~/.agent-knots/state.db`).
+Agents call task tools
 (`log_progress`, `update_task_status`, `mark_criterion_met`, `add_step`,
 ...) after meaningful actions. `session/features.py` also injects recent
 progress from earlier sessions on the same task into the system prompt
@@ -191,8 +193,8 @@ quietly satisfy the gate.
 ### Project
 
 A workspace record (`project/models.py`, `project/store.py`) bundling one
-or more repos with project-level settings and a task namespace. Selecting a
-project scopes task listing and session workspace resolution.
+or more repos with project-level settings and a task namespace. Tasks and
+projects persist in `state.db`.
 
 A workspace-attached session's system prompt includes a `## Workspace`
 block (`SessionManager._build_workspace_context`) naming the workspace,
@@ -567,8 +569,9 @@ assistant. Threats:
 2. **Destructive actions:** `WorkspaceSandbox` confines the sandboxed
    shell/editor tools to the session's workspace directory and rejects path
    traversal. Full container isolation is planned but not yet built.
-3. **Cross-project contamination:** projects are separate YAML records with
-   their own task namespace; nothing shares state across them implicitly.
+3. **Cross-project contamination:** projects are separate records in
+   `state.db` with their own task namespace; nothing shares state across
+   them implicitly.
 4. **Vault compromise:** AES-256-GCM with argon2id-derived keys, per-entry
    keys (compromise of one entry doesn't expose the master), passphrase
    never persisted.

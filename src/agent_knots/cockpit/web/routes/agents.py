@@ -21,14 +21,13 @@ except ImportError:  # Windows has no pty module
 from agent_knots.cockpit.web.auth import Auth, COOKIE_NAME, verify_token
 from agent_knots.cockpit.web.decorators import raises_as
 from agent_knots.cockpit.web.models import AutonomousRequest, CheckpointRequest, CreateSessionRequest
-from agent_knots.config import tasks_dir, policies_file, usage_file
+from agent_knots.config import policies_file, usage_file
+from agent_knots.storage import task_store as get_task_store
 from agent_knots.events import serialize_event
 from agent_knots import provider as provider_module
 from agent_knots import usage as usage_module
 from agent_knots.policies.store import PolicyStore
 from agent_knots.session.manager import SessionManager
-from agent_knots.task.store import TaskStore
-
 
 def _summarize_last_activity(session) -> str:
     """A short, human-readable snapshot of the most recent thing this
@@ -494,10 +493,10 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
             raise HTTPException(status_code=400, detail="Settings not configured. Run setup first.")
 
         if body.task_id:
-            task_store = TaskStore(tasks_dir())
-            task = task_store.get(body.task_id)
+            ts = get_task_store()
+            task = ts.get(body.task_id)
             if task is not None:
-                unmet = task_store.unmet_dependencies(task)
+                unmet = ts.unmet_dependencies(task)
                 if unmet:
                     blockers = ", ".join(f"{t.id} ({t.title})" for t in unmet)
                     raise HTTPException(

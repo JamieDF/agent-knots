@@ -11,7 +11,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-660%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-668%20passing-brightgreen.svg)](tests/)
 
 agent-knots is a self-hosted, task-based orchestrator for AI agents.
 Create a task, assign it to an agent, and watch it work in real time
@@ -80,7 +80,7 @@ way, `configured` is true before the wizard would even ask. See
 - **Live observability and control**: watch an agent's terminal, files, and
   command log in real time, not just its chat output, and take over any
   agent mid-task from a browser or terminal.
-- **Tasks**: YAML-backed, Draft → Open → In Progress → Review → Done, with
+- **Tasks**: SQLite-backed (`state.db`), Draft → Open → In Progress → Review → Done, with
   a review gate only a human can pass, dependencies, acceptance criteria,
   and a configurable Kanban board. A workspace-attached agent always knows
   which workspace it's in and can only create, read, or list tasks inside
@@ -202,9 +202,10 @@ agent-knots/
 │   │   ├── tui/               # Textual TUI (overview, focus, tools)
 │   │   └── web/               # FastAPI server (auth, SSE, REST, SPA shell)
 │   ├── session/                # SessionManager, InProcessRuntime, delegation
-│   ├── task/                  # Task models, YAML store, Strands tools for agents
+│   ├── storage/               # SQLite state.db and store factories
+│   ├── task/                  # Task models, SQLite store, Strands tools for agents
 │   ├── vault/                 # AES-256-GCM crypto + file store
-│   ├── project/               # Workspace models + YAML store
+│   ├── project/               # Workspace models + SQLite store
 │   ├── tools/                 # Tool registry, defaults, custom tools
 │   ├── wastebin.py            # Stopped-session tombstones + full history + retention
 │   ├── names.py                # Human-readable session names ("sleepy-panda")
@@ -213,7 +214,7 @@ agent-knots/
 │   ├── provider.py            # Model provider resolution (CLI/env/settings)
 │   ├── isolation.py           # Workspace sandbox config
 │   └── sandbox_tools.py       # Sandboxed shell/editor tools
-├── tests/                     # Python unit tests (520+)
+├── tests/                     # Python unit tests (668)
 ├── docs/                      # ADRs, architecture, plan
 └── pyproject.toml
 ```
@@ -223,7 +224,7 @@ agent-knots/
 ## Testing
 
 ```bash
-# Python unit tests (660)
+# Python unit tests (668)
 uv run --with pytest pytest tests/ -q
 
 # Playwright e2e tests (76: 74 passing, 2 skipped)

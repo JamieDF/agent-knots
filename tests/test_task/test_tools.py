@@ -17,9 +17,13 @@ from agent_knots.task.tools import create_task, log_progress, update_task, updat
 
 @pytest.fixture(autouse=True)
 def tasks_dir(monkeypatch):
+    from agent_knots.storage import reset_stores
+
     with tempfile.TemporaryDirectory() as d:
         monkeypatch.setenv("AGENT_KNOTS_HOME", d)
+        reset_stores()
         yield Path(d)
+        reset_stores()
 
 
 class TestValidateTaskOutput:

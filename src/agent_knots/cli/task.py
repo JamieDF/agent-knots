@@ -5,21 +5,14 @@ from __future__ import annotations
 import typer
 
 from agent_knots.cli._format import format_ts
-from agent_knots.config import tasks_dir
+from agent_knots.storage import task_store
 from agent_knots.task.models import Priority, Task, TaskStatus
-from agent_knots.task.store import TaskStore
 
 task_app = typer.Typer(help="Manage structured tasks.", no_args_is_help=True)
 
-# Global task store reference.
-_task_store: TaskStore | None = None
 
-
-def _get_task_store() -> TaskStore:
-    global _task_store
-    if _task_store is None:
-        _task_store = TaskStore(tasks_dir())
-    return _task_store
+def _get_task_store():
+    return task_store()
 
 
 @task_app.command(name="list")

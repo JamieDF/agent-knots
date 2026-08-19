@@ -1,10 +1,9 @@
-"""Tests for the YAML task store."""
-
-import tempfile
-from pathlib import Path
+"""Tests for the SQLite task store."""
 
 import pytest
 
+from agent_knots.storage import reset_stores, task_store
+from agent_knots.storage.db import close_connection
 from agent_knots.task.models import (
     Blocker,
     Priority,
@@ -19,9 +18,11 @@ from agent_knots.task.store import TaskStore
 
 
 @pytest.fixture
-def store():
-    with tempfile.TemporaryDirectory() as d:
-        yield TaskStore(Path(d))
+def store(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+    reset_stores()
+    yield task_store()
+    reset_stores()
 
 
 @pytest.fixture
@@ -257,8 +258,9 @@ class TestAcceptanceCriteria:
     def test_criteria_met_persists_across_reload(self, store, sample_task):
         store.create(sample_task)
         store.mark_criterion_met(sample_task.id, sample_task.acceptance_criteria[0])
-        # New store instance over the same directory — forces a real disk reload.
-        reloaded = TaskStore(store._dir)
+        close_connection()
+        reset_stores()
+        reloaded = task_store()
         task = reloaded.get(sample_task.id)
         assert sample_task.acceptance_criteria[0] in task.criteria_met
 

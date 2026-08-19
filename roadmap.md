@@ -129,6 +129,12 @@
 - [x] Loading spinner — Task Detail and the Tasks Board/List views show
   one on first load instead of nothing, so "still loading" and
   "genuinely empty" no longer look identical
+- [x] Structured state storage (Phase 1) — Tasks and projects live in
+  SQLite (`state.db`) with indexed columns for common queries and JSON
+  blobs for nested fields. Store access goes through
+  `storage.task_store()` / `storage.project_store()`. Phase 2 (wastebin
+  metadata + usage ledger) and Phase 3 (config blobs) still to come;
+  vault stays encrypted JSON.
 
 ## Next
 
@@ -147,14 +153,9 @@
   and under worktrees that becomes a derived per-session path rather than
   `Project.repository` itself — keep new readers of `repository` out of the
   codebase or that refactor gets much harder
-- [ ] Structured state storage — Replace the pile of per-object YAML with
-  SQLite (local-first, no server dependency). The store classes are already
-  the seam: `TaskStore`, `ProjectStore`, `VaultStore` and `WastebinStore`
-  share one CRUD shape over `yamlfile.py` and nothing outside them touches
-  YAML, so it's a swap behind those classes rather than a rewrite of their
-  callers. `usage.jsonl` and the wastebin history files are the stragglers.
-  Symptom worth quoting when this gets picked up: adding one field to
-  `Project` means writing it three times — dataclass, `_save`, `_load`
+- [ ] Structured state storage (Phase 2+) — Wastebin metadata and
+  `usage.jsonl` into SQLite; optionally settings/stages/roles/policies/mcp
+  as config blobs. Vault stays file-based.
 - [ ] Concurrent multi-writer collaboration — more than one agent actively
   editing the same task/branch at once, with conflict/result merging.
   Today only one writer session per task is active at a time (see

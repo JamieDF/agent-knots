@@ -22,8 +22,11 @@ def agent_knots_home(tmp_path, monkeypatch):
     and reset the global runtime-type setting between tests."""
     monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
     from agent_knots.session.runtime import set_runtime_type
+    from agent_knots.storage import reset_stores
+    reset_stores()
     set_runtime_type("inprocess")
     yield tmp_path
+    reset_stores()
 
 
 class TestSession:
@@ -590,10 +593,9 @@ class TestProviderResolution:
             ],
         ))
         # Set up a workspace with a provider.
-        from agent_knots.project.store import ProjectStore
         from agent_knots.project.models import Project
-        from agent_knots.config import projects_dir
-        store = ProjectStore(projects_dir())
+        from agent_knots.storage import project_store
+        store = project_store()
         store.create(Project(id="ws1", name="Test", provider="ws-prov"))
         # Set up a role with a provider.
         from agent_knots.workflows.store import RolesStore
@@ -619,10 +621,9 @@ class TestProviderResolution:
                 ProviderProfile(name="ws-prov", model="ws-model", api_key="ws-key", base_url="http://ws"),
             ],
         ))
-        from agent_knots.project.store import ProjectStore
         from agent_knots.project.models import Project
-        from agent_knots.config import projects_dir
-        ProjectStore(projects_dir()).create(Project(id="ws1", name="Test", provider="ws-prov"))
+        from agent_knots.storage import project_store
+        project_store().create(Project(id="ws1", name="Test", provider="ws-prov"))
 
         result = SessionManager._resolve_provider_for_session("", "ws1")
         assert result is not None
@@ -656,10 +657,9 @@ class TestProviderResolution:
         """Profile name doesn't match any saved profile → None (fall
         through to global)."""
         monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
-        from agent_knots.project.store import ProjectStore
         from agent_knots.project.models import Project
-        from agent_knots.config import projects_dir
-        ProjectStore(projects_dir()).create(Project(id="ws1", name="Test", provider="nonexistent"))
+        from agent_knots.storage import project_store
+        project_store().create(Project(id="ws1", name="Test", provider="nonexistent"))
 
         result = SessionManager._resolve_provider_for_session("", "ws1")
         assert result is None
@@ -841,12 +841,11 @@ class TestSessionManagerStart:
         prompt instead) used to sit idle forever — 'agent' mode looked
         broken until the user manually intervened. task_id alone must be
         enough to kick off the first turn."""
-        from agent_knots.config import tasks_dir
         from agent_knots.task.models import Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
 
         task = Task(id=new_task_id(), title="Do the thing")
-        TaskStore(tasks_dir()).create(task)
+        task_store().create(task)
 
         mgr = SessionManager(sessions_dir)
         session = await mgr.start(
@@ -958,12 +957,11 @@ class TestSessionBranches:
         on the same task must check out the SAME branch a first session
         (now stopped) already left behind — not a fresh one off main
         that orphans whatever the first session did."""
-        from agent_knots.config import tasks_dir
         from agent_knots.gitutil import current_branch
         from agent_knots.task.models import Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
 
-        task = TaskStore(tasks_dir()).create(Task(id=new_task_id(), title="Resume me"))
+        task = task_store().create(Task(id=new_task_id(), title="Resume me"))
         mgr = SessionManager(sessions_dir)
 
         first = await mgr._ensure_branch(str(git_repo), None, task.id, "sess1", False)
@@ -1071,11 +1069,10 @@ class TestSessionBranches:
     ):
         """The task YAML is the only durable record of which branch a
         session's work went to — sessions themselves are in-memory."""
-        from agent_knots.config import tasks_dir
         from agent_knots.task.models import Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
 
-        store = TaskStore(tasks_dir())
+        store = task_store()
         task = store.create(Task(id=new_task_id(), title="Branch me"))
 
         mgr = SessionManager(sessions_dir)
@@ -1098,9 +1095,9 @@ class TestVaultCredentialInjection:
     async def test_credential_reaches_the_shell_tool_scrubbed(
         self, sessions_dir, git_repo, agent_knots_home,
     ):
-        from agent_knots.config import tasks_dir, vault_dir
+        from agent_knots.config import vault_dir
         from agent_knots.task.models import Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
         from agent_knots.vault.store import Credential, InjectionTemplate, VaultStore
 
         vault = VaultStore(vault_dir())
@@ -1108,7 +1105,7 @@ class TestVaultCredentialInjection:
         vault.add_credential(Credential(id="gh", value="supersecretvalue"))
         vault.set_template("gh", InjectionTemplate(name="e", env={"GH_TOKEN": "$value"}))
 
-        task = TaskStore(tasks_dir()).create(Task(
+        task = task_store().create(Task(
             id=new_task_id(), title="Needs a credential", required_credentials=["gh"],
         ))
 
@@ -1130,14 +1127,14 @@ class TestVaultCredentialInjection:
     async def test_missing_credential_noted_in_system_prompt_not_raised(
         self, sessions_dir, git_repo, agent_knots_home,
     ):
-        from agent_knots.config import tasks_dir, vault_dir
+        from agent_knots.config import vault_dir
         from agent_knots.task.models import Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
         from agent_knots.vault.store import VaultStore
 
         vault = VaultStore(vault_dir())  # never unlocked
 
-        task = TaskStore(tasks_dir()).create(Task(
+        task = task_store().create(Task(
             id=new_task_id(), title="Needs a credential", required_credentials=["gh"],
         ))
 
@@ -1158,11 +1155,10 @@ class TestVaultCredentialInjection:
         """SessionManager(vault=None) is the default every existing test
         and CLI vault command relies on — required_credentials must not
         crash a session that has no vault to resolve them from."""
-        from agent_knots.config import tasks_dir
         from agent_knots.task.models import Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
 
-        task = TaskStore(tasks_dir()).create(Task(
+        task = task_store().create(Task(
             id=new_task_id(), title="Needs a credential", required_credentials=["gh"],
         ))
 
@@ -1215,11 +1211,10 @@ class TestAgentToolTriggeredLifecycle:
     async def test_marking_own_task_done_via_tool_stops_the_session(
         self, sessions_dir, agent_knots_home,
     ):
-        from agent_knots.config import tasks_dir
         from agent_knots.task.models import ReviewGate, Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
 
-        task = TaskStore(tasks_dir()).create(Task(
+        task = task_store().create(Task(
             id=new_task_id(), title="Self-stop test", review_gate=ReviewGate.NONE,
         ))
         mgr = SessionManager(sessions_dir)
@@ -1253,11 +1248,10 @@ class TestAgentToolTriggeredLifecycle:
         before this was found — so this one reproduces the same
         off-thread execution context Strands actually uses.
         """
-        from agent_knots.config import tasks_dir
         from agent_knots.task.models import ReviewGate, Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
 
-        task = TaskStore(tasks_dir()).create(Task(
+        task = task_store().create(Task(
             id=new_task_id(), title="Off-thread self-stop", review_gate=ReviewGate.NONE,
         ))
         mgr = SessionManager(sessions_dir)
@@ -1278,11 +1272,10 @@ class TestAgentToolTriggeredLifecycle:
     async def test_log_progress_status_change_also_triggers_auto_stop(
         self, sessions_dir, agent_knots_home,
     ):
-        from agent_knots.config import tasks_dir
         from agent_knots.task.models import ReviewGate, Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
 
-        task = TaskStore(tasks_dir()).create(Task(
+        task = task_store().create(Task(
             id=new_task_id(), title="Log-progress self-stop", review_gate=ReviewGate.NONE,
         ))
         mgr = SessionManager(sessions_dir)
@@ -1303,11 +1296,10 @@ class TestAgentToolTriggeredLifecycle:
     async def test_non_terminal_status_does_not_stop_the_session(
         self, sessions_dir, agent_knots_home,
     ):
-        from agent_knots.config import tasks_dir
         from agent_knots.task.models import Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
 
-        task = TaskStore(tasks_dir()).create(Task(id=new_task_id(), title="Still going"))
+        task = task_store().create(Task(id=new_task_id(), title="Still going"))
         mgr = SessionManager(sessions_dir)
         session = await mgr.start(
             model="fake/model", api_key="fake-key", base_url="http://fake",
@@ -1331,11 +1323,10 @@ class TestAgentToolTriggeredLifecycle:
         """An error result (e.g. 'done' refused for unmet criteria) must
         not schedule side effects for a status change that never
         actually happened."""
-        from agent_knots.config import tasks_dir
         from agent_knots.task.models import Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
 
-        task = TaskStore(tasks_dir()).create(Task(
+        task = task_store().create(Task(
             id=new_task_id(), title="Has unmet criteria",
             acceptance_criteria=["Must actually work"],
         ))
@@ -1358,11 +1349,10 @@ class TestAgentToolTriggeredLifecycle:
     async def test_setting_the_same_status_does_not_schedule_anything(
         self, sessions_dir, agent_knots_home,
     ):
-        from agent_knots.config import tasks_dir
         from agent_knots.task.models import Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
 
-        task = TaskStore(tasks_dir()).create(Task(id=new_task_id(), title="No-op status set"))
+        task = task_store().create(Task(id=new_task_id(), title="No-op status set"))
         mgr = SessionManager(sessions_dir)
         session = await mgr.start(
             model="fake/model", api_key="fake-key", base_url="http://fake",
@@ -1387,9 +1377,9 @@ class TestAgentToolTriggeredLifecycle:
         """The same tool call that stops the writer must also be able to
         fire a newly-enabled advisory role — matching the HTTP PATCH
         path's behavior exactly."""
-        from agent_knots.config import roles_file, tasks_dir
+        from agent_knots.config import roles_file
         from agent_knots.task.models import Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
         from agent_knots.workflows.store import RolesStore
 
         # The role-fired session resolves its own provider config from
@@ -1401,7 +1391,7 @@ class TestAgentToolTriggeredLifecycle:
 
         RolesStore(roles_file()).update("reviewer", enabled=True)
 
-        task = TaskStore(tasks_dir()).create(Task(id=new_task_id(), title="Needs review"))
+        task = task_store().create(Task(id=new_task_id(), title="Needs review"))
         mgr = SessionManager(sessions_dir)
         session = await mgr.start(
             model="fake/model", api_key="fake-key", base_url="http://fake",
@@ -1428,12 +1418,11 @@ class TestAgentToolTriggeredLifecycle:
         going through a session (e.g. tests, or a disabled-tool
         fallback) — the refactor only added a session-aware wrapper
         around them, it didn't change their own behavior."""
-        from agent_knots.config import tasks_dir
         from agent_knots.task.models import Task, new_task_id
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
         from agent_knots.task.tools import _log_progress_impl, _update_task_status_impl
 
-        task = TaskStore(tasks_dir()).create(Task(id=new_task_id(), title="Direct call"))
+        task = task_store().create(Task(id=new_task_id(), title="Direct call"))
         result = _update_task_status_impl(task.id, "blocked")
         assert result["status"] == "blocked"
         result2 = _log_progress_impl(task.id, "did a thing", status="in_progress")

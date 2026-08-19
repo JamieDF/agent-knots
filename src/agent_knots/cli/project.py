@@ -4,21 +4,14 @@ from __future__ import annotations
 
 import typer
 
-from agent_knots.config import projects_dir
 from agent_knots.project.models import Project
-from agent_knots.project.store import ProjectStore
+from agent_knots.storage import project_store
 
 project_app = typer.Typer(help="Manage projects (multi-repo workspaces).", no_args_is_help=True)
 
-# Global project store reference.
-_project_store: ProjectStore | None = None
 
-
-def _get_project_store() -> ProjectStore:
-    global _project_store
-    if _project_store is None:
-        _project_store = ProjectStore(projects_dir())
-    return _project_store
+def _get_project_store():
+    return project_store()
 
 
 @project_app.command(name="create")

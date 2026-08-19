@@ -59,11 +59,10 @@ def register_session_hooks(agent, session: Session) -> None:
         args_str = str(args)[:80] if args else ""
 
         try:
-            from agent_knots.task.store import TaskStore
+            from agent_knots.storage import task_store
             from agent_knots.task.models import ProgressEntry
-            from agent_knots.config import tasks_dir
 
-            store = TaskStore(tasks_dir())
+            store = task_store()
             task = store.get(task_id)
             if task and not task.status.is_terminal():
                 entry_text = f"[{tool_name}] {args_str}".strip()

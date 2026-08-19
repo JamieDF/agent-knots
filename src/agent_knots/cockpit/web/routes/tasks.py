@@ -13,7 +13,6 @@ from agent_knots.cockpit.web.jsonutil import _extract_json_object
 from agent_knots.cockpit.web.models import (
     CreateTaskRequest, DraftTaskRequest, ToggleCriterionRequest, UpdateTaskRequest,
 )
-from agent_knots.config import projects_dir, tasks_dir
 from agent_knots import provider as provider_module
 from agent_knots.gitutil import (
     ahead_of_remote,
@@ -26,7 +25,7 @@ from agent_knots.gitutil import (
     session_branch_name,
 )
 from agent_knots.project.models import resolve_finish
-from agent_knots.project.store import ProjectStore
+from agent_knots.storage import project_store, task_store
 from agent_knots.session.manager import SessionManager
 from agent_knots.task.lifecycle import maybe_pause_or_stop_finished_sessions, maybe_fire_role_triggers
 from agent_knots.task.models import (
@@ -113,7 +112,7 @@ def task_finish_state(task: Task, session_manager: SessionManager) -> dict:
     if not task.project:
         return state
 
-    proj = ProjectStore(projects_dir()).get(task.project)
+    proj = project_store().get(task.project)
     if proj is None or not proj.repository:
         return state
     repo = Path(proj.repository)
@@ -154,7 +153,7 @@ def _finishable(task_id: str, store: TaskStore, session_manager: SessionManager)
     if not task.project:
         raise HTTPException(status_code=400, detail="Task has no workspace")
 
-    proj = ProjectStore(projects_dir()).get(task.project)
+    proj = project_store().get(task.project)
     if proj is None or not proj.repository:
         raise HTTPException(status_code=404, detail="Workspace not found")
     repo = Path(proj.repository)
@@ -188,7 +187,7 @@ async def _merge_task_branch(task_id: str, session_manager: SessionManager) -> d
     released when the task closes out and the session really stops —
     which is exactly when this becomes possible.
     """
-    store = TaskStore(tasks_dir())
+    store = task_store()
     task, proj, repo, branch = _finishable(task_id, store, session_manager)
 
     base = proj.default_branch or "main"
@@ -219,7 +218,7 @@ async def _merge_task_branch(task_id: str, session_manager: SessionManager) -> d
 
 async def _open_task_pull_request(task_id: str, session_manager: SessionManager) -> dict:
     """Push the task's branch and open a PR for it via the `gh` CLI."""
-    store = TaskStore(tasks_dir())
+    store = task_store()
     task, proj, repo, branch = _finishable(task_id, store, session_manager)
 
     pushed = await push_branch_async(repo, branch)
@@ -281,7 +280,7 @@ def create_router(session_manager: SessionManager) -> APIRouter:
         the writer (non-advisory) session is considered — advisory agents
         are observers and don't represent the task's active state.
         """
-        store = TaskStore(tasks_dir())
+        store = task_store()
         tasks = store.list(status=status, project=project, limit=limit)
         # Index live sessions by task_id once rather than scanning the
         # full active list inside the per-task loop below.
@@ -317,7 +316,7 @@ def create_router(session_manager: SessionManager) -> APIRouter:
     @router.get("/api/tasks/{task_id}")
     async def get_task(task_id: str):
         """Get full task details, plus what's left to do with its branch."""
-        store = TaskStore(tasks_dir())
+        store = task_store()
         task = store.get(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -368,7 +367,7 @@ def create_router(session_manager: SessionManager) -> APIRouter:
     @router.post("/api/tasks")
     async def create_task(body: CreateTaskRequest):
         """Create a new task."""
-        store = TaskStore(tasks_dir())
+        store = task_store()
         task = Task(
             id=new_task_id(body.project),
             title=body.title,
@@ -422,7 +421,7 @@ def create_router(session_manager: SessionManager) -> APIRouter:
         in-memory object. status runs first and assign runs last so
         each sees whatever the other steps have already persisted.
         """
-        store = TaskStore(tasks_dir())
+        store = task_store()
         task = store.get(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -484,7 +483,7 @@ def create_router(session_manager: SessionManager) -> APIRouter:
     @raises_as(404)
     async def toggle_criterion(task_id: str, body: ToggleCriterionRequest):
         """Mark/unmark a single acceptance criterion as met."""
-        store = TaskStore(tasks_dir())
+        store = task_store()
         if body.met:
             task = store.mark_criterion_met(task_id, body.criterion)
         else:
@@ -552,7 +551,7 @@ def create_router(session_manager: SessionManager) -> APIRouter:
     @raises_as(404)
     async def delete_task(task_id: str):
         """Delete a task."""
-        store = TaskStore(tasks_dir())
+        store = task_store()
         store.delete(task_id)
         return {"status": "ok"}
 

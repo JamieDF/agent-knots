@@ -17,8 +17,12 @@ from agent_knots.session.manager import SessionManager
 def agent_knots_home(tmp_path, monkeypatch):
     """Isolate AGENT_KNOTS_HOME so tests never read/write the real user's
     cockpit token file."""
+    from agent_knots.storage import reset_stores
+
     monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
-    return tmp_path
+    reset_stores()
+    yield tmp_path
+    reset_stores()
 
 
 @pytest.fixture
@@ -1110,23 +1114,21 @@ class TestManagedWorkspaces:
 
 class TestWorkspaceBackCompat:
     @pytest.mark.asyncio
-    async def test_workspace_yaml_written_before_managed_clones_still_loads(
+    async def test_workspace_without_managed_fields_still_loads(
         self, authed_client, agent_knots_home,
     ):
-        """Pre-existing workspaces have neither `source` nor `managed`
-        in their YAML. They must keep working, unmanaged, pointing
-        exactly where they already pointed."""
-        from agent_knots.yamlfile import atomic_write_yaml
+        """Workspaces saved before managed clones existed have neither
+        `source` nor `managed`. They must keep working, unmanaged,
+        pointing exactly where they already pointed."""
+        from agent_knots.project.models import Project
+        from agent_knots.storage import project_store
 
-        projects = agent_knots_home / "projects"
-        projects.mkdir(parents=True, exist_ok=True)
-        atomic_write_yaml(projects / "old-ws.yaml", {
-            "id": "old-ws", "name": "Old Workspace", "description": "from before",
-            "repository": "/home/someone/code/thing", "default_branch": "main",
-            "runtime": "", "provider": "", "tags": [], "auto_assign": False,
-            "max_concurrent": 2, "archived": False,
-            "created_at": 1700000000.0, "updated_at": 1700000000.0,
-        })
+        project_store().create(Project(
+            id="old-ws",
+            name="Old Workspace",
+            description="from before",
+            repository="/home/someone/code/thing",
+        ))
 
         resp = await authed_client.get("/api/workspaces/old-ws")
         assert resp.status_code == 200

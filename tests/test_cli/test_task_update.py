@@ -29,12 +29,14 @@ def cli_env(tmp_path, monkeypatch):
     singleton, which is otherwise created once per process and would
     leak state (and the wrong AGENT_KNOTS_HOME) across tests."""
     monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+    from agent_knots.storage import reset_stores
+    reset_stores()
     import agent_knots.cli.main as cli_main
     import agent_knots.cli.task as cli_task
     importlib.reload(cli_task)
     importlib.reload(cli_main)
     yield CliEnv(app=cli_main.app, get_task_store=cli_task._get_task_store)
-    cli_task._task_store = None
+    reset_stores()
 
 
 def _create_task(cli_env, title: str) -> str:

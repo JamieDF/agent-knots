@@ -29,14 +29,9 @@ def sessions_dir() -> Path:
     return _ensure_dir(_home() / "sessions")
 
 
-def projects_dir() -> Path:
-    """Directory where project YAML files live."""
-    return _ensure_dir(_home() / "projects")
-
-
-def tasks_dir() -> Path:
-    """Directory where task YAML files live."""
-    return _ensure_dir(_home() / "tasks")
+def db_path() -> Path:
+    """Path to the SQLite database for tasks, projects, and future state."""
+    return _home() / "state.db"
 
 
 def vault_dir() -> Path:
@@ -46,7 +41,7 @@ def vault_dir() -> Path:
 
 def wastebin_dir() -> Path:
     """Directory where stopped-session tombstone records live — see
-    wastebin.py. One YAML file per session, same layout as tasks_dir()."""
+    wastebin.py. One YAML file per session."""
     return _ensure_dir(_home() / "wastebin")
 
 

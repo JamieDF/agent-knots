@@ -16,7 +16,7 @@ from typing import Any
 
 from strands.tools import tool
 
-from agent_knots.config import tasks_dir
+from agent_knots.storage import task_store
 from agent_knots.task.models import (
     Priority,
     ProgressEntry,
@@ -29,7 +29,7 @@ from agent_knots.task.store import TaskStore
 
 
 def _store() -> TaskStore:
-    return TaskStore(tasks_dir())
+    return task_store()
 
 
 def validate_task_output(data: dict) -> dict:

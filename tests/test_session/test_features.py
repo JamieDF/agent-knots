@@ -29,10 +29,14 @@ def sessions_dir():
 
 @pytest.fixture
 def agent_knots_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
     from agent_knots.session.runtime import set_runtime_type
+    from agent_knots.storage import reset_stores
+
+    monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
+    reset_stores()
     set_runtime_type("inprocess")
     yield tmp_path
+    reset_stores()
 
 
 async def _wait_until(condition, timeout=2.0):
