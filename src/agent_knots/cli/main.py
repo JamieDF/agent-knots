@@ -59,9 +59,9 @@ def _launch_web(host: str, port: int) -> None:
     import uvicorn
 
     from agent_knots import settings
-    from agent_knots.session.runtime import set_runtime_type
     from agent_knots.cockpit.web.auth import load_or_create_token
     from agent_knots.cockpit.web.server import create_app
+    from agent_knots.session.runtime import set_runtime_type
 
     s = settings.load()
     set_runtime_type(s.agent.runtime)

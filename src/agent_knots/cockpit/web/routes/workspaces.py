@@ -23,9 +23,8 @@ from agent_knots.cockpit.web.models import (
     PushBranchRequest,
     UpdateWorkspaceRequest,
 )
-from agent_knots.config import projects_dir as _projects_dir
-from agent_knots.config import tasks_dir as _tasks_dir
 from agent_knots.config import workspaces_root as _workspaces_root
+from agent_knots.storage import project_store, task_store
 from agent_knots.gitutil import (
     clone_into_async,
     init_repo,
@@ -36,7 +35,6 @@ from agent_knots.gitutil import (
 from agent_knots.playground import ManifestError, has_manifest, read_manifest
 from agent_knots.project.models import Project
 from agent_knots.project.store import ProjectStore
-from agent_knots.task.store import TaskStore
 
 
 def _workspace_to_response(w: Project) -> dict:
@@ -122,7 +120,7 @@ def seed_from_manifest(repo: Path, workspace_id: str) -> int:
     except ManifestError as e:
         raise HTTPException(status_code=400, detail=f"Playground manifest: {e}") from e
 
-    store = TaskStore(_tasks_dir())
+    store = task_store()
     seeded = 0
     for task in tasks:
         if store.get(task.id) is not None:
@@ -140,7 +138,7 @@ def create_router() -> APIRouter:
         """List workspaces (projects). Archived workspaces are hidden by
         default — pass include_archived=true (Settings' management view) to
         see them too."""
-        store = ProjectStore(_projects_dir())
+        store = project_store()
         workspaces = store.list()
         if not include_archived:
             workspaces = [w for w in workspaces if not w.archived]
@@ -149,7 +147,7 @@ def create_router() -> APIRouter:
     @router.get("/api/workspaces/{workspace_id}")
     async def get_workspace(workspace_id: str):
         """Get a single workspace's detail."""
-        store = ProjectStore(_projects_dir())
+        store = project_store()
         ws = store.get(workspace_id)
         if ws is None:
             raise HTTPException(status_code=404, detail="Workspace not found")
@@ -170,7 +168,7 @@ def create_router() -> APIRouter:
         path used verbatim. The create-workspace dialog passes true,
         which is what makes managed the default a user sees.
         """
-        store = ProjectStore(_projects_dir())
+        store = project_store()
         workspace_id = body.id or _unique_project_id(store, body.name)
         source = body.repository.strip()
         repository = source
@@ -217,7 +215,7 @@ def create_router() -> APIRouter:
     @router.patch("/api/workspaces/{workspace_id}")
     async def update_workspace(workspace_id: str, body: UpdateWorkspaceRequest):
         """Update a workspace."""
-        store = ProjectStore(_projects_dir())
+        store = project_store()
         ws = store.get(workspace_id)
         if ws is None:
             raise HTTPException(status_code=404, detail="Workspace not found")
@@ -269,7 +267,7 @@ def create_router() -> APIRouter:
         workspace's folder was never ours in the first place — same
         principle the wastebin applies to session working dirs.
         """
-        store = ProjectStore(_projects_dir())
+        store = project_store()
         ws = store.get(workspace_id)
         store.delete(workspace_id)
 
@@ -286,7 +284,7 @@ def create_router() -> APIRouter:
         Deliberately separate from Review's approve: approving commits,
         and nothing leaves the machine until someone asks for it here.
         """
-        store = ProjectStore(_projects_dir())
+        store = project_store()
         ws = store.get(workspace_id)
         if ws is None:
             raise HTTPException(status_code=404, detail="Workspace not found")

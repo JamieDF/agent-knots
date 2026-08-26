@@ -1,15 +1,13 @@
-"""YAML file-backed store for policy rules — single file, same pattern
-as workflows/store.py's StagesStore/RolesStore."""
+"""SQLite-backed store for policy rules — whole-document blob in
+state.db, same pattern as workflows/store.py's StagesStore/RolesStore."""
 
 from __future__ import annotations
 
 import copy
-from pathlib import Path
 from typing import Any
 
-import yaml
-
 from agent_knots.policies.models import DEFAULT_POLICIES, Policy
+from agent_knots.storage.blobs import KEY_POLICIES, get_blob, set_blob
 
 
 def _policy_to_dict(p: Policy) -> dict[str, Any]:
@@ -28,27 +26,19 @@ def _policy_from_dict(d: dict[str, Any]) -> Policy:
 
 
 class PolicyStore:
-    """CRUD for the policy-rule config list, backed by one YAML file."""
-
-    def __init__(self, path: Path) -> None:
-        self._path = Path(path)
+    """CRUD for the policy-rule config list."""
 
     def list(self) -> list[Policy]:
-        if not self._path.exists():
+        data = get_blob(KEY_POLICIES)
+        if not isinstance(data, list):
             return copy.deepcopy(DEFAULT_POLICIES)
         try:
-            data = yaml.safe_load(self._path.read_text())
-            if not isinstance(data, list):
-                return copy.deepcopy(DEFAULT_POLICIES)
             return [_policy_from_dict(d) for d in data]
-        except (yaml.YAMLError, OSError, KeyError):
+        except KeyError:
             return copy.deepcopy(DEFAULT_POLICIES)
 
     def save(self, policies: list[Policy]) -> None:
-        data = [_policy_to_dict(p) for p in policies]
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
-        tmp.rename(self._path)
+        set_blob(KEY_POLICIES, [_policy_to_dict(p) for p in policies])
 
     def get(self, key: str) -> Policy | None:
         return next((p for p in self.list() if p.key == key), None)

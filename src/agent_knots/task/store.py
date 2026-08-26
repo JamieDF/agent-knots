@@ -1,22 +1,19 @@
-"""YAML file-backed task store.
+"""SQLite-backed task store.
 
-Each task is a YAML file in ~/.agent-knots/tasks/<id>.yaml.
-Atomic writes via write-to-tmp-then-rename.
+Tasks are stored in ~/.agent-knots/state.db with indexed columns for
+common queries and a JSON blob for the full record.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
-try:
-    import fcntl
-    HAS_FCNTL = True
-except ImportError:  # Windows
-    HAS_FCNTL = False
-
+from agent_knots.storage.db import get_connection
 from agent_knots.task.models import (
     Blocker,
     Priority,
@@ -26,7 +23,6 @@ from agent_knots.task.models import (
     Task,
     TaskStatus,
 )
-from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
 
 
 def _step_to_dict(step: Step) -> dict[str, Any]:
@@ -108,14 +104,10 @@ def _progress_from_dict(d: dict[str, Any]) -> ProgressEntry:
 
 
 def task_to_dict(task: Task) -> dict[str, Any]:
-    """Task -> plain dict, as written to its YAML file.
+    """Task -> plain dict for JSON storage.
 
-    Public (rather than the `_`-prefixed sibling of the other helpers
-    here) because the playground exporter serialises tasks into a
-    repo-committed manifest and must produce byte-identical shapes to
-    what the store itself writes — a second, drifting serialisation of
-    the same model is exactly the bug that would be worth avoiding.
-    Omits empty fields so the on-disk YAML stays readable.
+    Public because the playground exporter serialises tasks into a
+    repo-committed manifest and must produce identical shapes.
     """
     d: dict[str, Any] = {
         "id": task.id,
@@ -183,54 +175,24 @@ def task_from_dict(d: dict[str, Any]) -> Task:
     )
 
 
-# ── store ────────────────────────────────────────────────────────────────────
-
-
 class TaskStore:
-    """YAML file-backed CRUD store for tasks."""
+    """SQLite-backed CRUD store for tasks."""
 
-    def __init__(self, tasks_dir: Path) -> None:
-        self._dir = Path(tasks_dir)
-        self._dir.mkdir(parents=True, exist_ok=True)
+    _write_lock = threading.RLock()
 
-    def _path(self, task_id: str) -> Path:
-        return self._dir / f"{task_id}.yaml"
+    def __init__(self, db_path: Path) -> None:
+        self._conn = get_connection(db_path)
 
     @contextlib.contextmanager
     def _task_lock(self, task_id: str):
-        """Exclusive lock around a read-modify-write on one task —
-        needed now that more than one session (a writer plus advisory
-        agents reporting on the same task) can call log_progress
-        concurrently; an interleaved read-modify-write would silently
-        drop whichever entry lost the race.
-
-        Locks a *sidecar* file, never the task YAML itself:
-        atomic_write_yaml writes to a .tmp file and renames it over the
-        real path, which swaps the inode out from under any file handle
-        already open on it — a lock held on the old inode would stop
-        protecting anything the moment the first writer saves.
-
-        POSIX-only (fcntl). No lock at all on platforms without it — the
-        codebase doesn't support those yet regardless (sandbox_tools'
-        os.setsid-based process groups have the same assumption).
-        """
-        if not HAS_FCNTL:
+        """Exclusive lock for read-modify-write on one task."""
+        del task_id
+        with self._write_lock:
             yield
-            return
-        lock_path = Path(f"{self._path(task_id)}.lock")
-        with open(lock_path, "w") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(f, fcntl.LOCK_UN)
-
-    # ── CRUD ─────────────────────────────────────────────────────────────
 
     def create(self, task: Task) -> Task:
         """Persist a new task. Raises ValueError if ID exists."""
-        path = self._path(task.id)
-        if path.exists():
+        if self.get(task.id) is not None:
             raise ValueError(f"task {task.id!r} already exists")
         task.created_at = time.time()
         task.updated_at = task.created_at
@@ -239,25 +201,40 @@ class TaskStore:
 
     def get(self, task_id: str) -> Task | None:
         """Return a task by ID, or None."""
-        path = self._path(task_id)
-        if not path.exists():
+        row = self._conn.execute(
+            "SELECT data FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if row is None:
             return None
-        return self._load(path)
+        return self._load_json(row[0])
 
     def list(self, *, status: str = "", project: str = "",
              assigned_to: str = "", tags: list[str] | None = None,
              limit: int = 0) -> list[Task]:
         """List tasks with optional filters, ordered by updated_at descending."""
-        tasks = []
-        for path in sorted(self._dir.glob("*.yaml"), key=lambda p: p.stat().st_mtime, reverse=True):
-            task = self._load(path)
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if project:
+            clauses.append("project = ?")
+            params.append(project)
+        if assigned_to:
+            clauses.append("assigned_to = ?")
+            params.append(assigned_to)
+
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = f"SELECT data FROM tasks{where} ORDER BY updated_at DESC"
+        if limit and not tags:
+            sql += " LIMIT ?"
+            params.append(limit)
+
+        rows = self._conn.execute(sql, params).fetchall()
+        tasks: list[Task] = []
+        for row in rows:
+            task = self._load_json(row[0])
             if task is None:
-                continue
-            if status and task.status.value != status:
-                continue
-            if project and task.project != project:
-                continue
-            if assigned_to and task.assigned_to != assigned_to:
                 continue
             if tags and not all(t in task.tags for t in tags):
                 continue
@@ -268,7 +245,7 @@ class TaskStore:
 
     def update(self, task: Task) -> Task:
         """Replace a task. Raises ValueError if not found."""
-        if not self._path(task.id).exists():
+        if self.get(task.id) is None:
             raise ValueError(f"task {task.id!r} not found")
         task.updated_at = time.time()
         self._save(task)
@@ -276,25 +253,14 @@ class TaskStore:
 
     def delete(self, task_id: str) -> None:
         """Delete a task. Raises ValueError if not found."""
-        path = self._path(task_id)
-        if not path.exists():
+        if self.get(task_id) is None:
             raise ValueError(f"task {task_id!r} not found")
-        path.unlink()
-
-    # ── operations ───────────────────────────────────────────────────────
+        with self._write_lock:
+            self._conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            self._conn.commit()
 
     def log_progress(self, task_id: str, entry: ProgressEntry) -> Task:
-        """Append a progress entry.
-
-        A progress entry can carry a status change (entry.status), which
-        goes through the same validation as set_status() — most notably
-        the DONE acceptance-criteria/review-gate gates — since this is
-        otherwise a second path to change status that would bypass them.
-        Only ever called from the agent tool (task/tools.py), never from a
-        human-facing route, so this intentionally relies on
-        _validate_transition's "agent" default rather than taking its own
-        actor parameter.
-        """
+        """Append a progress entry."""
         with self._task_lock(task_id):
             task = self._must_get(task_id)
             if entry.status and entry.status != task.status:
@@ -311,14 +277,7 @@ class TaskStore:
         return task
 
     def set_status(self, task_id: str, status: TaskStatus, actor: str = "agent") -> Task:
-        """Transition task to a new status.
-
-        actor distinguishes a human (the web PATCH route) from an agent
-        (task tools) — see _validate_transition for why this matters for
-        the done transition. Defaults to the more restrictive "agent" so
-        any new call site has to opt in to "human" deliberately rather
-        than silently getting agent self-review for free.
-        """
+        """Transition task to a new status."""
         task = self._must_get(task_id)
         self._validate_transition(task, status, actor)
         task.status = status
@@ -326,7 +285,9 @@ class TaskStore:
         self._save(task)
         return task
 
-    def _validate_transition(self, task: Task, new_status: TaskStatus, actor: str = "agent") -> None:
+    def _validate_transition(
+        self, task: Task, new_status: TaskStatus, actor: str = "agent",
+    ) -> None:
         """Raise ValueError if transitioning to new_status isn't allowed."""
         if new_status == TaskStatus.DONE:
             if not task.all_criteria_met():
@@ -334,10 +295,6 @@ class TaskStore:
                 raise ValueError(
                     f"cannot mark task {task.id!r} done — unmet acceptance criteria: {unmet}"
                 )
-            # The workflow requires a review step before done, unless the
-            # task's own review_gate opts out of it — a task with zero
-            # acceptance criteria would otherwise sail straight from
-            # in_progress to done with no check at all.
             if task.review_gate != ReviewGate.NONE:
                 if task.status != TaskStatus.REVIEW:
                     raise ValueError(
@@ -345,14 +302,6 @@ class TaskStore:
                         f"move it to 'review' first (review_gate={task.review_gate.value!r}; "
                         f"set review_gate to 'none' to skip review for this task)"
                     )
-                # Being in 'review' status isn't itself proof anything was
-                # reviewed — an agent can call update_task_status('review')
-                # immediately followed by update_task_status('done') in the
-                # same turn, satisfying this check without anyone but
-                # itself ever looking at the work. review_gate != "none"
-                # means a human has to be the one to actually close it out;
-                # the same agent that did the work can move a task INTO
-                # review, but never grant itself the done transition.
                 if actor != "human":
                     raise ValueError(
                         f"cannot mark task {task.id!r} done — review_gate="
@@ -370,12 +319,7 @@ class TaskStore:
                 )
 
     def unmet_dependencies(self, task: Task) -> list[Task]:
-        """Return task.dependencies entries that aren't done yet.
-
-        A dependency id that no longer resolves to a real task (deleted)
-        is treated as not blocking, rather than locking the task forever
-        on a dangling reference.
-        """
+        """Return task.dependencies entries that aren't done yet."""
         unmet = []
         for dep_id in task.dependencies:
             dep = self.get(dep_id)
@@ -395,7 +339,7 @@ class TaskStore:
         return task
 
     def unmark_criterion_met(self, task_id: str, criterion: str) -> Task:
-        """Undo a previous mark_criterion_met — e.g. if it turns out unmet."""
+        """Undo a previous mark_criterion_met."""
         task = self._must_get(task_id)
         if criterion in task.criteria_met:
             task.criteria_met.remove(criterion)
@@ -411,8 +355,6 @@ class TaskStore:
         self._save(task)
         return task
 
-    # ── internal ─────────────────────────────────────────────────────────
-
     def _must_get(self, task_id: str) -> Task:
         task = self.get(task_id)
         if task is None:
@@ -420,13 +362,35 @@ class TaskStore:
         return task
 
     def _save(self, task: Task) -> None:
-        atomic_write_yaml(self._path(task.id), task_to_dict(task))
+        with self._write_lock:
+            data = json.dumps(task_to_dict(task))
+            self._conn.execute(
+                """
+                INSERT INTO tasks (id, status, project, assigned_to, updated_at, data)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    status = excluded.status,
+                    project = excluded.project,
+                    assigned_to = excluded.assigned_to,
+                    updated_at = excluded.updated_at,
+                    data = excluded.data
+                """,
+                (
+                    task.id,
+                    task.status.value,
+                    task.project,
+                    task.assigned_to,
+                    task.updated_at,
+                    data,
+                ),
+            )
+            self._conn.commit()
 
-    def _load(self, path: Path) -> Task | None:
-        data = safe_read_yaml(path)
-        if not isinstance(data, dict) or "id" not in data:
-            return None
+    def _load_json(self, raw: str) -> Task | None:
         try:
+            data = json.loads(raw)
+            if not isinstance(data, dict) or "id" not in data:
+                return None
             return task_from_dict(data)
-        except KeyError:
+        except (json.JSONDecodeError, KeyError):
             return None

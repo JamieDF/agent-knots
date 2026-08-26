@@ -24,19 +24,20 @@ def _ensure_dir(path: Path) -> Path:
 
 # ---- public API ----
 
+def home_dir() -> Path:
+    """AGENT_KNOTS_HOME (default ~/.agent-knots). Does not create it."""
+    return _home()
+
+
 def sessions_dir() -> Path:
     """Directory where session records (.yaml), pid files, and sockets live."""
     return _ensure_dir(_home() / "sessions")
 
 
-def projects_dir() -> Path:
-    """Directory where project YAML files live."""
-    return _ensure_dir(_home() / "projects")
-
-
-def tasks_dir() -> Path:
-    """Directory where task YAML files live."""
-    return _ensure_dir(_home() / "tasks")
+def db_path() -> Path:
+    """Path to the SQLite database for tasks, projects, wastebin,
+    usage, and config blobs."""
+    return _home() / "state.db"
 
 
 def vault_dir() -> Path:
@@ -45,14 +46,9 @@ def vault_dir() -> Path:
 
 
 def wastebin_dir() -> Path:
-    """Directory where stopped-session tombstone records live — see
-    wastebin.py. One YAML file per session, same layout as tasks_dir()."""
+    """Directory for stopped-session event transcripts
+    (`<id>.history.json`). Metadata lives in state.db — see wastebin.py."""
     return _ensure_dir(_home() / "wastebin")
-
-
-def settings_file() -> Path:
-    """Path to the YAML settings file."""
-    return _home() / "settings.yaml"
 
 
 def cockpit_token_file() -> Path:
@@ -76,7 +72,7 @@ def workspaces_root() -> Path:
     Resolution order:
 
       1. AGENT_KNOTS_WORKSPACES_ROOT — explicit override, wins outright.
-      2. `workspaces_root` in settings.yaml — the Settings screen.
+      2. `workspaces_root` in settings (state.db) — the Settings screen.
       3. <AGENT_KNOTS_HOME>/workspaces, but only when AGENT_KNOTS_HOME is
          explicitly set. Tests isolate by pointing AGENT_KNOTS_HOME at a
          tmp_path; without this rule the workspaces root would escape
@@ -117,7 +113,7 @@ DEFAULT_PLAYGROUND_REPO = "https://github.com/JamieDF/agent-knots-playground.git
 def playground_repo() -> str:
     """Where the playground is cloned from.
 
-    AGENT_KNOTS_PLAYGROUND_REPO env → `playground_repo` in settings.yaml
+    AGENT_KNOTS_PLAYGROUND_REPO env → `playground_repo` in settings
     → DEFAULT_PLAYGROUND_REPO. The override exists so the flow can be
     pointed at a fork, or at a local path while developing against a
     repo that isn't published yet.
@@ -145,28 +141,3 @@ def session_workdir(session_id: str) -> Path:
     SessionManager._resolve_working_dir.
     """
     return _ensure_dir(_home() / "workdirs" / session_id)
-
-
-def stages_file() -> Path:
-    """Path to the board-stages config YAML file (Workflows screen)."""
-    return _home() / "stages.yaml"
-
-
-def roles_file() -> Path:
-    """Path to the default-agent-roles config YAML file (Workflows screen)."""
-    return _home() / "roles.yaml"
-
-
-def usage_file() -> Path:
-    """Path to the append-only token/cost usage ledger (JSONL)."""
-    return _home() / "usage.jsonl"
-
-
-def policies_file() -> Path:
-    """Path to the policy-rules config YAML file (Settings screen)."""
-    return _home() / "policies.yaml"
-
-
-def mcp_servers_file() -> Path:
-    """Path to the MCP server registry config YAML file (Settings screen)."""
-    return _home() / "mcp_servers.yaml"

@@ -1,13 +1,60 @@
 import { test, expect } from '@playwright/test'
+import { execFileSync } from 'child_process'
 import { readFileSync } from 'fs'
 import { homedir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
 
 const BASE = 'http://127.0.0.1:8090'
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 function getToken(): string {
   const tokenPath = join(homedir(), '.agent-knots', 'cockpit.token')
   return readFileSync(tokenPath, 'utf-8').trim()
+}
+
+/** Snapshot the settings config blob from state.db (JSON or "null"). */
+function dumpSettingsBlob(): string {
+  return execFileSync('uv', ['run', 'python', '-c', `
+import json
+from agent_knots.storage import reset_stores
+from agent_knots.storage.blobs import KEY_SETTINGS, get_blob
+reset_stores()
+print(json.dumps(get_blob(KEY_SETTINGS)))
+`], { cwd: REPO_ROOT, encoding: 'utf-8' }).trim()
+}
+
+function restoreSettingsBlob(raw: string): void {
+  execFileSync('uv', ['run', 'python', '-c', `
+import json, os
+from agent_knots.storage import reset_stores
+from agent_knots.storage.blobs import KEY_SETTINGS, delete_blob, set_blob
+reset_stores()
+data = json.loads(os.environ["AK_SETTINGS_BLOB"])
+if data is None:
+    delete_blob(KEY_SETTINGS)
+else:
+    set_blob(KEY_SETTINGS, data)
+`], {
+    cwd: REPO_ROOT,
+    encoding: 'utf-8',
+    env: { ...process.env, AK_SETTINGS_BLOB: raw },
+  })
+}
+
+function writeFakeAgentSettings(): void {
+  execFileSync('uv', ['run', 'python', '-c', `
+from agent_knots.settings import AgentSettings, Settings, save
+from agent_knots.storage import reset_stores
+reset_stores()
+save(Settings(agent=AgentSettings(
+    default_model="fake/model",
+    api_key="sk-fake",
+    base_url="http://fake-does-not-exist.invalid",
+    default_mode="agent",
+    runtime="inprocess",
+)))
+`], { cwd: REPO_ROOT, encoding: 'utf-8' })
 }
 
 async function authPage(page: any) {
@@ -1771,13 +1818,10 @@ test.describe('settings screen', () => {
     // (that's the whole point of the feature) — and there's no API to
     // blank an api_key back out once set (PUT /api/settings treats an
     // empty key as "leave unchanged", to protect against accidentally
-    // wiping a real key). So this test restores the raw settings.yaml
-    // afterward directly, rather than leaving a fake key that would
-    // flip every other test's "configured" check to true.
-    const { readFileSync, writeFileSync, existsSync, rmSync } = await import('fs')
-    const settingsPath = join(homedir(), '.agent-knots', 'settings.yaml')
-    const hadFile = existsSync(settingsPath)
-    const original = hadFile ? readFileSync(settingsPath, 'utf-8') : null
+    // wiping a real key). So this test restores the settings blob in
+    // state.db afterward directly, rather than leaving a fake key that
+    // would flip every other test's "configured" check to true.
+    const original = dumpSettingsBlob()
 
     try {
       await page.goto(`${BASE}/settings`)
@@ -1801,8 +1845,7 @@ test.describe('settings screen', () => {
 
       await page.request.delete(`${BASE}/api/settings/providers/e2e-provider`)
     } finally {
-      if (hadFile) writeFileSync(settingsPath, original as string)
-      else if (existsSync(settingsPath)) rmSync(settingsPath)
+      restoreSettingsBlob(original)
     }
   })
 
@@ -2257,27 +2300,20 @@ test.describe('task creation and workflow protocol', () => {
 
 test.describe('task to agent thread lifecycle', () => {
   // A real provider isn't configured on this test server — fake one in
-  // via the raw settings file (not PUT /api/settings, which has no way
-  // to blank an api_key back out afterward — see the Settings-screen
-  // "Set default" test's own note on this) so POST /api/sessions
+  // via the settings blob in state.db (not PUT /api/settings, which has
+  // no way to blank an api_key back out afterward — see the Settings-
+  // screen "Set default" test's own note on this) so POST /api/sessions
   // succeeds. No actual network call completes with an empty prompt
   // and nothing here awaits a real completion.
-  const settingsPath = join(homedir(), '.agent-knots', 'settings.yaml')
-  let hadSettingsFile = false
-  let originalSettings: string | null = null
+  let originalSettings: string
 
   test.beforeAll(async () => {
-    const { readFileSync, existsSync, writeFileSync } = await import('fs')
-    hadSettingsFile = existsSync(settingsPath)
-    originalSettings = hadSettingsFile ? readFileSync(settingsPath, 'utf-8') : null
-    const yaml = 'agent:\n  default_model: fake/model\n  api_key: sk-fake\n  base_url: http://fake-does-not-exist.invalid\n  default_mode: agent\n  runtime: inprocess\n'
-    writeFileSync(settingsPath, yaml)
+    originalSettings = dumpSettingsBlob()
+    writeFakeAgentSettings()
   })
 
   test.afterAll(async () => {
-    const { writeFileSync, existsSync, rmSync } = await import('fs')
-    if (hadSettingsFile) writeFileSync(settingsPath, originalSettings as string)
-    else if (existsSync(settingsPath)) rmSync(settingsPath)
+    restoreSettingsBlob(originalSettings)
   })
 
   test.beforeEach(async ({ page }) => {

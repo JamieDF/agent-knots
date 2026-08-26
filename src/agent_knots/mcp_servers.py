@@ -1,17 +1,16 @@
 """MCP server registry — config-only in this version. Add/list/toggle/
 remove a server entry; there's no real MCP client wiring yet. Unlike the
-fixed-cardinality Stages/Roles lists, this one grows with add/remove,
-so it's a plain YAML list store rather than a whole-list-only one.
+fixed-cardinality Stages/Roles lists, this one grows with add/remove.
+Persisted as a whole-document JSON blob in state.db.
 """
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
-import yaml
+from agent_knots.storage.blobs import KEY_MCP_SERVERS, get_blob, set_blob
 
 
 @dataclass
@@ -24,20 +23,15 @@ class McpServer:
 
 
 class McpServerStore:
-    """YAML file-backed store for the MCP server registry."""
-
-    def __init__(self, path: Path) -> None:
-        self._path = Path(path)
+    """SQLite-backed store for the MCP server registry."""
 
     def list(self) -> list[McpServer]:
-        if not self._path.exists():
+        data = get_blob(KEY_MCP_SERVERS)
+        if not isinstance(data, list):
             return []
         try:
-            data = yaml.safe_load(self._path.read_text())
-            if not isinstance(data, list):
-                return []
             return [self._from_dict(d) for d in data]
-        except (yaml.YAMLError, OSError, KeyError):
+        except KeyError:
             return []
 
     def get(self, name: str) -> McpServer | None:
@@ -67,10 +61,7 @@ class McpServerStore:
         return server
 
     def _save(self, servers: list[McpServer]) -> None:
-        data = [self._to_dict(s) for s in servers]
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
-        tmp.rename(self._path)
+        set_blob(KEY_MCP_SERVERS, [self._to_dict(s) for s in servers])
 
     @staticmethod
     def _to_dict(s: McpServer) -> dict[str, Any]:

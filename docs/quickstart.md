@@ -44,24 +44,10 @@ automatically on first launch — pick a provider preset (OpenAI, MiniMax,
 DeepSeek, Anthropic, Ollama, or custom), paste an API key, done. No
 manual file editing.
 
-**Via the CLI/config, e.g. for scripted installs or CI** — settings
-resolve in this order: CLI flags → `AGENT_KNOTS_*` env vars →
-`~/.agent-knots/settings.yaml`. Any of these also skips the GUI wizard
-(it checks the same resolution order), so pre-seeding either one gives
-you a "zero-touch" install:
-
-```bash
-mkdir -p ~/.agent-knots
-cat > ~/.agent-knots/settings.yaml << 'EOF'
-agent:
-  default_model: minimax-m2.7
-  base_url: https://api.minimax.io/v1
-  api_key: <your-api-key>
-  runtime: inprocess
-EOF
-```
-
-Or export env vars for a one-off session:
+**Via env vars, e.g. for scripted installs or CI** — settings resolve in
+this order: CLI flags → `AGENT_KNOTS_*` env vars → settings stored in
+`~/.agent-knots/state.db`. Exporting the env vars also skips the GUI
+wizard (it checks the same resolution order):
 
 ```bash
 export AGENT_KNOTS_MODEL=minimax-m2.7
@@ -69,9 +55,13 @@ export AGENT_KNOTS_BASE_URL=https://api.minimax.io/v1
 export AGENT_KNOTS_API_KEY=<your-minimax-key>
 ```
 
+Persistent settings (provider profiles, finish behaviour, etc.) are
+edited in the Settings screen after first launch; they live as a JSON
+blob inside `state.db`, not a hand-edited YAML file.
+
 All persistent state lives under `~/.agent-knots/` (override with
-`AGENT_KNOTS_HOME=/some/path`). Subdirectories (`sessions/`, `tasks/`,
-`projects/`, `vault/`) are created on first use.
+`AGENT_KNOTS_HOME=/some/path`). Subdirectories (`sessions/`, `vault/`,
+`wastebin/`) and `state.db` are created on first use.
 
 ## Initialize the vault
 

@@ -320,10 +320,7 @@ class SessionManager:
                 "No API key configured. Set one via:\n"
                 "  export AGENT_KNOTS_API_KEY=<your-key>\n"
                 "  export AGENT_KNOTS_MODEL=<model-id>\n"
-                "Or add to ~/.agent-knots/settings.yaml:\n"
-                "  agent:\n"
-                "    api_key: <your-key>\n"
-                "    default_model: openai/gpt-4o-mini"
+                "Or configure a provider in the Settings screen."
             )
 
         session_id = uuid.uuid4().hex[:12]
@@ -467,10 +464,9 @@ class SessionManager:
         ))
 
         if session.tokens_used > 0:
-            from agent_knots.config import usage_file
             from agent_knots.usage import UsageEntry, record
 
-            record(usage_file(), UsageEntry(
+            record(UsageEntry(
                 session_id=session.id,
                 model=session.model,
                 task_id=session.task_id,
@@ -490,14 +486,13 @@ class SessionManager:
         block a session from actually stopping.
         """
         try:
-            from agent_knots.config import session_workdir, wastebin_dir
-            from agent_knots.config import tasks_dir as _tasks_dir
-            from agent_knots.task.store import TaskStore
-            from agent_knots.wastebin import WastebinEntry, WastebinStore
+            from agent_knots.config import session_workdir
+            from agent_knots.storage import task_store, wastebin_store
+            from agent_knots.wastebin import WastebinEntry
 
             task_title = ""
             if session.task_id:
-                task = TaskStore(_tasks_dir()).get(session.task_id)
+                task = task_store().get(session.task_id)
                 if task:
                     task_title = task.title
 
@@ -508,7 +503,7 @@ class SessionManager:
 
             from agent_knots.events import serialize_event
 
-            WastebinStore(wastebin_dir()).add(
+            wastebin_store().add(
                 WastebinEntry(
                     session_id=session.id,
                     name=session.name,
@@ -1035,10 +1030,9 @@ class SessionManager:
         """
         if not task_id:
             return ""
-        from agent_knots.task.store import TaskStore
-        from agent_knots.config import tasks_dir as _tasks_dir
+        from agent_knots.storage import task_store
 
-        store = TaskStore(_tasks_dir())
+        store = task_store()
         task = store.get(task_id)
         if not task:
             return ""
@@ -1063,10 +1057,9 @@ class SessionManager:
         if session is None or session.task_id or session.advisory:
             return
         session.task_id = task_id
-        from agent_knots.task.store import TaskStore
-        from agent_knots.config import tasks_dir as _tasks_dir
+        from agent_knots.storage import task_store
 
-        store = TaskStore(_tasks_dir())
+        store = task_store()
         task = store.get(task_id)
         if task:
             self._claim_task(store, task, session_id)
@@ -1082,10 +1075,9 @@ class SessionManager:
         """
         if not project_id:
             return ""
-        from agent_knots.project.store import ProjectStore
-        from agent_knots.config import projects_dir as _projects_dir
+        from agent_knots.storage import project_store
 
-        project = ProjectStore(_projects_dir()).get(project_id)
+        project = project_store().get(project_id)
         if not project:
             return ""
         return _build_workspace_prompt(project)
@@ -1147,10 +1139,9 @@ class SessionManager:
 
         task_title = ""
         if task_id:
-            from agent_knots.config import tasks_dir as _tasks_dir
-            from agent_knots.task.store import TaskStore
+            from agent_knots.storage import task_store
 
-            task = TaskStore(_tasks_dir()).get(task_id)
+            task = task_store().get(task_id)
             if task:
                 task_title = task.title
 
@@ -1162,10 +1153,9 @@ class SessionManager:
         """Workspace's configured default_branch > whatever is checked
         out > "" (caller treats as unbranchable)."""
         if project_id:
-            from agent_knots.config import projects_dir as _projects_dir
-            from agent_knots.project.store import ProjectStore
+            from agent_knots.storage import project_store
 
-            proj = ProjectStore(_projects_dir()).get(project_id)
+            proj = project_store().get(project_id)
             if proj and proj.default_branch and branch_exists(repo, proj.default_branch):
                 return proj.default_branch
         return current_branch(repo) or ""
@@ -1194,11 +1184,10 @@ class SessionManager:
         if not (session.task_id and result.name):
             return
         try:
-            from agent_knots.config import tasks_dir as _tasks_dir
+            from agent_knots.storage import task_store
             from agent_knots.task.models import ProgressEntry
-            from agent_knots.task.store import TaskStore
 
-            TaskStore(_tasks_dir()).log_progress(session.task_id, ProgressEntry(
+            task_store().log_progress(session.task_id, ProgressEntry(
                 entry=f"Branch {result.name} created from {result.base}."
                       if result.created else f"Resumed on branch {result.name}.",
                 caller=session.id,
@@ -1221,10 +1210,9 @@ class SessionManager:
         """
         if not (self.vault and task_id):
             return None, []
-        from agent_knots.config import tasks_dir as _tasks_dir
-        from agent_knots.task.store import TaskStore
+        from agent_knots.storage import task_store
 
-        task = TaskStore(_tasks_dir()).get(task_id)
+        task = task_store().get(task_id)
         if not task or not task.required_credentials:
             return None, []
 
@@ -1247,11 +1235,10 @@ class SessionManager:
         if not session.task_id:
             return
         try:
-            from agent_knots.config import tasks_dir as _tasks_dir
+            from agent_knots.storage import task_store
             from agent_knots.task.models import ProgressEntry
-            from agent_knots.task.store import TaskStore
 
-            TaskStore(_tasks_dir()).log_progress(session.task_id, ProgressEntry(
+            task_store().log_progress(session.task_id, ProgressEntry(
                 entry=message, caller=session.id,
             ))
         except Exception:
@@ -1276,10 +1263,9 @@ class SessionManager:
         if working_dir:
             return working_dir
         if project_id:
-            from agent_knots.project.store import ProjectStore
-            from agent_knots.config import projects_dir as _projects_dir
+            from agent_knots.storage import project_store
 
-            proj = ProjectStore(_projects_dir()).get(project_id)
+            proj = project_store().get(project_id)
             if proj and proj.repository:
                 return proj.repository
 
@@ -1387,10 +1373,9 @@ class SessionManager:
         if runtime_override:
             return runtime_override
         if project_id:
-            from agent_knots.project.store import ProjectStore
-            from agent_knots.config import projects_dir as _projects_dir
+            from agent_knots.storage import project_store
 
-            proj = ProjectStore(_projects_dir()).get(project_id)
+            proj = project_store().get(project_id)
             if proj and proj.runtime:
                 return proj.runtime
         from agent_knots.session.runtime import get_runtime_type
@@ -1413,9 +1398,8 @@ class SessionManager:
         # can specify its own provider for e.g. a cheaper review model.
         if role_key:
             from agent_knots.workflows.store import RolesStore
-            from agent_knots.config import roles_file
 
-            roles = RolesStore(roles_file()).list()
+            roles = RolesStore().list()
             role = next((r for r in roles if r.key == role_key), None)
             if role and role.provider:
                 cfg = resolve_provider_profile(role.provider)
@@ -1428,10 +1412,9 @@ class SessionManager:
         # Workspace tier — a workspace can default to a specific provider
         # so all sessions in it use it without per-session config.
         if project_id:
-            from agent_knots.project.store import ProjectStore
-            from agent_knots.config import projects_dir as _projects_dir
+            from agent_knots.storage import project_store
 
-            proj = ProjectStore(_projects_dir()).get(project_id)
+            proj = project_store().get(project_id)
             if proj and proj.provider:
                 cfg = resolve_provider_profile(proj.provider)
                 if cfg:

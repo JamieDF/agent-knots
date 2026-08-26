@@ -11,10 +11,8 @@ from pathlib import Path
 
 import typer
 
-from agent_knots.config import projects_dir, tasks_dir
 from agent_knots.playground import ManifestError, read_manifest, write_manifest
-from agent_knots.project.store import ProjectStore
-from agent_knots.task.store import TaskStore
+from agent_knots.storage import project_store, task_store
 
 playground_app = typer.Typer(
     help="Build the demo playground's task manifest (maintainer tooling).",
@@ -32,7 +30,7 @@ def export_manifest(
     ),
 ) -> None:
     """Write a workspace's tasks into its repo as a playground manifest."""
-    store = ProjectStore(projects_dir())
+    store = project_store()
     ws = store.get(project)
     if ws is None:
         typer.echo(f"Error: workspace {project!r} not found")
@@ -43,7 +41,7 @@ def export_manifest(
         typer.echo(f"Error: {target} is not a directory")
         raise typer.Exit(1)
 
-    tasks = TaskStore(tasks_dir()).list(project=project)
+    tasks = task_store().list(project=project)
     if not tasks:
         typer.echo(f"Error: workspace {project!r} has no tasks to export")
         raise typer.Exit(1)

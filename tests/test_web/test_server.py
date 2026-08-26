@@ -17,8 +17,12 @@ from agent_knots.session.manager import SessionManager
 def agent_knots_home(tmp_path, monkeypatch):
     """Isolate AGENT_KNOTS_HOME so tests never read/write the real user's
     cockpit token file."""
+    from agent_knots.storage import reset_stores
+
     monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
-    return tmp_path
+    reset_stores()
+    yield tmp_path
+    reset_stores()
 
 
 @pytest.fixture
@@ -1110,23 +1114,21 @@ class TestManagedWorkspaces:
 
 class TestWorkspaceBackCompat:
     @pytest.mark.asyncio
-    async def test_workspace_yaml_written_before_managed_clones_still_loads(
+    async def test_workspace_without_managed_fields_still_loads(
         self, authed_client, agent_knots_home,
     ):
-        """Pre-existing workspaces have neither `source` nor `managed`
-        in their YAML. They must keep working, unmanaged, pointing
-        exactly where they already pointed."""
-        from agent_knots.yamlfile import atomic_write_yaml
+        """Workspaces saved before managed clones existed have neither
+        `source` nor `managed`. They must keep working, unmanaged,
+        pointing exactly where they already pointed."""
+        from agent_knots.project.models import Project
+        from agent_knots.storage import project_store
 
-        projects = agent_knots_home / "projects"
-        projects.mkdir(parents=True, exist_ok=True)
-        atomic_write_yaml(projects / "old-ws.yaml", {
-            "id": "old-ws", "name": "Old Workspace", "description": "from before",
-            "repository": "/home/someone/code/thing", "default_branch": "main",
-            "runtime": "", "provider": "", "tags": [], "auto_assign": False,
-            "max_concurrent": 2, "archived": False,
-            "created_at": 1700000000.0, "updated_at": 1700000000.0,
-        })
+        project_store().create(Project(
+            id="old-ws",
+            name="Old Workspace",
+            description="from before",
+            repository="/home/someone/code/thing",
+        ))
 
         resp = await authed_client.get("/api/workspaces/old-ws")
         assert resp.status_code == 200
@@ -2388,10 +2390,9 @@ class TestUsageAPI:
 
     @pytest.mark.asyncio
     async def test_usage_reflects_recorded_session(self, authed_client, agent_knots_home):
-        from agent_knots.config import usage_file
         from agent_knots.usage import UsageEntry, record
 
-        record(usage_file(), UsageEntry(model="minimax-m2.7", task_id="T-1", tokens=500, cost_usd=0.05))
+        record(UsageEntry(model="minimax-m2.7", task_id="T-1", tokens=500, cost_usd=0.05))
         resp = await authed_client.get("/api/usage")
         data = resp.json()
         assert data["today"]["tokens"] == 500
@@ -2421,14 +2422,13 @@ class TestPoliciesAPI:
 class TestSpendCapEnforcement:
     @pytest.mark.asyncio
     async def test_session_blocked_once_cap_reached(self, authed_client, monkeypatch):
-        from agent_knots.config import usage_file
         from agent_knots.usage import UsageEntry, record
 
         monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
         monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
 
         await authed_client.patch("/api/policies/spend_cap", json={"enabled": True, "value": "1.00"})
-        record(usage_file(), UsageEntry(model="fake/model", tokens=1000, cost_usd=1.50))
+        record(UsageEntry(model="fake/model", tokens=1000, cost_usd=1.50))
 
         resp = await authed_client.post("/api/sessions", json={"prompt": ""})
         assert resp.status_code == 400
@@ -2436,14 +2436,13 @@ class TestSpendCapEnforcement:
 
     @pytest.mark.asyncio
     async def test_disabled_cap_does_not_block(self, authed_client, monkeypatch):
-        from agent_knots.config import usage_file
         from agent_knots.usage import UsageEntry, record
 
         monkeypatch.setenv("AGENT_KNOTS_API_KEY", "sk-fake")
         monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
         monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
 
-        record(usage_file(), UsageEntry(model="fake/model", tokens=1000, cost_usd=99.0))
+        record(UsageEntry(model="fake/model", tokens=1000, cost_usd=99.0))
         resp = await authed_client.post("/api/sessions", json={"prompt": ""})
         assert resp.status_code == 200
 

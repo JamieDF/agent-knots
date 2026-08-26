@@ -3,9 +3,9 @@
 API keys and model settings are resolved in this order of precedence:
   1. CLI flags (--api-key, --model, --base-url) — one-off overrides
   2. Environment variables (AGENT_KNOTS_API_KEY, AGENT_KNOTS_MODEL, AGENT_KNOTS_BASE_URL)
-  3. Settings file (~/.agent-knots/settings.yaml) — persistent configuration
+  3. Settings in state.db — persistent configuration
 
-The settings file format under the [agent] section:
+The settings agent section fields:
     default_model: openai/gpt-4o-mini
     api_key: sk-...
     base_url: https://api.minimax.io/v1   # optional, for non-OpenAI providers
@@ -88,7 +88,7 @@ def resolve_provider(
 
 
 def _load_settings() -> dict[str, str]:
-    """Load the [agent] section from settings.yaml, if it exists."""
+    """Load the agent section from settings, if present."""
     from agent_knots.settings import load as load_settings
 
     s = load_settings()
@@ -100,7 +100,7 @@ def _load_settings() -> dict[str, str]:
 
 
 def resolve_provider_profile(name: str) -> ProviderConfig | None:
-    """Look up a named provider profile from settings.yaml and return it
+    """Look up a named provider profile from settings and return it
     as a ProviderConfig, or None if the profile doesn't exist.
 
     Used by the tiered provider resolution in SessionManager (per-role

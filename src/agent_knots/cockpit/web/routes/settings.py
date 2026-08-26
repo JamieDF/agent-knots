@@ -12,7 +12,7 @@ from agent_knots.cockpit.web.decorators import raises_as
 from agent_knots.cockpit.web.models import (
     AddProviderRequest, SaveIntegrationsRequest, SaveSettingsRequest, UpdatePolicyRequest,
 )
-from agent_knots.config import policies_file, usage_file, workspaces_root
+from agent_knots.config import workspaces_root
 from agent_knots.gitutil import gh_available
 from agent_knots import provider as provider_module
 from agent_knots import settings
@@ -252,16 +252,16 @@ def create_router() -> APIRouter:
 
     @router.get("/api/usage")
     async def get_usage():
-        return usage_module.summary(usage_file())
+        return usage_module.summary()
 
     @router.get("/api/policies")
     async def list_policies():
-        return {"policies": [_policy_to_response(p) for p in PolicyStore(policies_file()).list()]}
+        return {"policies": [_policy_to_response(p) for p in PolicyStore().list()]}
 
     @router.patch("/api/policies/{key}")
     @raises_as(404)
     async def update_policy(key: str, body: UpdatePolicyRequest):
-        policy = PolicyStore(policies_file()).update(key, **body.model_dump(exclude_unset=True))
+        policy = PolicyStore().update(key, **body.model_dump(exclude_unset=True))
         return _policy_to_response(policy)
 
     return router

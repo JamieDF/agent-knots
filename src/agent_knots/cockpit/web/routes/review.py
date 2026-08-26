@@ -36,17 +36,16 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from agent_knots.cockpit.web.models import ReviewApproveRequest, ReviewRejectRequest
-from agent_knots.config import projects_dir as _projects_dir, tasks_dir as _tasks_dir
 from agent_knots.gitutil import _git_diff_for_file, _git_diff_stat, _run_git, current_branch, session_branch_name
 from agent_knots.project.models import resolve_finish
-from agent_knots.project.store import ProjectStore
+from agent_knots.storage import project_store, task_store
 from agent_knots.task.lifecycle import maybe_fire_role_triggers, maybe_pause_or_stop_finished_sessions
 from agent_knots.task.models import Task, TaskStatus
 from agent_knots.task.store import TaskStore
 
 
 def _task_or_404(task_id: str) -> Task:
-    task = TaskStore(_tasks_dir()).get(task_id)
+    task = task_store().get(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
@@ -64,7 +63,7 @@ def _task_repo(task: Task) -> Path | None:
     """
     if not task.project:
         return None
-    proj = ProjectStore(_projects_dir()).get(task.project)
+    proj = project_store().get(task.project)
     if proj is None or not proj.repository:
         return None
     repo = Path(proj.repository)
@@ -111,7 +110,7 @@ async def _maybe_finish_on_approve(task: Task, session_manager: Any) -> dict | N
         task_finish_state,
     )
 
-    proj = ProjectStore(_projects_dir()).get(task.project) if task.project else None
+    proj = project_store().get(task.project) if task.project else None
     action, when = resolve_finish(proj)
     if when != "on_approve" or action == "none":
         return None
@@ -152,12 +151,12 @@ def create_router(session_manager: Any) -> APIRouter:
         summary of pending changes (file count + total +/- lines) so the
         review list can show what changed without a second fetch per
         task."""
-        tasks = TaskStore(_tasks_dir()).list(status="review")
+        tasks = task_store().list(status="review")
         items = []
         for task in tasks:
             session = _task_session(task, session_manager)
             branch = _task_branch(task, session)
-            proj = ProjectStore(_projects_dir()).get(task.project) if task.project else None
+            proj = project_store().get(task.project) if task.project else None
 
             # Diff stats — total file count + added/deleted across all
             # pending files. `has_repo` distinguishes "a git workspace
@@ -258,7 +257,7 @@ def create_router(session_manager: Any) -> APIRouter:
         # set_status refusing on unmet acceptance criteria is what makes
         # this a real review either way.
         if repo is None or not _git_diff_stat(repo):
-            store = TaskStore(_tasks_dir())
+            store = task_store()
             old_status = task.status.value
             try:
                 task = store.set_status(task.id, TaskStatus.DONE, actor="human")
@@ -304,7 +303,7 @@ def create_router(session_manager: Any) -> APIRouter:
             rejected_files = []
         message = _feedback_message(body.approved_files, rejected_files, body.reason)
 
-        store = TaskStore(_tasks_dir())
+        store = task_store()
         old_status = task.status.value
         task = store.set_status(task.id, TaskStatus.IN_PROGRESS, actor="human")
         maybe_fire_role_triggers(session_manager, old_status, task.status.value, task)

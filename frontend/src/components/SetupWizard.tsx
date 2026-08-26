@@ -114,7 +114,7 @@ function SetupWizard({ onComplete, onSkip }: Props) {
           {error && <div style={{ fontSize: 11.5, color: 'var(--err)' }}>{error}</div>}
 
           <div style={{ fontSize: 10.5, color: 'var(--mut)', textAlign: 'center' }}>
-            Stored in plain text at ~/.agent-knots/settings.yaml. For encrypted
+            Stored in plain text in ~/.agent-knots/state.db. For encrypted
             credential storage, use the Vault instead.
           </div>
 

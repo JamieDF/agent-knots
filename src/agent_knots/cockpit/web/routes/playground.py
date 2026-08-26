@@ -24,11 +24,8 @@ from agent_knots.cockpit.web.routes.workspaces import (
     seed_from_manifest,
 )
 from agent_knots.config import playground_repo as _playground_repo
-from agent_knots.config import projects_dir as _projects_dir
-from agent_knots.config import tasks_dir as _tasks_dir
 from agent_knots.project.models import Project
-from agent_knots.project.store import ProjectStore
-from agent_knots.task.store import TaskStore
+from agent_knots.storage import project_store, task_store
 
 # Fixed so the UI can find it again to report on and reset it. A user
 # who wants a second copy can clone the repo as an ordinary workspace.
@@ -42,7 +39,7 @@ PLAYGROUND_DESCRIPTION = (
 
 def _task_counts(project_id: str) -> dict[str, int]:
     counts: dict[str, int] = {}
-    for task in TaskStore(_tasks_dir()).list(project=project_id):
+    for task in task_store().list(project=project_id):
         counts[task.status.value] = counts.get(task.status.value, 0) + 1
     return counts
 
@@ -57,7 +54,7 @@ def create_router() -> APIRouter:
         Lets the Settings card and the Dashboard's empty state render
         the right thing without inferring it from the workspace list.
         """
-        ws = ProjectStore(_projects_dir()).get(PLAYGROUND_ID)
+        ws = project_store().get(PLAYGROUND_ID)
         return {
             "exists": ws is not None,
             "workspace_id": PLAYGROUND_ID,
@@ -69,7 +66,7 @@ def create_router() -> APIRouter:
     @router.post("/api/playground")
     async def create_playground():
         """Clone the demo project and seed the tasks that built it."""
-        store = ProjectStore(_projects_dir())
+        store = project_store()
         if store.get(PLAYGROUND_ID) is not None:
             raise HTTPException(
                 status_code=409,
@@ -108,12 +105,12 @@ def create_router() -> APIRouter:
         and can be cloned again, so the useful behaviour is a clean
         teardown that leaves nothing to tidy up by hand.
         """
-        store = ProjectStore(_projects_dir())
+        store = project_store()
         ws = store.get(PLAYGROUND_ID)
         if ws is None:
             raise HTTPException(status_code=404, detail="No playground to reset")
 
-        tasks = TaskStore(_tasks_dir())
+        tasks = task_store()
         removed = 0
         for task in tasks.list(project=PLAYGROUND_ID):
             tasks.delete(task.id)

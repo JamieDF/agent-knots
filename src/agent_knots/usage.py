@@ -1,14 +1,17 @@
-"""Token/cost usage ledger — append-only JSONL, same pattern as the vault
-audit log. One entry is recorded whenever a session ends (see
-session/manager.py) with tokens actually used.
+"""Token/cost usage ledger — append-only rows in state.db.
+
+One entry is recorded whenever a session ends (see session/manager.py)
+with tokens actually used.
 """
 
 from __future__ import annotations
 
-import json
+import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+
+from agent_knots.config import db_path
+from agent_knots.storage.db import get_connection
 
 
 @dataclass
@@ -19,6 +22,9 @@ class UsageEntry:
     task_id: str | None = None
     tokens: int = 0
     cost_usd: float = 0.0
+
+
+_write_lock = threading.RLock()
 
 
 def provider_of(model: str) -> str:
@@ -37,41 +43,49 @@ def provider_of(model: str) -> str:
     return "other"
 
 
-def record(path: Path, entry: UsageEntry) -> None:
+def record(entry: UsageEntry) -> None:
     """Append one usage entry to the ledger."""
-    data = json.dumps({
-        "timestamp": entry.timestamp,
-        "session_id": entry.session_id,
-        "model": entry.model,
-        "task_id": entry.task_id,
-        "tokens": entry.tokens,
-        "cost_usd": entry.cost_usd,
-    })
-    with open(path, "a") as fh:
-        fh.write(data + "\n")
+    conn = get_connection(db_path())
+    with _write_lock:
+        conn.execute(
+            """
+            INSERT INTO usage (timestamp, session_id, model, task_id, tokens, cost_usd)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                entry.timestamp,
+                entry.session_id,
+                entry.model,
+                entry.task_id,
+                entry.tokens,
+                entry.cost_usd,
+            ),
+        )
+        conn.commit()
 
 
-def _read_all(path: Path) -> list[UsageEntry]:
-    if not path.exists():
-        return []
-    entries: list[UsageEntry] = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            d = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        entries.append(UsageEntry(
-            timestamp=d.get("timestamp", 0.0),
-            session_id=d.get("session_id", ""),
-            model=d.get("model", ""),
-            task_id=d.get("task_id"),
-            tokens=d.get("tokens", 0),
-            cost_usd=d.get("cost_usd", 0.0),
-        ))
-    return entries
+def _read_since(since: float = 0.0) -> list[UsageEntry]:
+    conn = get_connection(db_path())
+    rows = conn.execute(
+        """
+        SELECT timestamp, session_id, model, task_id, tokens, cost_usd
+        FROM usage
+        WHERE timestamp >= ?
+        ORDER BY timestamp ASC
+        """,
+        (since,),
+    ).fetchall()
+    return [
+        UsageEntry(
+            timestamp=row[0],
+            session_id=row[1] or "",
+            model=row[2] or "",
+            task_id=row[3],
+            tokens=row[4] or 0,
+            cost_usd=row[5] or 0.0,
+        )
+        for row in rows
+    ]
 
 
 def today_start(now: float | None = None) -> float:
@@ -79,24 +93,29 @@ def today_start(now: float | None = None) -> float:
     return now - (now % 86400)
 
 
-def cost_since(path: Path, since: float) -> float:
+def cost_since(since: float) -> float:
     """Sum of cost_usd for entries at or after `since`. Used by the
     spend-cap policy check — kept separate from summary() so enforcement
     doesn't have to compute the full breakdown on every session start."""
-    return sum(e.cost_usd for e in _read_all(path) if e.timestamp >= since)
+    conn = get_connection(db_path())
+    row = conn.execute(
+        "SELECT COALESCE(SUM(cost_usd), 0) FROM usage WHERE timestamp >= ?",
+        (since,),
+    ).fetchone()
+    return float(row[0]) if row is not None else 0.0
 
 
-def summary(path: Path, now: float | None = None) -> dict:
+def summary(now: float | None = None) -> dict:
     """Aggregate the ledger into today/month totals, a per-provider
     breakdown, and the top tasks by token count."""
     now = now if now is not None else time.time()
-    today_start = now - (now % 86400)
+    day_start = now - (now % 86400)
     month_start = now - 30 * 86400
 
-    entries = _read_all(path)
+    entries = _read_since(month_start)
 
-    today = [e for e in entries if e.timestamp >= today_start]
-    month = [e for e in entries if e.timestamp >= month_start]
+    today = [e for e in entries if e.timestamp >= day_start]
+    month = entries
 
     by_provider: dict[str, dict] = {}
     for e in month:
@@ -115,8 +134,14 @@ def summary(path: Path, now: float | None = None) -> dict:
     top_tasks = sorted(by_task.values(), key=lambda r: r["tokens"], reverse=True)[:5]
 
     return {
-        "today": {"tokens": sum(e.tokens for e in today), "cost_usd": sum(e.cost_usd for e in today)},
-        "month": {"tokens": sum(e.tokens for e in month), "cost_usd": sum(e.cost_usd for e in month)},
+        "today": {
+            "tokens": sum(e.tokens for e in today),
+            "cost_usd": sum(e.cost_usd for e in today),
+        },
+        "month": {
+            "tokens": sum(e.tokens for e in month),
+            "cost_usd": sum(e.cost_usd for e in month),
+        },
         "by_provider": sorted(by_provider.values(), key=lambda r: r["tokens"], reverse=True),
         "top_tasks": top_tasks,
     }

@@ -21,13 +21,12 @@ except ImportError:  # Windows has no pty module
 from agent_knots.cockpit.web.auth import Auth, COOKIE_NAME, verify_token
 from agent_knots.cockpit.web.decorators import raises_as
 from agent_knots.cockpit.web.models import AutonomousRequest, CheckpointRequest, CreateSessionRequest
-from agent_knots.config import tasks_dir, policies_file, usage_file
 from agent_knots.events import serialize_event
 from agent_knots import provider as provider_module
 from agent_knots import usage as usage_module
 from agent_knots.policies.store import PolicyStore
 from agent_knots.session.manager import SessionManager
-from agent_knots.task.store import TaskStore
+from agent_knots.storage import task_store as get_task_store, wastebin_store
 
 
 def _summarize_last_activity(session) -> str:
@@ -187,10 +186,7 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
             # closed or errored connection regardless of what data was
             # sent, so ending it here would just re-replay the same
             # history in a loop forever rather than settling.
-            from agent_knots.config import wastebin_dir
-            from agent_knots.wastebin import WastebinStore
-
-            store = WastebinStore(wastebin_dir())
+            store = wastebin_store()
             entry = store.get(agent_id)
             if entry is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
@@ -263,10 +259,7 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
         if session is not None:
             return _agent_to_response(session)
 
-        from agent_knots.config import wastebin_dir
-        from agent_knots.wastebin import WastebinStore
-
-        entry = WastebinStore(wastebin_dir()).get(agent_id)
+        entry = wastebin_store().get(agent_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Agent not found")
         return _wastebin_entry_to_agent_response(entry)
@@ -494,10 +487,10 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
             raise HTTPException(status_code=400, detail="Settings not configured. Run setup first.")
 
         if body.task_id:
-            task_store = TaskStore(tasks_dir())
-            task = task_store.get(body.task_id)
+            ts = get_task_store()
+            task = ts.get(body.task_id)
             if task is not None:
-                unmet = task_store.unmet_dependencies(task)
+                unmet = ts.unmet_dependencies(task)
                 if unmet:
                     blockers = ", ".join(f"{t.id} ({t.title})" for t in unmet)
                     raise HTTPException(
@@ -520,14 +513,14 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
                     detail=f"An agent ({existing.id}) is already working on this task.",
                 )
 
-        spend_cap = PolicyStore(policies_file()).get("spend_cap")
+        spend_cap = PolicyStore().get("spend_cap")
         if spend_cap is not None and spend_cap.enabled:
             try:
                 cap = float(spend_cap.value)
             except (TypeError, ValueError):
                 cap = 0.0
             if cap > 0:
-                spent_today = usage_module.cost_since(usage_file(), usage_module.today_start())
+                spent_today = usage_module.cost_since(usage_module.today_start())
                 if spent_today >= cap:
                     raise HTTPException(
                         status_code=400,
