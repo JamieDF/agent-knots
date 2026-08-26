@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -53,4 +53,9 @@ CREATE TABLE IF NOT EXISTS usage (
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage(timestamp);
+
+CREATE TABLE IF NOT EXISTS config (
+    key   TEXT PRIMARY KEY,
+    data  TEXT NOT NULL
+);
 """

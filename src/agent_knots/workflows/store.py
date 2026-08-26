@@ -1,22 +1,23 @@
-"""YAML file-backed stores for board-stage and default-agent-role config.
+"""SQLite-backed stores for board-stage and default-agent-role config.
 
-Single-file stores (not one-file-per-item like tasks/projects) since
-both are small, fixed-cardinality lists edited as a whole on the
-Workflows screen.
+Whole-document blobs in state.db (not one-row-per-item) since both are
+small, fixed-cardinality lists edited as a whole on the Workflows screen.
 """
 
 from __future__ import annotations
 
 import copy
-from pathlib import Path
 from typing import Any
 
+from agent_knots.storage.blobs import KEY_ROLES, KEY_STAGES, get_blob, set_blob
 from agent_knots.workflows.models import DEFAULT_ROLES, DEFAULT_STAGES, Role, Stage, Trigger
-from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
 
 
 def _stage_to_dict(s: Stage) -> dict[str, Any]:
-    return {"key": s.key, "label": s.label, "statuses": s.statuses, "enabled": s.enabled, "required": s.required}
+    return {
+        "key": s.key, "label": s.label, "statuses": s.statuses,
+        "enabled": s.enabled, "required": s.required,
+    }
 
 
 def _stage_from_dict(d: dict[str, Any]) -> Stage:
@@ -29,31 +30,29 @@ def _stage_from_dict(d: dict[str, Any]) -> Stage:
 def _role_to_dict(r: Role) -> dict[str, Any]:
     return {
         "key": r.key, "name": r.name, "icon": r.icon, "description": r.description,
-        "model": r.model, "provider": r.provider, "trigger": r.trigger.value, "prompt": r.prompt,
-        "tools": r.tools, "enabled": r.enabled, "advisory": r.advisory,
+        "model": r.model, "provider": r.provider, "trigger": r.trigger.value,
+        "prompt": r.prompt, "tools": r.tools, "enabled": r.enabled,
+        "advisory": r.advisory,
     }
 
 
 def _role_from_dict(d: dict[str, Any]) -> Role:
     return Role(
-        key=d["key"], name=d["name"], icon=d.get("icon", ""), description=d.get("description", ""),
+        key=d["key"], name=d["name"], icon=d.get("icon", ""),
+        description=d.get("description", ""),
         model=d.get("model", ""), provider=d.get("provider", ""),
         trigger=Trigger(d.get("trigger", "manual")),
-        prompt=d.get("prompt", ""), tools=d.get("tools", []), enabled=d.get("enabled", False),
+        prompt=d.get("prompt", ""), tools=d.get("tools", []),
+        enabled=d.get("enabled", False),
         advisory=d.get("advisory", False),
     )
 
 
 class StagesStore:
-    """CRUD for the board-stage config list, backed by one YAML file."""
-
-    def __init__(self, path: Path) -> None:
-        self._path = Path(path)
+    """CRUD for the board-stage config list."""
 
     def list(self) -> list[Stage]:
-        if not self._path.exists():
-            return copy.deepcopy(DEFAULT_STAGES)
-        data = safe_read_yaml(self._path)
+        data = get_blob(KEY_STAGES)
         if not isinstance(data, list):
             return copy.deepcopy(DEFAULT_STAGES)
         try:
@@ -62,7 +61,7 @@ class StagesStore:
             return copy.deepcopy(DEFAULT_STAGES)
 
     def save(self, stages: list[Stage]) -> None:
-        atomic_write_yaml(self._path, [_stage_to_dict(s) for s in stages])
+        set_blob(KEY_STAGES, [_stage_to_dict(s) for s in stages])
 
     def toggle(self, key: str, enabled: bool) -> list[Stage]:
         stages = self.list()
@@ -76,15 +75,10 @@ class StagesStore:
 
 
 class RolesStore:
-    """CRUD for the default-agent-role config list, backed by one YAML file."""
-
-    def __init__(self, path: Path) -> None:
-        self._path = Path(path)
+    """CRUD for the default-agent-role config list."""
 
     def list(self) -> list[Role]:
-        if not self._path.exists():
-            return copy.deepcopy(DEFAULT_ROLES)
-        data = safe_read_yaml(self._path)
+        data = get_blob(KEY_ROLES)
         if not isinstance(data, list):
             return copy.deepcopy(DEFAULT_ROLES)
         try:
@@ -93,7 +87,7 @@ class RolesStore:
             return copy.deepcopy(DEFAULT_ROLES)
 
     def save(self, roles: list[Role]) -> None:
-        atomic_write_yaml(self._path, [_role_to_dict(r) for r in roles])
+        set_blob(KEY_ROLES, [_role_to_dict(r) for r in roles])
 
     def get(self, key: str) -> Role | None:
         return next((r for r in self.list() if r.key == key), None)

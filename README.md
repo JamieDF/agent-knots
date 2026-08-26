@@ -56,9 +56,8 @@ via `uv tool install`. Safe to re-run.
 
 **Skipping the setup wizard** (scripted installs, CI, containers): export
 `AGENT_KNOTS_API_KEY` / `AGENT_KNOTS_MODEL` / `AGENT_KNOTS_BASE_URL` before
-first launch, or write `~/.agent-knots/settings.yaml` directly. Either
-way, `configured` is true before the wizard would even ask. See
-[`docs/quickstart.md`](docs/quickstart.md) for the settings file format.
+first launch. That makes `configured` true before the wizard would even
+ask. See [`docs/quickstart.md`](docs/quickstart.md).
 
 ---
 
@@ -210,7 +209,7 @@ agent-knots/
 │   ├── wastebin.py            # Stopped-session tombstones (SQLite metadata + history files)
 │   ├── names.py                # Human-readable session names ("sleepy-panda")
 │   ├── gitutil.py             # Per-session branch create/resume/teardown
-│   ├── settings.py            # Global YAML settings store
+│   ├── settings.py            # Global settings (SQLite config blob)
 │   ├── provider.py            # Model provider resolution (CLI/env/settings)
 │   ├── isolation.py           # Workspace sandbox config
 │   └── sandbox_tools.py       # Sandboxed shell/editor tools

@@ -582,9 +582,8 @@ class TestProviderResolution:
         """Role has a provider, workspace has a different one — role
         wins (most specific)."""
         monkeypatch.setenv("AGENT_KNOTS_HOME", str(tmp_path))
-        # Set up a settings file with two provider profiles.
+        # Set up settings with two provider profiles.
         from agent_knots.settings import AgentSettings, ProviderProfile, Settings, save as save_settings
-        from agent_knots.config import settings_file
         save_settings(Settings(
             agent=AgentSettings(api_key="global-key"),
             providers=[
@@ -599,9 +598,7 @@ class TestProviderResolution:
         store.create(Project(id="ws1", name="Test", provider="ws-prov"))
         # Set up a role with a provider.
         from agent_knots.workflows.store import RolesStore
-        from agent_knots.config import roles_file
-        from agent_knots.workflows.models import Role, Trigger
-        rs = RolesStore(roles_file())
+        rs = RolesStore()
         rs.update("reviewer", provider="role-prov")
 
         result = SessionManager._resolve_provider_for_session("reviewer", "ws1")
@@ -643,8 +640,7 @@ class TestProviderResolution:
             ],
         ))
         from agent_knots.workflows.store import RolesStore
-        from agent_knots.config import roles_file
-        rs = RolesStore(roles_file())
+        rs = RolesStore()
         rs.update("reviewer", provider="prov", model="custom-model")
 
         result = SessionManager._resolve_provider_for_session("reviewer", None)
@@ -1377,7 +1373,6 @@ class TestAgentToolTriggeredLifecycle:
         """The same tool call that stops the writer must also be able to
         fire a newly-enabled advisory role — matching the HTTP PATCH
         path's behavior exactly."""
-        from agent_knots.config import roles_file
         from agent_knots.task.models import Task, new_task_id
         from agent_knots.storage import task_store
         from agent_knots.workflows.store import RolesStore
@@ -1389,7 +1384,7 @@ class TestAgentToolTriggeredLifecycle:
         monkeypatch.setenv("AGENT_KNOTS_MODEL", "fake/model")
         monkeypatch.setenv("AGENT_KNOTS_BASE_URL", "http://fake-does-not-exist.invalid")
 
-        RolesStore(roles_file()).update("reviewer", enabled=True)
+        RolesStore().update("reviewer", enabled=True)
 
         task = task_store().create(Task(id=new_task_id(), title="Needs review"))
         mgr = SessionManager(sessions_dir)

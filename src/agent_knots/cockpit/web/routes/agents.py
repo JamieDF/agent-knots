@@ -21,7 +21,6 @@ except ImportError:  # Windows has no pty module
 from agent_knots.cockpit.web.auth import Auth, COOKIE_NAME, verify_token
 from agent_knots.cockpit.web.decorators import raises_as
 from agent_knots.cockpit.web.models import AutonomousRequest, CheckpointRequest, CreateSessionRequest
-from agent_knots.config import policies_file
 from agent_knots.events import serialize_event
 from agent_knots import provider as provider_module
 from agent_knots import usage as usage_module
@@ -514,7 +513,7 @@ def create_router(session_manager: SessionManager, auth: Auth) -> APIRouter:
                     detail=f"An agent ({existing.id}) is already working on this task.",
                 )
 
-        spend_cap = PolicyStore(policies_file()).get("spend_cap")
+        spend_cap = PolicyStore().get("spend_cap")
         if spend_cap is not None and spend_cap.enabled:
             try:
                 cap = float(spend_cap.value)

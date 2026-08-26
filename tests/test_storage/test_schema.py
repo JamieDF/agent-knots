@@ -55,8 +55,16 @@ def test_wastebin_and_usage_tables_exist():
         assert row is not None
 
 
+def test_config_table_exists():
+    conn = get_connection(db_path())
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='config'"
+    ).fetchone()
+    assert row is not None
+
+
 def test_schema_upgrades_from_v1():
-    """Existing Phase 1 DBs pick up wastebin/usage tables and bump version."""
+    """Existing Phase 1 DBs pick up later tables and bump version."""
     from agent_knots.storage.db import set_schema_version
 
     conn = get_connection(db_path())
@@ -65,7 +73,7 @@ def test_schema_upgrades_from_v1():
 
     conn = get_connection(db_path())
     assert schema_version(conn) == SCHEMA_VERSION
-    for name in ("wastebin", "usage"):
+    for name in ("wastebin", "usage", "config"):
         row = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
             (name,),

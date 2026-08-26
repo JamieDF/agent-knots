@@ -1,16 +1,15 @@
-"""Global settings store — reads/writes ~/.agent-knots/settings.yaml.
+"""Global settings store — SQLite config blob in state.db.
 
-Settings are layered: the file on disk is the source of truth.
-Env vars can override at runtime (see provider.py), but the GUI
-setup wizard writes directly to this file.
+Settings are layered: the blob is the source of truth. Env vars can
+override at runtime (see provider.py), but the GUI setup wizard writes
+directly here.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 
-from agent_knots.config import settings_file
-from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
+from agent_knots.storage.blobs import KEY_SETTINGS, get_blob, set_blob
 
 
 @dataclass
@@ -86,12 +85,8 @@ class Settings:
 
 
 def load() -> Settings:
-    """Load settings from disk. Returns defaults if file doesn't exist."""
-    path = settings_file()
-    if not path.exists():
-        return Settings()
-
-    data = safe_read_yaml(path) or {}
+    """Load settings from state.db. Returns defaults if unset."""
+    data = get_blob(KEY_SETTINGS)
     if not isinstance(data, dict):
         return Settings()
 
@@ -120,7 +115,9 @@ def load() -> Settings:
 
     wastebin_data = data.get("wastebin", {})
     wastebin = WastebinSettings(
-        retention_days=wastebin_data.get("retention_days", WastebinSettings.retention_days),
+        retention_days=wastebin_data.get(
+            "retention_days", WastebinSettings.retention_days,
+        ),
     )
 
     return Settings(
@@ -137,10 +134,7 @@ def load() -> Settings:
 
 
 def save(settings: Settings) -> None:
-    """Persist settings to disk atomically."""
-    path = settings_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-
+    """Persist settings to state.db."""
     data = {
         "agent": asdict(settings.agent),
         "providers": [asdict(p) for p in settings.providers],
@@ -152,9 +146,7 @@ def save(settings: Settings) -> None:
         "finish_action": settings.finish_action,
         "finish_when": settings.finish_when,
     }
-    # sort_keys=True (not the atomic_write_yaml default) to preserve this
-    # file's pre-existing on-disk key order.
-    atomic_write_yaml(path, data, sort_keys=True)
+    set_blob(KEY_SETTINGS, data)
 
 
 def mask_key(key: str) -> str:

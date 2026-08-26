@@ -320,10 +320,7 @@ class SessionManager:
                 "No API key configured. Set one via:\n"
                 "  export AGENT_KNOTS_API_KEY=<your-key>\n"
                 "  export AGENT_KNOTS_MODEL=<model-id>\n"
-                "Or add to ~/.agent-knots/settings.yaml:\n"
-                "  agent:\n"
-                "    api_key: <your-key>\n"
-                "    default_model: openai/gpt-4o-mini"
+                "Or configure a provider in the Settings screen."
             )
 
         session_id = uuid.uuid4().hex[:12]
@@ -1401,9 +1398,8 @@ class SessionManager:
         # can specify its own provider for e.g. a cheaper review model.
         if role_key:
             from agent_knots.workflows.store import RolesStore
-            from agent_knots.config import roles_file
 
-            roles = RolesStore(roles_file()).list()
+            roles = RolesStore().list()
             role = next((r for r in roles if r.key == role_key), None)
             if role and role.provider:
                 cfg = resolve_provider_profile(role.provider)

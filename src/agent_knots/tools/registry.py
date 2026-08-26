@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from agent_knots.config import settings_file as _settings_path
+from agent_knots.config import home_dir
 from agent_knots.tools.defaults import DEFAULT_TOOLS, auto_approve_tools
 from agent_knots.yamlfile import atomic_write_yaml, safe_read_yaml
 
@@ -223,10 +223,10 @@ class ToolRegistry:
     # ── persistence ──────────────────────────────────────────────────────
 
     def _custom_path(self) -> Path:
-        return Path(_settings_path()).parent / "tools.yaml"
+        return home_dir() / "tools.yaml"
 
     def _disabled_path(self) -> Path:
-        return Path(_settings_path()).parent / "disabled_tools.yaml"
+        return home_dir() / "disabled_tools.yaml"
 
     def _load_custom(self) -> None:
         path = self._custom_path()

@@ -75,7 +75,7 @@ agent-knots/
 │   ├── workflows/                 # Board stage config + agent role config (incl. advisory roles)
 │   ├── policies/                  # Config toggles for the Settings screen
 │   ├── config.py                  # Data-directory paths (AGENT_KNOTS_HOME + workspaces root)
-│   ├── settings.py                # Global YAML settings store
+│   ├── settings.py                # Global settings (SQLite config blob)
 │   ├── provider.py                # Model provider resolution (CLI/env/settings)
 │   ├── isolation.py               # WorkspaceSandbox — cwd confinement config
 │   ├── sandbox_tools.py           # Sandboxed shell/editor tools
@@ -428,7 +428,7 @@ implemented.
 
 `tools/registry.py` tracks built-in tools (editor, shell, calculator,
 think, plus 8 task tools) and user-defined custom shell-command tools
-persisted to `~/.agent-knots/settings.yaml`. Each session's `Agent` is built
+persisted to `~/.agent-knots/tools.yaml`. Each session's `Agent` is built
 from whichever tools are currently enabled.
 
 ### Mode
@@ -451,7 +451,7 @@ User runs: agent-knots session start --task T-001 --prompt "..."
                 │
                 ▼
 CLI resolves the model provider (CLI flags → AGENT_KNOTS_* env vars →
-  ~/.agent-knots/settings.yaml) and calls SessionManager.start()
+  settings in state.db) and calls SessionManager.start()
                 │
                 ▼
 SessionManager:
@@ -603,7 +603,7 @@ roadmap lands.
 ### Custom tools
 
 Add a user-defined shell-command tool via the Settings page or
-`ToolRegistry`; it's persisted to `~/.agent-knots/settings.yaml` and wrapped
+`ToolRegistry`; it's persisted to `~/.agent-knots/tools.yaml` and wrapped
 as a Strands tool the next time a session starts.
 
 ### Custom runtimes

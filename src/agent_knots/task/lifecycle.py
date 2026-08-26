@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from agent_knots.config import roles_file, stages_file
 from agent_knots.task.models import Task
 from agent_knots.workflows.models import Trigger, stage_for_status
 from agent_knots.workflows.store import RolesStore, StagesStore
@@ -64,7 +63,7 @@ def maybe_fire_role_triggers(
 ) -> None:
     """Auto-start a session for any enabled default-agent role whose
     trigger matches this status transition (Workflows screen)."""
-    stages = StagesStore(stages_file()).list()
+    stages = StagesStore().list()
     old_stage = stage_for_status(stages, old_status)
     new_stage = stage_for_status(stages, new_status)
     if old_stage is None or new_stage is None or old_stage.key == new_stage.key:
@@ -83,7 +82,7 @@ def maybe_fire_role_triggers(
         triggers.append(Trigger.ENTERS_REVIEW)
 
     for trigger in triggers:
-        for role in RolesStore(roles_file()).enabled_for_trigger(trigger):
+        for role in RolesStore().enabled_for_trigger(trigger):
             asyncio.create_task(session_manager.start(
                 mode="agent",
                 model=role.model,

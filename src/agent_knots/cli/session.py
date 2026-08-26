@@ -28,7 +28,7 @@ def start(
     The API key and model are resolved from (in order):
       1. CLI flags --api-key, --model, --base-url
       2. Environment variables AGENT_KNOTS_API_KEY, AGENT_KNOTS_MODEL, AGENT_KNOTS_BASE_URL
-      3. Settings file ~/.agent-knots/settings.yaml
+      3. Settings in ~/.agent-knots/state.db
 
     For MiniMax:
       export AGENT_KNOTS_MODEL=openai/minimax-m2.7
