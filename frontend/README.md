@@ -123,3 +123,39 @@ working.
 ```bash
 AGENT_KNOTS_HOME=/tmp/ak-test uv run agent-knots launch --web --port 8091
 ```
+
+### Playground agent e2e (live provider + real git work)
+
+The Playwright suite drives the UI/API but does not verify that an agent
+actually edits the managed playground clone. For that, use
+[`scripts/e2e_playground_agent.py`](../scripts/e2e_playground_agent.py).
+
+It resets/creates the Palette playground, then runs **two agent phases**:
+
+1. **Smoke task** (`review_gate: none`) — created by the script, agent finishes to
+   **`done`** with a small edit to `src/color.ts`.
+2. **Dark mode** (seeded from the manifest, default human review gate) — agent
+   implements a minimal slice, marks criteria, moves to **`review`** (not done).
+
+Each phase waits for real git work on the session branch plus the target task
+status. Use `--smoke-only` to skip phase 2.
+
+```bash
+# terminal 1 — backend with a real provider
+export AGENT_KNOTS_API_KEY=...
+export AGENT_KNOTS_MODEL=deepseek-v4-flash
+export AGENT_KNOTS_BASE_URL=https://api.deepseek.com/v1
+AGENT_KNOTS_HOME=/tmp/ak-e2e uv run agent-knots launch --web --port 8090
+
+# terminal 2 — scenario (same AGENT_KNOTS_HOME as the server)
+AGENT_KNOTS_HOME=/tmp/ak-e2e uv run python scripts/e2e_playground_agent.py
+
+# optional flags
+#   --timeout 360          max seconds total (default 360, split across phases)
+#   --smoke-only           skip Dark mode → review phase
+#   --base-url http://...  if not on :8090
+#   --keep-session         leave the agent running after checks (debugging)
+```
+
+Expect ~1–3 minutes depending on provider latency. Fails fast if the
+cockpit is down or no API key is configured (`POST /api/sessions` → 400).

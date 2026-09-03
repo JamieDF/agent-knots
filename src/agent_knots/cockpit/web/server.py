@@ -135,7 +135,7 @@ def create_app(
     app.include_router(agents.create_router(session_manager, auth))
     app.include_router(tasks.create_router(session_manager))
     app.include_router(workspaces.create_router())
-    app.include_router(playground.create_router())
+    app.include_router(playground.create_router(session_manager))
     app.include_router(settings_routes.create_router())
     app.include_router(vault_routes.create_router(vault))
     app.include_router(mcp.create_router())

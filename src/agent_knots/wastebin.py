@@ -187,6 +187,20 @@ class WastebinStore:
                 pass
         return keep
 
+    def delete_for_project(self, project_id: str) -> int:
+        """Remove every wastebin row (and history file) for a workspace."""
+        rows = self._conn.execute(
+            "SELECT session_id FROM wastebin WHERE project_id = ?", (project_id,)
+        ).fetchall()
+        removed = 0
+        for (session_id,) in rows:
+            try:
+                self.delete(session_id)
+                removed += 1
+            except ValueError:
+                pass
+        return removed
+
     def delete(self, session_id: str, *, protected_branches: set[str] = frozenset()) -> None:
         """Remove an entry (and its history file) and clean up its
         leftovers.
