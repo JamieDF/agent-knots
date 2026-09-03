@@ -67,6 +67,15 @@ class TestAddGetList:
         store.add(WastebinEntry(session_id="s3", task_id="t1", stopped_at=3.0))
         assert [e.session_id for e in store.list(task_id="t1")] == ["s3", "s1"]
 
+    def test_delete_for_project(self, store):
+        store.add(WastebinEntry(session_id="s1", project_id="playground", stopped_at=1.0))
+        store.add(WastebinEntry(session_id="s2", project_id="playground", stopped_at=2.0))
+        store.add(WastebinEntry(session_id="s3", project_id="other", stopped_at=3.0))
+        assert store.delete_for_project("playground") == 2
+        assert store.get("s1") is None
+        assert store.get("s2") is None
+        assert store.get("s3") is not None
+
 
 class TestRetentionSweep:
     def test_list_with_no_retention_keeps_everything(self, store):

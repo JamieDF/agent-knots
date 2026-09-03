@@ -25,7 +25,8 @@ from agent_knots.cockpit.web.routes.workspaces import (
 )
 from agent_knots.config import playground_repo as _playground_repo
 from agent_knots.project.models import Project
-from agent_knots.storage import project_store, task_store
+from agent_knots.session.manager import SessionManager
+from agent_knots.storage import project_store, task_store, wastebin_store
 
 # Fixed so the UI can find it again to report on and reset it. A user
 # who wants a second copy can clone the repo as an ordinary workspace.
@@ -44,7 +45,7 @@ def _task_counts(project_id: str) -> dict[str, int]:
     return counts
 
 
-def create_router() -> APIRouter:
+def create_router(session_manager: SessionManager) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/playground")
@@ -97,7 +98,8 @@ def create_router() -> APIRouter:
 
     @router.delete("/api/playground")
     async def reset_playground():
-        """Remove the playground entirely — workspace, tasks and folder.
+        """Remove the playground entirely — live sessions, wastebin,
+        workspace, tasks and folder.
 
         Deliberately more destructive than deleting an ordinary managed
         workspace, which keeps its directory because it may hold work
@@ -109,6 +111,12 @@ def create_router() -> APIRouter:
         ws = store.get(PLAYGROUND_ID)
         if ws is None:
             raise HTTPException(status_code=404, detail="No playground to reset")
+
+        for session in list(session_manager.active):
+            if session.project_id == PLAYGROUND_ID:
+                await session_manager.stop(session.id)
+
+        removed_wastebin = wastebin_store().delete_for_project(PLAYGROUND_ID)
 
         tasks = task_store()
         removed = 0
@@ -123,6 +131,10 @@ def create_router() -> APIRouter:
             shutil.rmtree(ws.repository, ignore_errors=True)
         store.delete(PLAYGROUND_ID)
 
-        return {"status": "ok", "removed_tasks": removed}
+        return {
+            "status": "ok",
+            "removed_tasks": removed,
+            "removed_wastebin": removed_wastebin,
+        }
 
     return router

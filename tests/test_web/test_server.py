@@ -2827,6 +2827,9 @@ class TestPlaygroundSeeding:
         normal managed workspace, which keeps its folder: everything
         here came from a public repo and can be re-cloned, so leaving
         clones behind on every reset would just accumulate rubbish."""
+        from agent_knots.storage import wastebin_store
+        from agent_knots.wastebin import WastebinEntry
+
         repo = self._demo_repo(tmp_path, name="playground-src")
         monkeypatch.setenv("AGENT_KNOTS_PLAYGROUND_REPO", str(repo))
 
@@ -2844,12 +2847,21 @@ class TestPlaygroundSeeding:
         folder = Path(status["repository"])
         assert folder.is_dir()
 
+        wastebin_store().add(WastebinEntry(
+            session_id="old-playground-run",
+            project_id="playground",
+            task_id="T-2026-01-01-000003-cccc-demo",
+        ))
+
         dup = await authed_client.post("/api/playground")
         assert dup.status_code == 409
         assert "already exists" in dup.json()["detail"]
 
         gone = await authed_client.delete("/api/playground")
-        assert gone.json()["removed_tasks"] == 3
+        body = gone.json()
+        assert body["removed_tasks"] == 3
+        assert body["removed_wastebin"] == 1
+        assert wastebin_store().get("old-playground-run") is None
         assert not folder.exists()
         assert (await authed_client.get("/api/playground")).json()["exists"] is False
         assert (await authed_client.get("/api/tasks")).json()["tasks"] == []
